@@ -8,6 +8,7 @@ in
         buildInputs = [
             nixpkgs.latest.rustChannels.stable.rust
         ];
+
         shellHook = ''
         export PROTOBUF_DEFINITIONS_LOCATION=../../protocols
         '';
