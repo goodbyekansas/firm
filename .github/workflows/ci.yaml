@@ -1,0 +1,24 @@
+name: Checks
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2.0.0
+    - name: Install Nix
+      uses: cachix/install-nix-action@v6
+    - name: Remove rustup since it interferes with the build
+      run: rustup self uninstall -y
+    - name: Disable Nix sandboxing
+      run: |
+        mkdir -p ~/.config/nix
+        echo "sandbox = false" > ~/.config/nix/nix.conf
+    - name: Build, test and cache avery package
+      uses: cachix/cachix-action@v3
+      with:
+        name: firm
+        file: "services/avery/avery.nix"
+        signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
