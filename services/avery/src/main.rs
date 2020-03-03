@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 use tonic::transport::Server; //, Request, Response, Status};
 
 use avery::{proto::functions_server::FunctionsServer, FunctionsService};

@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 // magic to enable tonic prtobufs
 pub mod proto {
     tonic::include_proto!("functions");
@@ -8,6 +10,7 @@ use proto::functions_server::Functions as FunctionsServiceTrait;
 use proto::{ListRequest, ListResponse};
 
 // define the FunctionsService struct
+#[derive(Default)]
 pub struct FunctionsService {}
 
 // local methods to operate on a FunctionsService struct
@@ -22,7 +25,7 @@ impl FunctionsService {
 impl FunctionsServiceTrait for FunctionsService {
     async fn list(
         &self,
-        request: tonic::Request<ListRequest>,
+        _request: tonic::Request<ListRequest>,
     ) -> Result<tonic::Response<ListResponse>, tonic::Status> {
         Ok(tonic::Response::new(ListResponse {
             functions: Vec::new(),

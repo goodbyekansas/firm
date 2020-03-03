@@ -1,7 +1,7 @@
 use futures;
-use tonic::{Request, Response, Status};
+use tonic::Request;
 
-use avery::proto::{functions_server::Functions as FunctionsTrait, ListRequest, ListResponse};
+use avery::proto::{functions_server::Functions as FunctionsTrait, ListRequest};
 use avery::FunctionsService;
 
 macro_rules! functions_service {
