@@ -1,0 +1,30 @@
+// syntax must always be declared before other statements
+syntax = "proto3";
+
+// effectively a namespace
+package functions;
+
+service FunctionsService {
+  rpc List (ListRequest) returns (ListResponse);
+}
+
+message ListRequest {
+  // we can add more here later until we publish th protocol
+}
+
+message ListResponse {
+  repeated Function functions = 1;
+}
+
+message Function {
+  // this record is only for discussing metadata of a function not its code
+  FunctionId id = 1;
+  string name = 2;
+  map<string, string> tags = 3;
+}
+
+message FunctionId {
+  // a unique id for each function record
+  string value = 1;
+}
+
