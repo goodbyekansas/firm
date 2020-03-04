@@ -1,14 +1,21 @@
 use std::collections::HashMap;
 
 use futures;
+use slog::o;
 use tonic::Request;
 
 use avery::proto::{functions_server::Functions as FunctionsTrait, ListRequest};
 use avery::FunctionsService;
 
+macro_rules! null_logger {
+    () => {{
+        slog::Logger::root(slog::Discard, o!())
+    }};
+}
+
 macro_rules! functions_service {
     () => {{
-        FunctionsService::new()
+        FunctionsService::new(null_logger!())
     }};
 }
 
