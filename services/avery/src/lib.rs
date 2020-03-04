@@ -8,6 +8,7 @@ mod executor;
 
 use std::collections::HashMap;
 
+use slog::Logger;
 use uuid::Uuid;
 
 // crate / internal includes
@@ -23,14 +24,15 @@ pub struct FunctionDescriptor {
 }
 
 // define the FunctionsService struct
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FunctionsService {
     functions: HashMap<Uuid, FunctionDescriptor>,
+    log: Logger,
 }
 
 // local methods to operate on a FunctionsService struct
 impl FunctionsService {
-    pub fn new() -> Self {
+    pub fn new(log: Logger) -> Self {
         let mut functions = HashMap::new();
         let id = Uuid::new_v4();
         functions.insert(
@@ -49,7 +51,7 @@ impl FunctionsService {
                 },
             },
         );
-        Self { functions }
+        Self { functions, log }
     }
 }
 
