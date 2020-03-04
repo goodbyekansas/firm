@@ -6,10 +6,14 @@ package functions;
 
 service Functions {
   rpc List (ListRequest) returns (ListResponse);
+  rpc Execute (ExecuteRequest) returns (ExecuteResponse);
 }
 
 message ListRequest {
-  // we can add more here later until we publish th protocol
+  string name_filter = 1;
+  map<string, string> tags_filter = 2;
+  uint32 offset = 3;
+  uint32 limit = 4;
 }
 
 message ListResponse {
@@ -21,10 +25,48 @@ message Function {
   FunctionId id = 1;
   string name = 2;
   map<string, string> tags = 3;
+  repeated FunctionInput inputs = 4;
+  repeated FunctionOutput outputs = 5;
 }
 
 message FunctionId {
   // a unique id for each function record
   string value = 1;
+}
+
+message ExecuteRequest {
+  FunctionId function = 1;
+  string arguments = 2;
+}
+
+message ExecuteResponse {
+  FunctionId function = 1;
+  oneof result {
+    ExecutionError error = 2;
+    string ok = 3;
+  }
+}
+
+enum ArgumentType {
+  STRING = 0;
+  BOOL = 1;
+  INT = 2;
+  FLOAT = 3;
+}
+
+message FunctionInput {
+  string name = 1;
+  bool required = 2;
+  ArgumentType type = 3;
+  string defaultValue = 4;
+}
+
+message FunctionOutput {
+  string name = 1;
+  ArgumentType type = 2;
+}
+
+message ExecutionError {
+  string msg = 1;
 }
 

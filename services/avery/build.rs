@@ -9,5 +9,6 @@ fn main() {
             &[format!("{}/functions.proto", proto_path.to_str().unwrap())],
             &[proto_path.to_str().unwrap().to_owned()],
         )
+        .map_err(|e| format!("failed to compile protobuf: {}", e))
         .unwrap();
 }

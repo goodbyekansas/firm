@@ -14,8 +14,8 @@ async fn ctrlc() {
 // local server main loop
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let port: u32 = 8080;
-    let addr = format!("0.0.0.0:{}", port).parse().unwrap();
+    let port: u32 = 1939;
+    let addr = format!("[::]:{}", port).parse().unwrap();
 
     let functions_service = FunctionsService::new();
 
