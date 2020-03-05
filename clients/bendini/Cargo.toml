@@ -1,0 +1,26 @@
+[package]
+name = "bendini"
+version = "0.1.0"
+authors = ["Dane Bettis <dane.bettis@goodbyekansas.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bufstream = "0.1"
+prost = "0.6"
+slog = "2"
+slog-async = "2"
+slog-term = "2"
+structopt = "0.3"
+thiserror = "1"
+tokio = { version = "0.2", features = ["rt-threaded", "time", "stream", "fs", "macros", "uds", "signal"] }
+tonic = "0.1"
+url = "2"
+uuid = { version = "0.8", features = ["serde", "v4"] }
+
+[dev-dependencies]
+futures = "0.3"
+
+[build-dependencies]
+tonic-build = "0.1"
