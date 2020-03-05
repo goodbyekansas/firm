@@ -18,7 +18,7 @@ async fn ctrlc() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port: u32 = 1939;
-    let addr = format!("[::]:{}", port).parse().unwrap();
+    let addr = format!("[::1]:{}", port).parse().unwrap();
 
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::CompactFormat::new(decorator).build().fuse();
