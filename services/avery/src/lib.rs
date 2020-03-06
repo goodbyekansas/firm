@@ -12,9 +12,12 @@ use slog::Logger;
 use uuid::Uuid;
 
 // crate / internal includes
-use crate::executor::lookup_executor;
+use crate::executor::{lookup_executor, validate_args};
 use proto::functions_server::Functions as FunctionsServiceTrait;
-use proto::{ExecuteRequest, ExecuteResponse, Function, FunctionId, ListRequest, ListResponse};
+use proto::{
+    ArgumentType, ExecuteRequest, ExecuteResponse, Function, FunctionId, FunctionInput,
+    FunctionOutput, ListRequest, ListResponse,
+};
 
 #[derive(Debug, Default)]
 pub struct FunctionDescriptor {
@@ -34,7 +37,8 @@ pub struct FunctionsService {
 impl FunctionsService {
     pub fn new(log: Logger) -> Self {
         let mut functions = HashMap::new();
-        let id = Uuid::new_v4();
+        let id = Uuid::parse_str("0c8c108c-bf61-4735-a86d-2d0f5b53561c")
+            .unwrap_or_else(|_| Uuid::new_v4());
         functions.insert(
             id,
             FunctionDescriptor {
@@ -51,6 +55,42 @@ impl FunctionsService {
                 },
             },
         );
+
+        let id = Uuid::parse_str("ef394e5b-0b32-447d-b483-a34bcb70cbc0")
+            .unwrap_or_else(|_| Uuid::new_v4());
+        functions.insert(
+            id,
+            FunctionDescriptor {
+                execution_environment: "maya".to_owned(),
+                code: Vec::new(),
+                function: Function {
+                    id: Some(FunctionId {
+                        value: id.to_string(),
+                    }),
+                    name: "say_hello_yourself".to_owned(),
+                    tags: HashMap::with_capacity(0),
+                    inputs: vec![
+                        FunctionInput {
+                            name: "say".to_string(),
+                            required: true,
+                            r#type: ArgumentType::String as i32,
+                            default_value: String::new(),
+                        },
+                        FunctionInput {
+                            name: "count".to_string(),
+                            required: false,
+                            r#type: ArgumentType::Int as i32,
+                            default_value: 1.to_string(),
+                        },
+                    ],
+                    outputs: vec![FunctionOutput {
+                        name: "output_string".to_string(),
+                        r#type: ArgumentType::String as i32,
+                    }],
+                },
+            },
+        );
+
         Self { functions, log }
     }
 }
@@ -75,8 +115,9 @@ impl FunctionsServiceTrait for FunctionsService {
         &self,
         request: tonic::Request<ExecuteRequest>,
     ) -> Result<tonic::Response<ExecuteResponse>, tonic::Status> {
-        request
-            .into_inner()
+        // lookup function
+        let payload = request.into_inner();
+        let function = payload
             .function
             .ok_or_else(|| String::from("function id is required to execute a function"))
             .and_then(|fun_id_str| {
@@ -88,16 +129,22 @@ impl FunctionsServiceTrait for FunctionsService {
                     .get(&fun_id)
                     .ok_or_else(|| format!("failed to find function with id {}", fun_id))
             })
-            .and_then(
-                |f| match (lookup_executor(f.execution_environment.as_str()), f) {
-                    (Ok(ex), f) => Ok((ex, f)),
-                    (Err(e), _) => Err(e),
-                },
+            .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, format!("{}", e)))?;
+
+        // validate args
+        validate_args(function.function.inputs.iter(), &payload.arguments).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("Invalid function arguments: {}", e),
             )
-            .and_then(|(executor, f)| {
+        })?;
+
+        // lookup executor and run
+        lookup_executor(function.execution_environment.as_str())
+            .and_then(|executor| {
                 Ok(tonic::Response::new(ExecuteResponse {
-                    function: f.function.id.clone(),
-                    result: Some(executor.execute(&f.code)),
+                    function: function.function.id.clone(),
+                    result: Some(executor.execute(&function.code)),
                 }))
             })
             .map_err(|e| {
