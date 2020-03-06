@@ -18,7 +18,10 @@ stdenv.mkDerivation {
   '';
 
   checkPhase = ''
-    export HOME=$PWD
+    if [ -z $IN_NIX_SHELL ]; then
+      export HOME="$PWD"
+    fi
+
     cargo test
 
     cargo fmt -- --check
