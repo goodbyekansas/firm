@@ -1,101 +1,155 @@
+// command line to speak with local server
+// TODO: replace with deny(warnings) !!!
+#![allow(warnings)]
+
+// module declarations
 pub mod proto {
     tonic::include_proto!("functions");
 }
 
-use std::collections::HashMap;
+// std
+use std::{
+    collections::HashMap,
+    fmt::{Display, self}
+};
 
-use slog::{info, o, Drain};
-use slog_async;
-use slog_term;
-use tonic::Request;
+// 3rd party
 use structopt::StructOpt;
+use tokio::runtime;
+use tonic::Request;
 
+// internal
 use proto::functions_client::FunctionsClient;
-use proto::{ExecuteRequest, FunctionId, ListRequest};
+use proto::{ListRequest, FunctionId, Function, FunctionInput, FunctionOutput};
 
-// Parse a single key-value pair
-fn parse_key_val<T, U>(s: &str) -> Result<(T, U), Box<dyn std::error::Error>>
-where
-    T: std::str::FromStr,
-    T::Err: std::error::Error + 'static,
-    U: std::str::FromStr,
-    U::Err: std::error::Error + 'static,
-{
-    let pos = s
-        .find('=')
-        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{}`", s))?;
-    Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
-}
 
+// arguments
 #[derive(StructOpt, Debug)]
 #[structopt(name = "bendini")]
 struct BendiniArgs {
     // function executor servicen address
-    #[structopt(short, long, default_value = "https://[::1]")]
+    #[structopt(short, long, default_value = "tcp://[::1]")]
     address: String,
 
     // function executor service port
     #[structopt(short, long, default_value = "1939")]
     port: u32,
 
-    // number_of_values = 1 forces the user to repeat the -D option for each key-value pair:
-    // bendini -A a=1 -A b=2
-    // Without number_of_values = 1 you can do:
-    // bendini -A a=1 b=2
-    // but this makes adding an argument after the values impossible:
-    // bendini -A a=1 -A b=2 my_input_file
-    // becomes invalid.
-    #[structopt(short = "A", parse(try_from_str = parse_key_val), number_of_values = 1)]
-    function_arguments: Vec<(String, String)>,
+    //
+    #[structopt(subcommand)]
+    cmd: Command
+}
+#[derive(StructOpt, Debug)]
+enum Command {
+    List {
+
+    },
+    Execute {
+
+    },
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
-    let log = slog::Logger::root(drain, o!());
+// impl display of listed functions
+impl Display for Function {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let na = "n/a".to_string();
+        let id_str = self.id.clone().unwrap_or(FunctionId{value:na}).value;
+        writeln!(f, "{}", self.name)?;
+        writeln!(f, "\tid: {}", id_str)?;
+        if self.inputs.is_empty() {
+            writeln!(f, "\tinputs:  n/a")?;
+        } else {
+            writeln!(f, "\tinputs:")?;
+            self.inputs.clone().into_iter().map(
+                |i| { writeln!(f, "\t\t{}", i) }
+            ).collect::<fmt::Result>()?;
+        }
+        if self.outputs.is_empty() {
+            writeln!(f, "\toutputs: n/a")?;
+        } else {
+            writeln!(f, "\toutputs:")?;
+            self.outputs.clone().into_iter().map(
+                |i| { writeln!(f, "\t\t{}", i) }
+            ).collect::<fmt::Result>()?;
+        }
+        if self.tags.is_empty() {
+            writeln!(f, "\ttags:    n/a")
+        } else {
+            writeln!(f, "\ttags:")?;
+            self.tags.clone().iter().map(
+                |(x,y)| { writeln!(f, "\t\t{}:{}", x, y) }
+            ).collect()
+        }
+    }
+}
+impl Display for FunctionInput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let required = if self.required {"required"} else {"optional"};
+        let default_value = if self.default_value.is_empty() {
+            "n/a"
+        } else {
+            &self.default_value
+        };
+        write!(
+            f, 
+            "{name}:{req_opt}:{ftype}: {default}",
+            name=self.name,
+            req_opt=required,
+            ftype=self.r#type,
+            default=default_value,
+        )
+    }
+}
+impl Display for FunctionOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f, 
+            "{name}:{ftype}",
+            name=self.name,
+            ftype=self.r#type,
+        )
+    }
+}
 
-    
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // parse arguments
     let args = BendiniArgs::from_args();
-    info!(log, "{:#?}", args); // TODO: Remove
-
     let address = format!("{}:{}",args.address, args.port);
 
-    info!(log, "Bendini client connecting to \"{}\"", address);
-    let mut client = FunctionsClient::connect(address).await?;
-    info!(log, "Bendini connected!");
+    // handle async stuff in a non-async way
+    let mut basic_rt = runtime::Builder::new()
+        .basic_scheduler()
+        .enable_all()
+        .build()?;
+        // TODO: error handling here could be nice
 
-    info!(log, "Bendini running list request."); // TODO: Remvove
-    let response = client
-        .list(Request::new(ListRequest {
-            name_filter: String::new(),
-            tags_filter: HashMap::new(),
-            limit: 0,
-            offset: 0,
-        }))
-        .await?;
+    // call the client to connect and don't worry about async stuff
+    let mut client = basic_rt.block_on(FunctionsClient::connect(address))?;
+    // TODO: error handling here could be nice
 
-    info!(log, "Response: {:?}", response); // TODO: Remvove
+    match args.cmd {
+        List => {
+            let list_request = ListRequest {
+                name_filter: String::new(),
+                tags_filter: HashMap::new(),
+                limit: 0,
+                offset: 0,
+            };
+            let list_response = basic_rt.block_on(
+                client.list(Request::new(list_request))
+            )?;
+            // TODO: error handling here could be nice
 
-    info!(log, "Bendini executing hello world function."); // TODO: Remvove
-
-    let execute_response = client
-        .execute(Request::new(ExecuteRequest {
-            function: Some(FunctionId {
-                value: response
-                    .into_inner()
-                    .functions
-                    .first()
-                    .and_then(|function| function.id.as_ref())
-                    .and_then(|fun_id| Some(fun_id.value.clone()))
-                    .ok_or("Failed to get function ID")?,
-            }),
-            arguments: String::new(), // TODO: put args as json here
-        }))
-        .await?;
-
-    info!(log, "Execute Response: {:?}", execute_response); // TODO: Remvove
+            // print the function records returned
+            list_response.into_inner().functions.into_iter().for_each(
+                |f| {
+                    println!("{}", f)
+                }
+            )
+        },
+        Execute => {},
+    }
 
     Ok(())
 }
