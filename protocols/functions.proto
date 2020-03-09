@@ -6,6 +6,7 @@ package functions;
 
 service Functions {
   rpc List (ListRequest) returns (ListResponse);
+  rpc Get (FunctionId) returns (Function);
   rpc Execute (ExecuteRequest) returns (ExecuteResponse);
 }
 

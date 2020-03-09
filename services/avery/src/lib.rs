@@ -14,7 +14,7 @@ use uuid::Uuid;
 // crate / internal includes
 use crate::executor::{lookup_executor, validate_args};
 use proto::functions_server::Functions as FunctionsServiceTrait;
-use proto::{ExecuteRequest, ExecuteResponse, Function, ListRequest, ListResponse};
+use proto::{ExecuteRequest, ExecuteResponse, Function, FunctionId, ListRequest, ListResponse};
 
 #[derive(Debug, Default, Clone)]
 pub struct FunctionDescriptor {
@@ -58,6 +58,29 @@ impl FunctionsServiceTrait for FunctionsService {
                 .map(|fd| fd.function.clone())
                 .collect(),
         }))
+    }
+
+    async fn get(
+        &self,
+        request: tonic::Request<FunctionId>,
+    ) -> Result<tonic::Response<Function>, tonic::Status> {
+        let fn_id = request.into_inner();
+        Uuid::parse_str(&fn_id.value)
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("failed to parse UUID from function id: {}", e),
+                )
+            })
+            .and_then(|fun_uuid| {
+                self.functions.get(&fun_uuid).ok_or_else(|| {
+                    tonic::Status::new(
+                        tonic::Code::NotFound,
+                        format!("failed to find function with id: {}", fun_uuid),
+                    )
+                })
+            })
+            .map(|fd| tonic::Response::new(fd.function.clone()))
     }
 
     async fn execute(
