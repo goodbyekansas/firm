@@ -26,6 +26,9 @@ impl FunctionExecutor for WasmExecutor {
     }
 }
 
+/// Lookup an executor for the given `name`
+///
+/// If an executor is not supported, an error is returned
 pub fn lookup_executor(name: &str) -> Result<Box<dyn FunctionExecutor>, ExecutorError> {
     match name {
         "maya" => Ok(Box::new(MayaExecutor {})),
@@ -34,6 +37,11 @@ pub fn lookup_executor(name: &str) -> Result<Box<dyn FunctionExecutor>, Executor
     }
 }
 
+/// Validate arguments in json format
+///
+/// `inputs` is the functions' description of the arguments and `args` is the passed in arguments
+/// as a JSON formatted string. This function returns all validation errors as a
+/// `Vec<ExecutionError>`.
 pub fn validate_args<'a, I>(inputs: I, args: &str) -> Result<(), Vec<ExecutorError>>
 where
     I: IntoIterator<Item = &'a FunctionInput>,
@@ -109,4 +117,115 @@ pub enum ExecutorError {
 
     #[error("Failed to find required argument {0}")]
     RequiredArgumentMissing(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn parse_required() {
+        let inputs = vec![FunctionInput {
+            name: "very_important_argument".to_owned(),
+            r#type: ArgumentType::String as i32,
+            required: true,
+            default_value: String::new(),
+        }];
+
+        let r = validate_args(inputs.iter(), "{}");
+        assert!(r.is_err());
+
+        let r = validate_args(
+            inputs.iter(),
+            r#"{
+        "very_important_argument": "yes"
+        }"#,
+        );
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn parse_optional() {
+        let inputs = vec![FunctionInput {
+            name: "not_very_important_argument".to_owned(),
+            r#type: ArgumentType::String as i32,
+            required: false,
+            default_value: "something".to_owned(),
+        }];
+
+        let r = validate_args(inputs.iter(), "{}");
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn parse_types() {
+        let inputs = vec![
+            FunctionInput {
+                name: "string_arg".to_owned(),
+                r#type: ArgumentType::String as i32,
+                required: true,
+                default_value: String::new(),
+            },
+            FunctionInput {
+                name: "bool_arg".to_owned(),
+                r#type: ArgumentType::Bool as i32,
+                required: true,
+                default_value: String::new(),
+            },
+            FunctionInput {
+                name: "int_arg".to_owned(),
+                r#type: ArgumentType::Int as i32,
+                required: true,
+                default_value: String::new(),
+            },
+            FunctionInput {
+                name: "float_arg".to_owned(),
+                r#type: ArgumentType::Float as i32,
+                required: true,
+                default_value: String::new(),
+            },
+        ];
+
+        let r = validate_args(
+            inputs.iter(),
+            r#"
+            {
+                "string_arg": "yes",
+                "bool_arg": true,
+                "int_arg": 4,
+                "float_arg": 4.5
+            }"#,
+        );
+
+        assert!(r.is_ok());
+
+        // one has the wrong type 🤯
+        let r = validate_args(
+            inputs.iter(),
+            r#"
+            {
+                "string_arg": 5,
+                "bool_arg": true,
+                "int_arg": 4,
+                "float_arg": 4.5
+            }"#,
+        );
+
+        assert!(r.is_err());
+        assert_eq!(1, r.unwrap_err().len());
+
+        // all of them has the wrong type 🚓💨
+        let r = validate_args(
+            inputs.iter(),
+            r#"
+            {
+                "string_arg": 5,
+                "bool_arg": "ture",
+                "int_arg": false,
+                "float_arg": "a"
+            }"#,
+        );
+
+        assert!(r.is_err());
+        assert_eq!(4, r.unwrap_err().len());
+    }
 }
