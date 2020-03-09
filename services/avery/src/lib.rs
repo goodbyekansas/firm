@@ -14,16 +14,14 @@ use uuid::Uuid;
 // crate / internal includes
 use crate::executor::{lookup_executor, validate_args};
 use proto::functions_server::Functions as FunctionsServiceTrait;
-use proto::{
-    ArgumentType, ExecuteRequest, ExecuteResponse, Function, FunctionId, FunctionInput,
-    FunctionOutput, ListRequest, ListResponse,
-};
+use proto::{ExecuteRequest, ExecuteResponse, Function, ListRequest, ListResponse};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FunctionDescriptor {
-    execution_environment: String,
-    code: Vec<u8>,
-    function: Function,
+    pub execution_environment: String,
+    pub code: Vec<u8>,
+    pub id: Uuid,
+    pub function: Function,
 }
 
 // define the FunctionsService struct
@@ -35,63 +33,14 @@ pub struct FunctionsService {
 
 // local methods to operate on a FunctionsService struct
 impl FunctionsService {
-    pub fn new(log: Logger) -> Self {
-        let mut functions = HashMap::new();
-        let id = Uuid::parse_str("0c8c108c-bf61-4735-a86d-2d0f5b53561c")
-            .unwrap_or_else(|_| Uuid::new_v4());
-        functions.insert(
-            id,
-            FunctionDescriptor {
-                execution_environment: "maya".to_owned(),
-                code: Vec::new(),
-                function: Function {
-                    id: Some(FunctionId {
-                        value: id.to_string(),
-                    }),
-                    name: "hello_world".to_owned(),
-                    tags: HashMap::with_capacity(0),
-                    inputs: Vec::with_capacity(0),
-                    outputs: Vec::with_capacity(0),
-                },
-            },
-        );
-
-        let id = Uuid::parse_str("ef394e5b-0b32-447d-b483-a34bcb70cbc0")
-            .unwrap_or_else(|_| Uuid::new_v4());
-        functions.insert(
-            id,
-            FunctionDescriptor {
-                execution_environment: "maya".to_owned(),
-                code: Vec::new(),
-                function: Function {
-                    id: Some(FunctionId {
-                        value: id.to_string(),
-                    }),
-                    name: "say_hello_yourself".to_owned(),
-                    tags: HashMap::with_capacity(0),
-                    inputs: vec![
-                        FunctionInput {
-                            name: "say".to_string(),
-                            required: true,
-                            r#type: ArgumentType::String as i32,
-                            default_value: String::new(),
-                        },
-                        FunctionInput {
-                            name: "count".to_string(),
-                            required: false,
-                            r#type: ArgumentType::Int as i32,
-                            default_value: 1.to_string(),
-                        },
-                    ],
-                    outputs: vec![FunctionOutput {
-                        name: "output_string".to_string(),
-                        r#type: ArgumentType::String as i32,
-                    }],
-                },
-            },
-        );
-
-        Self { functions, log }
+    pub fn new<'a, I>(log: Logger, functions: I) -> Self
+    where
+        I: IntoIterator<Item = &'a FunctionDescriptor>,
+    {
+        Self {
+            functions: functions.into_iter().map(|f| (f.id, f.clone())).collect(),
+            log,
+        }
     }
 }
 
