@@ -30,7 +30,7 @@ pub fn lookup_executor(name: &str) -> Result<Box<dyn FunctionExecutor>, Executor
     match name {
         "maya" => Ok(Box::new(MayaExecutor {})),
         "wasm" => Ok(Box::new(WasmExecutor {})),
-        ee => Err(ExecutorError::ExecutorNotFound(ee.to_owned()).into()),
+        ee => Err(ExecutorError::ExecutorNotFound(ee.to_owned())),
     }
 }
 
@@ -43,23 +43,27 @@ where
     // TODO: This will abort as soon as it finds a bad arg
     // Would be nice to make it show all errors instead of first.
 
-    // TODO: TEST FOR REQUIRED AND DEFAULT. Everything is required right now.
     inputs
         .into_iter()
         .map(|input| {
-            parsed_args
-                .get(&input.name)
-                .ok_or(ExecutorError::RequiredArgumentMissing(input.name.clone()))
-                .and_then(|parsed_arg| {
+            parsed_args.get(&input.name).map_or_else(
+                // argument was not found in the sent in args
+                || {
+                    if input.required {
+                        Err(ExecutorError::RequiredArgumentMissing(input.name.clone()))
+                    } else {
+                        Ok(())
+                    }
+                },
+                // argument was found in the sent in args, validate it
+                |parsed_arg| {
                     let tp = input.r#type;
                     ArgumentType::from_i32(tp)
-                        .and_then(|at| {
-                            Some(match at {
-                                ArgumentType::String => (parsed_arg.is_string(), "string"),
-                                ArgumentType::Bool => (parsed_arg.is_boolean(), "bool"),
-                                ArgumentType::Int => (parsed_arg.is_i64(), "int"),
-                                ArgumentType::Float => (parsed_arg.is_f64(), "float"),
-                            })
+                        .map(|at| match at {
+                            ArgumentType::String => (parsed_arg.is_string(), "string"),
+                            ArgumentType::Bool => (parsed_arg.is_boolean(), "bool"),
+                            ArgumentType::Int => (parsed_arg.is_i64(), "int"),
+                            ArgumentType::Float => (parsed_arg.is_f64(), "float"),
                         })
                         .map_or(
                             Err(ExecutorError::OutOfRangeArgumentType(tp)),
@@ -75,7 +79,8 @@ where
                                 }
                             },
                         )
-                })
+                },
+            )
         })
         .collect()
 }
