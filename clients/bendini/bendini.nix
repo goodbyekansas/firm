@@ -8,8 +8,11 @@ stdenv.mkDerivation {
   src = builtins.filterSource
     (path: type: (type != "directory" || baseNameOf path != "target")) ./.;
 
-  buildInputs = with nixpkgs; [ cacert latest.rustChannels.stable.rust ];
-
+  buildInputs = with nixpkgs; [
+    cacert 
+    (latest.rustChannels.stable.rust.override {extensions = ["rust-src"];})
+  ];
+  
   doCheck = true; # TODO: When nedryland takes over the world remove this.
 
   buildPhase = ''
@@ -41,3 +44,4 @@ stdenv.mkDerivation {
     export PROTOBUF_DEFINITIONS_LOCATION=../../protocols
   '';
 }
+

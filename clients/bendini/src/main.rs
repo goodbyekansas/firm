@@ -8,6 +8,7 @@ pub mod proto {
 // std
 use std::{
     collections::HashMap,
+    error::Error,
     fmt::{self, Display},
 };
 
@@ -15,24 +16,32 @@ use std::{
 use structopt::StructOpt;
 use tokio::runtime;
 use tonic::Request;
+use serde_json::json;
 
 // internal
 use proto::functions_client::FunctionsClient;
-use proto::{ExecuteRequest, Function, FunctionId, FunctionInput, FunctionOutput, ListRequest};
+use proto::{
+    ExecuteRequest,
+    Function,
+    FunctionId, 
+    FunctionInput,
+    FunctionOutput,
+    ListRequest,
+};
 
 // arguments
 #[derive(StructOpt, Debug)]
 #[structopt(name = "bendini")]
 struct BendiniArgs {
-    /// function executor servicen address
+    // function executor servicen address
     #[structopt(short, long, default_value = "tcp://[::1]")]
     address: String,
 
-    /// function executor service port
+    // function executor service port
     #[structopt(short, long, default_value = "1939")]
     port: u32,
 
-    /// Command to run
+    // Command to run
     #[structopt(subcommand)]
     cmd: Command,
 }
@@ -40,7 +49,18 @@ struct BendiniArgs {
 #[derive(StructOpt, Debug)]
 enum Command {
     List,
-    Execute { function_id: String },
+    Execute {
+        function_id: String,
+        #[structopt(short = "i", parse(try_from_str = parse_key_val))]
+        arguments: Vec<(String, String)>,
+    },
+}
+
+fn parse_key_val(s: &str) -> Result<(String, String), Box<dyn Error>> {
+    let pos = s
+        .find('=')
+        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{}`", s))?;
+    Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
 }
 
 // impl display of listed functions
@@ -48,8 +68,8 @@ impl Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let na = "n/a".to_string();
         let id_str = self.id.clone().unwrap_or(FunctionId { value: na }).value;
-        writeln!(f, "{}", self.name)?;
-        writeln!(f, "\tid: {}", id_str)?;
+        writeln!(f, "\t{}", self.name)?;
+        writeln!(f, "\tid:      {}", id_str)?;
         if self.inputs.is_empty() {
             writeln!(f, "\tinputs:  n/a")?;
         } else {
@@ -57,7 +77,7 @@ impl Display for Function {
             self.inputs
                 .clone()
                 .into_iter()
-                .map(|i| writeln!(f, "\t\t{}", i))
+                .map(|i| writeln!(f, "\t\t\t {}", i))
                 .collect::<fmt::Result>()?;
         }
         if self.outputs.is_empty() {
@@ -67,7 +87,7 @@ impl Display for Function {
             self.outputs
                 .clone()
                 .into_iter()
-                .map(|i| writeln!(f, "\t\t{}", i))
+                .map(|i| writeln!(f, "\t\t\t{}", i))
                 .collect::<fmt::Result>()?;
         }
         if self.tags.is_empty() {
@@ -77,7 +97,7 @@ impl Display for Function {
             self.tags
                 .clone()
                 .iter()
-                .map(|(x, y)| writeln!(f, "\t\t{}:{}", x, y))
+                .map(|(x, y)| writeln!(f, "\t\t\t {}:{}", x, y))
                 .collect()
         }
     }
@@ -121,16 +141,22 @@ fn main() -> Result<(), u32> {
     let mut basic_rt = runtime::Builder::new()
         .basic_scheduler()
         .enable_all()
-        .build().map_err(|e| {
-            println!("Failed to create new runtime builder for async operations: {}", e);
+        .build()
+        .map_err(|e| {
+            println!(
+                "Failed to create new runtime builder for async operations: {}",
+                e
+            );
             1u32
         })?;
 
     // call the client to connect and don't worry about async stuff
-    let mut client = basic_rt.block_on(FunctionsClient::connect(address.clone())).map_err(|e| {
-        println!("Failed to connect to Avery at \"{}\": {}", address, e);
-        2u32
-    })?;
+    let mut client = basic_rt
+        .block_on(FunctionsClient::connect(address.clone()))
+        .map_err(|e| {
+            println!("Failed to connect to Avery at \"{}\": {}", address, e);
+            2u32
+        })?;
 
     match args.cmd {
         Command::List => {
@@ -155,15 +181,23 @@ fn main() -> Result<(), u32> {
                 .into_iter()
                 .for_each(|f| println!("{}", f))
         }
-        Command::Execute { function_id } => {
+        Command::Execute {
+            function_id,
+            arguments,
+        } => {
             println!("Executing function with id {}", function_id);
+            let hm: HashMap<String, String> = arguments.iter().cloned().collect();
+            let json = json!(hm);
+            let json_string = json.to_string();
+            let request = ExecuteRequest {
+                function: Some(FunctionId {
+                    value: function_id.clone(),
+                }),
+                arguments: json_string
+            };
+            println!("request: {:?}", request);
             let execute_response = basic_rt
-                .block_on(client.execute(Request::new(ExecuteRequest {
-                    function: Some(FunctionId {
-                        value: function_id.clone(),
-                    }),
-                    arguments: String::new(),
-                })))
+                .block_on(client.execute(Request::new(request)))
                 .map_err(|e| {
                     println!("Failed to execute function with id {}: {}", function_id, e);
                     4u32
