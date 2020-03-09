@@ -38,6 +38,7 @@ message FunctionId {
 message ExecuteRequest {
   FunctionId function = 1;
   string arguments = 2;
+  //repeated FunctionArgument arguments = 2;
 }
 
 message ExecuteResponse {
@@ -53,6 +54,7 @@ enum ArgumentType {
   BOOL = 1;
   INT = 2;
   FLOAT = 3;
+  //BYTES = 4;
 }
 
 message FunctionInput {
@@ -66,6 +68,15 @@ message FunctionOutput {
   string name = 1;
   ArgumentType type = 2;
 }
+
+// this is how to do everything ...later
+message FunctionArgument {
+  string name = 1;
+  ArgumentType type = 2;
+  bytes value = 3;
+}
+
+// FunctionResult {}
 
 message ExecutionError {
   string msg = 1;
