@@ -129,7 +129,7 @@ impl FunctionsServiceTrait for FunctionsService {
                     .get(&fun_id)
                     .ok_or_else(|| format!("failed to find function with id {}", fun_id))
             })
-            .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, format!("{}", e)))?;
+            .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, e))?;
 
         // validate args
         validate_args(function.function.inputs.iter(), &payload.arguments).map_err(|e| {
