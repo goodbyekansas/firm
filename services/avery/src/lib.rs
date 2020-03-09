@@ -135,7 +135,13 @@ impl FunctionsServiceTrait for FunctionsService {
         validate_args(function.function.inputs.iter(), &payload.arguments).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
-                format!("Invalid function arguments: {}", e),
+                format!(
+                    "Invalid function arguments: {}",
+                    e.iter()
+                        .map(|ae| format!("{}", ae))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                ),
             )
         })?;
 

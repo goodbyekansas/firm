@@ -34,16 +34,14 @@ pub fn lookup_executor(name: &str) -> Result<Box<dyn FunctionExecutor>, Executor
     }
 }
 
-pub fn validate_args<'a, I>(inputs: I, args: &str) -> Result<(), ExecutorError>
+pub fn validate_args<'a, I>(inputs: I, args: &str) -> Result<(), Vec<ExecutorError>>
 where
     I: IntoIterator<Item = &'a FunctionInput>,
 {
     let parsed_args: Value = serde_json::from_str(args)
-        .map_err(|e| ExecutorError::InvalidArgumentFormat(e.to_string()))?;
-    // TODO: This will abort as soon as it finds a bad arg
-    // Would be nice to make it show all errors instead of first.
+        .map_err(|e| vec![ExecutorError::InvalidArgumentFormat(e.to_string())])?;
 
-    inputs
+    let (_, errors): (Vec<_>, Vec<_>) = inputs
         .into_iter()
         .map(|input| {
             parsed_args.get(&input.name).map_or_else(
@@ -82,7 +80,13 @@ where
                 },
             )
         })
-        .collect()
+        .partition(Result::is_ok);
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.into_iter().map(Result::unwrap_err).collect())
+    }
 }
 
 #[derive(Error, Debug)]
