@@ -92,6 +92,27 @@ fn test_list() {
 }
 
 #[test]
+fn test_get() {
+    let svc2 = functions_service_with_functions!();
+    let first_function_id = fake_functions!()
+        .first()
+        .unwrap()
+        .function
+        .id
+        .clone()
+        .unwrap();
+    let r = futures::executor::block_on(svc2.get(Request::new(first_function_id.clone())));
+    assert!(r.is_ok());
+    let f = r.unwrap().into_inner();
+    assert_eq!(first_function_id, f.id.unwrap());
+
+    let r = futures::executor::block_on(svc2.get(Request::new(FunctionId {
+        value: "ef394e5b-0b32-447d-b483-a34bcb70cbc1".to_string(),
+    })));
+    assert!(r.is_err());
+}
+
+#[test]
 fn test_execute() {
     let svc = functions_service_with_functions!();
 
