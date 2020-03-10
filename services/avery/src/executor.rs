@@ -2,29 +2,19 @@ use std::{fmt, str};
 
 use thiserror::Error;
 
+mod wasm;
+
+use crate::executor::wasm::WasmExecutor;
 use crate::proto::execute_response::Result as ProtoResult;
 use crate::proto::{ArgumentType, FunctionArgument, FunctionInput};
+use crate::FunctionExecutorEnvironmentDescriptor;
 
 pub trait FunctionExecutor {
-    fn execute(&self, code: &[u8]) -> ProtoResult;
-}
-
-#[derive(Default, Debug)]
-struct MayaExecutor {}
-
-impl FunctionExecutor for MayaExecutor {
-    fn execute(&self, _code: &[u8]) -> ProtoResult {
-        ProtoResult::Ok("hello, world!".to_owned())
-    }
-}
-
-#[derive(Default, Debug)]
-struct WasmExecutor {}
-
-impl FunctionExecutor for WasmExecutor {
-    fn execute(&self, _code: &[u8]) -> ProtoResult {
-        ProtoResult::Ok("".to_owned())
-    }
+    fn execute(
+        &self,
+        fun_env: &FunctionExecutorEnvironmentDescriptor,
+        arguments: &[FunctionArgument],
+    ) -> ProtoResult;
 }
 
 /// Lookup an executor for the given `name`
@@ -32,7 +22,6 @@ impl FunctionExecutor for WasmExecutor {
 /// If an executor is not supported, an error is returned
 pub fn lookup_executor(name: &str) -> Result<Box<dyn FunctionExecutor>, ExecutorError> {
     match name {
-        "maya" => Ok(Box::new(MayaExecutor {})),
         "wasm" => Ok(Box::new(WasmExecutor {})),
         ee => Err(ExecutorError::ExecutorNotFound(ee.to_owned())),
     }
@@ -43,10 +32,7 @@ pub fn lookup_executor(name: &str) -> Result<Box<dyn FunctionExecutor>, Executor
 /// `inputs` is the functions' description of the arguments and `args` is the passed in arguments
 /// as a JSON formatted string. This function returns all validation errors as a
 /// `Vec<ExecutionError>`.
-pub fn validate_args<'a, I>(
-    inputs: I,
-    args: Vec<FunctionArgument>,
-) -> Result<(), Vec<ExecutorError>>
+pub fn validate_args<'a, I>(inputs: I, args: &[FunctionArgument]) -> Result<(), Vec<ExecutorError>>
 where
     I: IntoIterator<Item = &'a FunctionInput>,
 {
@@ -178,10 +164,10 @@ mod tests {
             value: "yes".as_bytes().to_vec(),
         }];
 
-        let r = validate_args(inputs.iter(), vec![]);
+        let r = validate_args(inputs.iter(), &vec![]);
         assert!(r.is_err());
 
-        let r = validate_args(inputs.iter(), args);
+        let r = validate_args(inputs.iter(), &args);
         assert!(r.is_ok());
     }
 
@@ -194,7 +180,7 @@ mod tests {
             default_value: "something".to_owned(),
         }];
 
-        let r = validate_args(inputs.iter(), vec![]);
+        let r = validate_args(inputs.iter(), &vec![]);
         assert!(r.is_ok());
     }
 
@@ -261,7 +247,7 @@ mod tests {
             },
         ];
 
-        let r = validate_args(inputs.iter(), correct_args);
+        let r = validate_args(inputs.iter(), &correct_args);
 
         assert!(r.is_ok());
 
@@ -288,7 +274,7 @@ mod tests {
                 value: 4.5f64.to_le_bytes().to_vec(),
             },
         ];
-        let r = validate_args(inputs.iter(), almost_correct_args);
+        let r = validate_args(inputs.iter(), &almost_correct_args);
 
         assert!(r.is_err());
         assert_eq!(1, r.unwrap_err().len());
@@ -316,7 +302,7 @@ mod tests {
                 value: vec![0, 159, 146, 150, 99], // too long to be a float,
             },
         ];
-        let r = validate_args(inputs.iter(), no_correct_args);
+        let r = validate_args(inputs.iter(), &no_correct_args);
 
         assert!(r.is_err());
         assert_eq!(4, r.unwrap_err().len());

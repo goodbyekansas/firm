@@ -4,6 +4,7 @@
 pub mod proto {
     tonic::include_proto!("functions");
 }
+
 mod executor;
 
 use std::collections::HashMap;
@@ -16,10 +17,22 @@ use crate::executor::{lookup_executor, validate_args};
 use proto::functions_server::Functions as FunctionsServiceTrait;
 use proto::{ExecuteRequest, ExecuteResponse, Function, FunctionId, ListRequest, ListResponse};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
+pub enum FunctionExecutorEnvironmentDescriptor {
+    Inline(Vec<u8>),
+    External { metadata: HashMap<String, String> },
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionExecutionEnvironment {
+    // TODO: members should not be pub
+    pub name: String,
+    pub descriptor: FunctionExecutorEnvironmentDescriptor,
+}
+
+#[derive(Debug, Clone)]
 pub struct FunctionDescriptor {
-    pub execution_environment: String,
-    pub code: Vec<u8>,
+    pub execution_environment: FunctionExecutionEnvironment,
     pub id: Uuid,
     pub function: Function,
 }
@@ -89,6 +102,7 @@ impl FunctionsServiceTrait for FunctionsService {
     ) -> Result<tonic::Response<ExecuteResponse>, tonic::Status> {
         // lookup function
         let payload = request.into_inner();
+        let args = payload.arguments;
         let function = payload
             .function
             .ok_or_else(|| String::from("function id is required to execute a function"))
@@ -104,7 +118,7 @@ impl FunctionsServiceTrait for FunctionsService {
             .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, e))?;
 
         // validate args
-        validate_args(function.function.inputs.iter(), payload.arguments).map_err(|e| {
+        validate_args(function.function.inputs.iter(), &args).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
                 format!(
@@ -118,11 +132,13 @@ impl FunctionsServiceTrait for FunctionsService {
         })?;
 
         // lookup executor and run
-        lookup_executor(function.execution_environment.as_str())
+        lookup_executor(&function.execution_environment.name)
             .and_then(|executor| {
                 Ok(tonic::Response::new(ExecuteResponse {
                     function: function.function.id.clone(),
-                    result: Some(executor.execute(&function.code)),
+                    result: Some(
+                        executor.execute(&function.execution_environment.descriptor, &args),
+                    ),
                 }))
             })
             .map_err(|e| {

@@ -5,9 +5,12 @@ use slog::o;
 use tonic::Request;
 use uuid::Uuid;
 
-use avery::proto::{
-    functions_server::Functions as FunctionsTrait, ArgumentType, ExecuteRequest, Function,
-    FunctionArgument, FunctionId, FunctionInput, FunctionOutput, ListRequest,
+use avery::{
+    proto::{
+        functions_server::Functions as FunctionsTrait, ArgumentType, ExecuteRequest, Function,
+        FunctionArgument, FunctionId, FunctionInput, FunctionOutput, ListRequest,
+    },
+    FunctionExecutionEnvironment, FunctionExecutorEnvironmentDescriptor,
 };
 use avery::{FunctionDescriptor, FunctionsService};
 
@@ -34,8 +37,10 @@ macro_rules! fake_functions {
         vec![FunctionDescriptor {
             id: Uuid::parse_str("ef394e5b-0b32-447d-b483-a34bcb70cbc0")
                 .unwrap_or_else(|_| Uuid::new_v4()),
-            execution_environment: "maya".to_owned(),
-            code: Vec::new(),
+            execution_environment: FunctionExecutionEnvironment {
+                name: "wasm".to_owned(),
+                descriptor: FunctionExecutorEnvironmentDescriptor::Inline(vec![1]),
+            },
             function: Function {
                 id: Some(FunctionId {
                     value: "ef394e5b-0b32-447d-b483-a34bcb70cbc0".to_string(),
