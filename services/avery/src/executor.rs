@@ -7,14 +7,10 @@ mod wasm;
 use crate::executor::wasm::WasmExecutor;
 use crate::proto::execute_response::Result as ProtoResult;
 use crate::proto::{ArgumentType, FunctionArgument, FunctionInput};
-use crate::FunctionExecutorEnvironmentDescriptor;
 
 pub trait FunctionExecutor {
-    fn execute(
-        &self,
-        fun_env: &FunctionExecutorEnvironmentDescriptor,
-        arguments: &[FunctionArgument],
-    ) -> ProtoResult;
+    fn execute(&self, entrypoint: &str, code: &[u8], arguments: &[FunctionArgument])
+        -> ProtoResult;
 }
 
 /// Lookup an executor for the given `name`
@@ -37,6 +33,11 @@ where
     I: IntoIterator<Item = &'a FunctionInput>,
 {
     const MAX_PRINTABLE_VALUE_LENGTH: usize = 256;
+
+    // TODO: Currently we do not error on unknown arguments that were supplied
+    // this can be done by generating a list of the arguments that we have used.
+    // This list must be equal in size to the supplied arguments list.
+
     let (_, errors): (Vec<_>, Vec<_>) = inputs
         .into_iter()
         .map(|input| {
