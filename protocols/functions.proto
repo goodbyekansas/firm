@@ -4,6 +4,12 @@ syntax = "proto3";
 // effectively a namespace
 package functions;
 
+service FunctionsRegistry {
+  rpc List (ListRequest) returns (RegistryListResponse);
+  rpc Get (FunctionId) returns (Function);
+  rpc Register (RegisterRequest) returns (FunctionId);
+}
+
 service Functions {
   rpc List (ListRequest) returns (ListResponse);
   rpc Get (FunctionId) returns (Function);
@@ -21,6 +27,21 @@ message ListResponse {
   repeated Function functions = 1;
 }
 
+message RegistryListResponse {
+  repeated FunctionDescriptor functions = 1;
+}
+
+message ExecutionEnvironment {
+  string name = 1;
+}
+
+message FunctionDescriptor {
+  ExecutionEnvironment execution_environment = 1;
+  string entrypoint = 2;
+  string code_url = 3;
+  Function function = 4;
+}
+
 message Function {
   // this record is only for discussing metadata of a function not its code
   FunctionId id = 1;
@@ -28,6 +49,16 @@ message Function {
   map<string, string> tags = 3;
   repeated FunctionInput inputs = 4;
   repeated FunctionOutput outputs = 5;
+}
+
+message RegisterRequest {
+  string name = 2;
+  map<string, string> tags = 3;
+  repeated FunctionInput inputs = 4;
+  repeated FunctionOutput outputs = 5;
+  bytes code = 6;
+  string entrypoint = 7;
+  ExecutionEnvironment execution_environment = 8;
 }
 
 message FunctionId {
