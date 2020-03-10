@@ -25,6 +25,7 @@ use proto::{
     ArgumentType,
     ExecuteRequest,
     Function,
+    FunctionArgument,
     FunctionId, 
     FunctionInput,
     FunctionOutput,
@@ -127,6 +128,7 @@ impl Display for FunctionInput {
             ArgumentType::Bool   => "[bool   ]",
             ArgumentType::Int    => "[int    ]",
             ArgumentType::Float  => "[float  ]",
+            ArgumentType::Bytes  => "[bytes  ]",
         }).unwrap_or(               "[Invalid type ]");
 
         write!(
@@ -149,6 +151,7 @@ impl Display for FunctionOutput {
             ArgumentType::Bool   => "[bool   ]",
             ArgumentType::Int    => "[int    ]",
             ArgumentType::Float  => "[float  ]",
+            ArgumentType::Bytes  => "[bytes  ]",
         }).unwrap_or(               "[Invalid type ]");
 
         write!(f, "[ensured ]:{ftype}:{name}", name = self.name, ftype = tp,)
@@ -247,7 +250,7 @@ fn main() -> Result<(), u32> {
                 })?
                 .into_inner();
 
-            let mut json_string = "".to_string();
+            let dst_arguments: Vec<FunctionArgument> =
             if !function_record.inputs.is_empty() {
                 //// assumming we have arguements
                 let fm: HashMap<String, i32> = function_record.inputs.iter().map(
@@ -256,55 +259,85 @@ fn main() -> Result<(), u32> {
                     }
                 ).collect();
 
-                let hm: HashMap<String, Value> = arguments.iter().map(
+                arguments.iter().map(
                     |(key, val)| {
                         (
                             fm.get(key).ok_or(format!("argument {} is not expected for function {}", key, function_record.name)).and_then(|tp| {
                             let parsed_type = ArgumentType::from_i32(*tp).ok_or(format!("argument type {} is out of range (out of date protobuf definitions?)", tp))?;
                             match parsed_type {
-                                ArgumentType::String => Ok(( key.clone(), Value::String(val.to_string()) )),
+                                ArgumentType::String => Ok(
+                                    FunctionArgument {
+                                        name:key.clone(),
+                                        r#type: *tp,
+                                        value: val.as_bytes().to_vec(),
+                                    }
+                                ),
                                 ArgumentType::Bool => {
-                                    serde_json::from_str(&val)
+                                    val.parse::<bool>()
                                         .map_err(|e| format!("cant parse argument {} into bool value. err: {}", key, e))
-                                        .map(|x| (key.clone(), Value::Bool(x)) )
+                                        .map(|x| 
+                                            FunctionArgument {
+                                                name:key.clone(),
+                                                r#type: *tp,
+                                                value: vec![x as u8],
+                                            }
+                                        )
                                 },
                                 ArgumentType::Int => {
-                                    serde_json::from_str(&val)
+                                    val.parse::<i64>()
                                         .map_err(|e| format!("cant parse argument {} into int value. err: {}", key, e))
-                                        .map(|x| (key.clone(), Value::Number(x)) )
+                                        .map(|x| 
+                                            FunctionArgument {
+                                                name:key.clone(),
+                                                r#type: *tp,
+                                                value: x.to_le_bytes().to_vec(),
+                                            }
+                                        )
                                 },
                                 ArgumentType::Float => {
-                                    serde_json::from_str(&val)
+                                    val.parse::<f64>()
                                         .map_err(|e| format!("cant parse argument {} into float value. err: {}", key, e))
-                                        .map(|x| (key.clone(), Value::Number(x)) )
+                                        .map(|x|
+                                            FunctionArgument {
+                                                name:key.clone(),
+                                                r#type: *tp,
+                                                value: x.to_le_bytes().to_vec(),
+                                            }
+                                        )
                                 },
+                                ArgumentType::Bytes => Ok(
+                                    FunctionArgument {
+                                        name:key.clone(),
+                                        r#type: *tp,
+                                        value: val.as_bytes().to_vec(),
+                                    }
+                                ),
                             }
                         }))
                     }
-                ).collect::<Result<HashMap<String, Value>, String>>().map_err(|e| {
+                ).collect::<Result<Vec<FunctionArgument>, String>>().map_err(|e| {
                     println!("{}", e);
                     1u32
-                })?;
+                })?
 
-                // this part will have to change once we get the new interface
-                let json = json!(hm);
-                json_string = json.to_string();
-            }
+            } else {
+                Vec::new()
+            };
 
             let request = ExecuteRequest {
                 function: Some(FunctionId {
                     value: function_id.clone(),
                 }),
-                arguments: json_string
+                arguments: dst_arguments
             };
-            println!("request: {:?}", request);
+
             let execute_response = basic_rt
                 .block_on(client.execute(Request::new(request)))
                 .map_err(|e| {
                     println!("Failed to execute function with id {}: {}", function_id, e);
                     4u32
                 })?;
-            println!("{:?}", execute_response);
+            println!("{:?}", execute_response.into_inner());
         }
     }
 
