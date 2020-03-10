@@ -1,0 +1,9 @@
+name = "start-maya"
+
+[inputs]
+    [inputs.version]
+        type="string"
+
+[execution-environment]
+type = "wasm"
+entrypoint = "main"

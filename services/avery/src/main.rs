@@ -13,7 +13,8 @@ use avery::{
         functions_server::FunctionsServer, ArgumentType, Function, FunctionId, FunctionInput,
         FunctionOutput,
     },
-    FunctionDescriptor, FunctionsService,
+    FunctionDescriptor, FunctionExecutionEnvironment, FunctionExecutorEnvironmentDescriptor,
+    FunctionsService,
 };
 
 // clean exit on crtl c
@@ -39,8 +40,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         FunctionDescriptor {
             id: Uuid::parse_str("0c8c108c-bf61-4735-a86d-2d0f5b53561c")
                 .unwrap_or_else(|_| Uuid::new_v4()),
-            execution_environment: "maya".to_owned(),
-            code: Vec::new(),
+            execution_environment: FunctionExecutionEnvironment {
+                name: "rust".to_owned(),
+                descriptor: FunctionExecutorEnvironmentDescriptor::Inline(vec![1]),
+            },
             function: Function {
                 id: Some(FunctionId {
                     value: "0c8c108c-bf61-4735-a86d-2d0f5b53561c".to_string(),
@@ -54,8 +57,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         FunctionDescriptor {
             id: Uuid::parse_str("ef394e5b-0b32-447d-b483-a34bcb70cbc0")
                 .unwrap_or_else(|_| Uuid::new_v4()),
-            execution_environment: "maya".to_owned(),
-            code: Vec::new(),
+            execution_environment: FunctionExecutionEnvironment {
+                name: "baya".to_owned(),
+                descriptor: FunctionExecutorEnvironmentDescriptor::Inline(vec![1]),
+            },
             function: Function {
                 id: Some(FunctionId {
                     value: "ef394e5b-0b32-447d-b483-a34bcb70cbc0".to_string(),
