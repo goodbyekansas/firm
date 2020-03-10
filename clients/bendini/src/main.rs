@@ -1,4 +1,4 @@
-#![allow(warnings)]
+#![deny(warnings)]
 
 // module declarations
 pub mod proto {
@@ -17,7 +17,6 @@ use std::{
 use structopt::StructOpt;
 use tokio::runtime;
 use tonic::Request;
-use serde_json::{self, json, Value};
 
 // internal
 use proto::functions_client::FunctionsClient;
