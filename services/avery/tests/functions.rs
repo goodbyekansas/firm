@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use avery::proto::{
     functions_server::Functions as FunctionsTrait, ArgumentType, ExecuteRequest, Function,
-    FunctionId, FunctionInput, FunctionOutput, ListRequest,
+    FunctionArgument, FunctionId, FunctionInput, FunctionOutput, ListRequest,
 };
 use avery::{FunctionDescriptor, FunctionsService};
 
@@ -116,29 +116,40 @@ fn test_get() {
 fn test_execute() {
     let svc = functions_service_with_functions!();
 
-    let r = futures::executor::block_on(
-        svc.execute(Request::new(ExecuteRequest {
-            function: fake_functions!().first().unwrap().function.id.clone(),
-            arguments: r#"
-            {
-                "say": "sune",
-                "count": 3
-            }"#
-            .to_owned(),
-        })),
-    );
+    let correct_args = vec![
+        FunctionArgument {
+            name: "say".to_owned(),
+            r#type: ArgumentType::String as i32,
+            value: "sune".as_bytes().to_vec(),
+        },
+        FunctionArgument {
+            name: "count".to_owned(),
+            r#type: ArgumentType::Int as i32,
+            value: 3i64.to_le_bytes().to_vec(),
+        },
+    ];
+    let r = futures::executor::block_on(svc.execute(Request::new(ExecuteRequest {
+        function: fake_functions!().first().unwrap().function.id.clone(),
+        arguments: correct_args,
+    })));
     assert!(r.is_ok());
 
-    let r = futures::executor::block_on(
-        svc.execute(Request::new(ExecuteRequest {
-            function: fake_functions!().first().unwrap().function.id.clone(),
-            arguments: r#"
-            {
-                "say": 3,
-                "count": "sune"
-            }"#
-            .to_owned(),
-        })),
-    );
+    let incorrect_args = vec![
+        FunctionArgument {
+            name: "say".to_owned(),
+            r#type: ArgumentType::String as i32,
+            value: 3i64.to_le_bytes().to_vec(),
+        },
+        FunctionArgument {
+            name: "count".to_owned(),
+            r#type: ArgumentType::Int as i32,
+            value: "sune".as_bytes().to_vec(),
+        },
+    ];
+
+    let r = futures::executor::block_on(svc.execute(Request::new(ExecuteRequest {
+        function: fake_functions!().first().unwrap().function.id.clone(),
+        arguments: incorrect_args,
+    })));
     assert!(r.is_err());
 }
