@@ -1,18 +1,19 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use futures;
 use slog::o;
 use tonic::Request;
-use uuid::Uuid;
 
 use avery::{
+    fake_registry::FunctionsRegistryService,
     proto::{
-        functions_server::Functions as FunctionsTrait, ArgumentType, ExecuteRequest, Function,
-        FunctionArgument, FunctionId, FunctionInput, FunctionOutput, ListRequest,
+        functions_registry_server::FunctionsRegistry,
+        functions_server::Functions as FunctionsTrait, ArgumentType, ExecuteRequest,
+        ExecutionEnvironment, FunctionArgument, FunctionId, FunctionInput, FunctionOutput,
+        ListRequest, RegisterRequest,
     },
-    FunctionExecutionEnvironment, FunctionExecutorEnvironmentDescriptor,
+    FunctionsService,
 };
-use avery::{FunctionDescriptor, FunctionsService};
 
 macro_rules! null_logger {
     () => {{
@@ -22,29 +23,26 @@ macro_rules! null_logger {
 
 macro_rules! functions_service {
     () => {{
-        FunctionsService::new(null_logger!(), Vec::new().iter())
+        FunctionsService::new(null_logger!(), Arc::new(FunctionsRegistryService::new()))
     }};
 }
 
 macro_rules! functions_service_with_functions {
     () => {{
-        FunctionsService::new(null_logger!(), fake_functions!().iter())
-    }};
-}
-
-macro_rules! fake_functions {
-    () => {{
-        vec![FunctionDescriptor {
-            id: Uuid::parse_str("ef394e5b-0b32-447d-b483-a34bcb70cbc0")
-                .unwrap_or_else(|_| Uuid::new_v4()),
-            execution_environment: FunctionExecutionEnvironment {
-                name: "wasm".to_owned(),
-                descriptor: FunctionExecutorEnvironmentDescriptor::Inline(vec![1]),
-            },
-            function: Function {
-                id: Some(FunctionId {
-                    value: "ef394e5b-0b32-447d-b483-a34bcb70cbc0".to_string(),
+        let functions_registry_service = Arc::new(FunctionsRegistryService::new());
+        vec![
+            RegisterRequest {
+                name: "hello_world".to_owned(),
+                tags: HashMap::with_capacity(0),
+                inputs: Vec::with_capacity(0),
+                outputs: Vec::with_capacity(0),
+                code: vec![],
+                entrypoint: "det du!".to_owned(),
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "wasm".to_owned(),
                 }),
+            },
+            RegisterRequest {
                 name: "say_hello_yourself".to_owned(),
                 tags: HashMap::with_capacity(0),
                 inputs: vec![
@@ -65,8 +63,56 @@ macro_rules! fake_functions {
                     name: "output_string".to_string(),
                     r#type: ArgumentType::String as i32,
                 }],
+                code: vec![],
+                entrypoint: "kanske".to_owned(),
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "wasm".to_owned(),
+                }),
             },
-        }]
+        ]
+        .iter()
+        .for_each(|f| {
+            futures::executor::block_on(
+                functions_registry_service.register(tonic::Request::new(f.clone())),
+            )
+            .map_or_else(
+                |e| println!("Failed to register function \"{}\". Err: {}", f.name, e),
+                |_| (),
+            );
+        });
+        FunctionsService::new(null_logger!(), Arc::clone(&functions_registry_service))
+    }};
+}
+
+macro_rules! functions_service_with_specified_functions {
+    ($fns:expr) => {{
+        let functions_registry_service = Arc::new(FunctionsRegistryService::new());
+        $fns.iter().for_each(|f| {
+            futures::executor::block_on(
+                functions_registry_service.register(tonic::Request::new(f.clone())),
+            )
+            .map_or_else(
+                |e| println!("Failed to register function \"{}\". Err: {}", f.name, e),
+                |_| (),
+            );
+        });
+        FunctionsService::new(null_logger!(), Arc::clone(&functions_registry_service))
+    }};
+}
+
+macro_rules! first_function {
+    ($service:expr) => {{
+        futures::executor::block_on($service.list(Request::new(ListRequest {
+            name_filter: String::from(""),
+            tags_filter: HashMap::new(),
+            offset: 0,
+            limit: 100,
+        })))
+        .unwrap()
+        .into_inner()
+        .functions
+        .first()
+        .unwrap()
     }};
 }
 
@@ -80,6 +126,7 @@ fn test_list() {
         offset: 0,
         limit: 100,
     })));
+
     assert!(r.is_ok());
     let fns = r.unwrap().into_inner();
     assert_eq!(0, fns.functions.len());
@@ -93,19 +140,13 @@ fn test_list() {
     })));
     assert!(r.is_ok());
     let fns = r.unwrap().into_inner();
-    assert_eq!(1, fns.functions.len());
+    assert_eq!(2, fns.functions.len());
 }
 
 #[test]
 fn test_get() {
     let svc2 = functions_service_with_functions!();
-    let first_function_id = fake_functions!()
-        .first()
-        .unwrap()
-        .function
-        .id
-        .clone()
-        .unwrap();
+    let first_function_id = first_function!(svc2).id.clone().unwrap();
     let r = futures::executor::block_on(svc2.get(Request::new(first_function_id.clone())));
     assert!(r.is_ok());
     let f = r.unwrap().into_inner();
@@ -119,7 +160,33 @@ fn test_get() {
 
 #[test]
 fn test_execute() {
-    let svc = functions_service_with_functions!();
+    let svc = functions_service_with_specified_functions!(vec![RegisterRequest {
+        name: "say_hello_yourself".to_owned(),
+        tags: HashMap::with_capacity(0),
+        inputs: vec![
+            FunctionInput {
+                name: "say".to_string(),
+                required: true,
+                r#type: ArgumentType::String as i32,
+                default_value: String::new(),
+            },
+            FunctionInput {
+                name: "count".to_string(),
+                required: false,
+                r#type: ArgumentType::Int as i32,
+                default_value: 1.to_string(),
+            },
+        ],
+        outputs: vec![FunctionOutput {
+            name: "output_string".to_string(),
+            r#type: ArgumentType::String as i32,
+        }],
+        code: vec![],
+        entrypoint: "kanske".to_owned(),
+        execution_environment: Some(ExecutionEnvironment {
+            name: "wasm".to_owned(),
+        }),
+    }]);
 
     let correct_args = vec![
         FunctionArgument {
@@ -134,7 +201,7 @@ fn test_execute() {
         },
     ];
     let r = futures::executor::block_on(svc.execute(Request::new(ExecuteRequest {
-        function: fake_functions!().first().unwrap().function.id.clone(),
+        function: first_function!(svc).id.clone(),
         arguments: correct_args,
     })));
     assert!(r.is_ok());
@@ -153,7 +220,7 @@ fn test_execute() {
     ];
 
     let r = futures::executor::block_on(svc.execute(Request::new(ExecuteRequest {
-        function: fake_functions!().first().unwrap().function.id.clone(),
+        function: first_function!(svc).id.clone(),
         arguments: incorrect_args,
     })));
     assert!(r.is_err());

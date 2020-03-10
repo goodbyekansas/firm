@@ -6,52 +6,33 @@ pub mod proto {
 }
 
 mod executor;
+pub mod fake_registry;
 
-use std::collections::HashMap;
+use std::sync::Arc;
 
 use slog::Logger;
-use uuid::Uuid;
 
 // crate / internal includes
-use crate::executor::{lookup_executor, validate_args};
+use executor::{lookup_executor, validate_args};
+use proto::functions_registry_server::FunctionsRegistry;
 use proto::functions_server::Functions as FunctionsServiceTrait;
 use proto::{ExecuteRequest, ExecuteResponse, Function, FunctionId, ListRequest, ListResponse};
-
-#[derive(Debug, Clone)]
-pub enum FunctionExecutorEnvironmentDescriptor {
-    Inline(Vec<u8>),
-    External { metadata: HashMap<String, String> },
-}
-
-#[derive(Debug, Clone)]
-pub struct FunctionExecutionEnvironment {
-    // TODO: members should not be pub
-    pub name: String,
-    pub descriptor: FunctionExecutorEnvironmentDescriptor,
-}
-
-#[derive(Debug, Clone)]
-pub struct FunctionDescriptor {
-    pub execution_environment: FunctionExecutionEnvironment,
-    pub id: Uuid,
-    pub function: Function,
-}
 
 // define the FunctionsService struct
 #[derive(Debug)]
 pub struct FunctionsService {
-    functions: HashMap<Uuid, FunctionDescriptor>,
+    functions_register: Arc<fake_registry::FunctionsRegistryService>,
     log: Logger,
 }
 
 // local methods to operate on a FunctionsService struct
 impl FunctionsService {
-    pub fn new<'a, I>(log: Logger, functions: I) -> Self
-    where
-        I: IntoIterator<Item = &'a FunctionDescriptor>,
-    {
+    pub fn new(
+        log: Logger,
+        functions_register: Arc<fake_registry::FunctionsRegistryService>,
+    ) -> Self {
         Self {
-            functions: functions.into_iter().map(|f| (f.id, f.clone())).collect(),
+            functions_register,
             log,
         }
     }
@@ -62,13 +43,18 @@ impl FunctionsService {
 impl FunctionsServiceTrait for FunctionsService {
     async fn list(
         &self,
-        _request: tonic::Request<ListRequest>,
+        request: tonic::Request<ListRequest>,
     ) -> Result<tonic::Response<ListResponse>, tonic::Status> {
+        let payload = self
+            .functions_register
+            .list(tonic::Request::new(request.into_inner()))
+            .await?
+            .into_inner();
         Ok(tonic::Response::new(ListResponse {
-            functions: self
+            functions: payload
                 .functions
-                .values()
-                .map(|fd| fd.function.clone())
+                .iter()
+                .filter_map(|fd| fd.function.clone())
                 .collect(),
         }))
     }
@@ -77,23 +63,20 @@ impl FunctionsServiceTrait for FunctionsService {
         &self,
         request: tonic::Request<FunctionId>,
     ) -> Result<tonic::Response<Function>, tonic::Status> {
-        let fn_id = request.into_inner();
-        Uuid::parse_str(&fn_id.value)
-            .map_err(|e| {
+        let function_descriptor = self
+            .functions_register
+            .get(tonic::Request::new(request.into_inner()))
+            .await?
+            .into_inner();
+        function_descriptor
+            .function
+            .map(tonic::Response::new)
+            .ok_or_else(|| {
                 tonic::Status::new(
-                    tonic::Code::InvalidArgument,
-                    format!("failed to parse UUID from function id: {}", e),
+                    tonic::Code::Internal,
+                    "Function descriptor did not contain any function.",
                 )
             })
-            .and_then(|fun_uuid| {
-                self.functions.get(&fun_uuid).ok_or_else(|| {
-                    tonic::Status::new(
-                        tonic::Code::NotFound,
-                        format!("failed to find function with id: {}", fun_uuid),
-                    )
-                })
-            })
-            .map(|fd| tonic::Response::new(fd.function.clone()))
     }
 
     async fn execute(
@@ -103,22 +86,23 @@ impl FunctionsServiceTrait for FunctionsService {
         // lookup function
         let payload = request.into_inner();
         let args = payload.arguments;
-        let function = payload
+        let function_descriptor = payload
             .function
             .ok_or_else(|| String::from("function id is required to execute a function"))
-            .and_then(|fun_id_str| {
-                Uuid::parse_str(&fun_id_str.value)
-                    .map_err(|e| format!("failed to parse UUID from function id: {}", e))
-            })
-            .and_then(|fun_id| {
-                self.functions
-                    .get(&fun_id)
-                    .ok_or_else(|| format!("failed to find function with id {}", fun_id))
-            })
-            .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, e))?;
+            .map(|fun_id| self.functions_register.get(tonic::Request::new(fun_id)))
+            .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, e))?
+            .await?
+            .into_inner();
+
+        let function = function_descriptor.clone().function.ok_or_else(|| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                "Function descriptor did not contain any function.",
+            )
+        })?;
 
         // validate args
-        validate_args(function.function.inputs.iter(), &args).map_err(|e| {
+        validate_args(function.inputs.iter(), &args).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
                 format!(
@@ -131,14 +115,22 @@ impl FunctionsServiceTrait for FunctionsService {
             )
         })?;
 
+        let execution_environment = function_descriptor
+            .clone()
+            .execution_environment
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    "Function descriptor did not contain any execution environment.",
+                )
+            })?;
+
         // lookup executor and run
-        lookup_executor(&function.execution_environment.name)
+        lookup_executor(&execution_environment.name)
             .and_then(|executor| {
                 Ok(tonic::Response::new(ExecuteResponse {
-                    function: function.function.id.clone(),
-                    result: Some(
-                        executor.execute(&function.execution_environment.descriptor, &args),
-                    ),
+                    function: function.id.clone(),
+                    result: Some(executor.execute(&function_descriptor.entrypoint, &[], &args)),
                 }))
             })
             .map_err(|e| {

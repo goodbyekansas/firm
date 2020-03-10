@@ -6,7 +6,7 @@ package functions;
 
 service FunctionsRegistry {
   rpc List (ListRequest) returns (RegistryListResponse);
-  rpc Get (FunctionId) returns (Function);
+  rpc Get (FunctionId) returns (FunctionDescriptor);
   rpc Register (RegisterRequest) returns (FunctionId);
 }
 
@@ -52,13 +52,13 @@ message Function {
 }
 
 message RegisterRequest {
-  string name = 2;
-  map<string, string> tags = 3;
-  repeated FunctionInput inputs = 4;
-  repeated FunctionOutput outputs = 5;
-  bytes code = 6;
-  string entrypoint = 7;
-  ExecutionEnvironment execution_environment = 8;
+  string name = 1;
+  map<string, string> tags = 2;
+  repeated FunctionInput inputs = 3;
+  repeated FunctionOutput outputs = 4;
+  bytes code = 5;
+  string entrypoint = 6;
+  ExecutionEnvironment execution_environment = 7;
 }
 
 message FunctionId {

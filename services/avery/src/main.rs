@@ -1,19 +1,21 @@
 #![deny(warnings)]
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
+use futures;
 use slog::{info, o, Drain};
 use slog_async;
 use slog_term;
+use structopt::StructOpt;
 use tonic::transport::Server;
-use uuid::Uuid;
 
 use avery::{
+    fake_registry::FunctionsRegistryService,
     proto::{
-        functions_server::FunctionsServer, ArgumentType, Function, FunctionId, FunctionInput,
-        FunctionOutput,
+        functions_registry_server::{FunctionsRegistry, FunctionsRegistryServer},
+        functions_server::FunctionsServer,
+        ArgumentType, ExecutionEnvironment, FunctionInput, FunctionOutput, RegisterRequest,
     },
-    FunctionDescriptor, FunctionExecutionEnvironment, FunctionExecutorEnvironmentDescriptor,
     FunctionsService,
 };
 
@@ -24,47 +26,42 @@ async fn ctrlc() {
     }
 }
 
+#[derive(StructOpt, Debug)]
+#[structopt(name = "avery")]
+struct AveryArgs {
+    // function executor servicen address
+    #[structopt(short, long)]
+    skip_register_test_functions: bool,
+}
+
 // local server main loop
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let port: u32 = 1939;
-    let addr = format!("[::]:{}", port).parse().unwrap();
-
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::CompactFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
 
     let log = slog::Logger::root(drain, o!());
 
-    let functions = vec![
-        FunctionDescriptor {
-            id: Uuid::parse_str("0c8c108c-bf61-4735-a86d-2d0f5b53561c")
-                .unwrap_or_else(|_| Uuid::new_v4()),
-            execution_environment: FunctionExecutionEnvironment {
-                name: "rust".to_owned(),
-                descriptor: FunctionExecutorEnvironmentDescriptor::Inline(vec![1]),
-            },
-            function: Function {
-                id: Some(FunctionId {
-                    value: "0c8c108c-bf61-4735-a86d-2d0f5b53561c".to_string(),
-                }),
+    let args = AveryArgs::from_args();
+
+    let port: u32 = 1939;
+    let addr = format!("[::]:{}", port).parse().unwrap();
+    let functions_registry_service = Arc::new(FunctionsRegistryService::new());
+    if !args.skip_register_test_functions {
+        vec![
+            RegisterRequest {
                 name: "hello_world".to_owned(),
                 tags: HashMap::with_capacity(0),
                 inputs: Vec::with_capacity(0),
                 outputs: Vec::with_capacity(0),
-            },
-        },
-        FunctionDescriptor {
-            id: Uuid::parse_str("ef394e5b-0b32-447d-b483-a34bcb70cbc0")
-                .unwrap_or_else(|_| Uuid::new_v4()),
-            execution_environment: FunctionExecutionEnvironment {
-                name: "wasm".to_owned(),
-                descriptor: FunctionExecutorEnvironmentDescriptor::Inline(vec![1]),
-            },
-            function: Function {
-                id: Some(FunctionId {
-                    value: "ef394e5b-0b32-447d-b483-a34bcb70cbc0".to_string(),
+                code: vec![],
+                entrypoint: "det du!".to_owned(),
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "wasm".to_owned(),
                 }),
+            },
+            RegisterRequest {
                 name: "say_hello_yourself".to_owned(),
                 tags: HashMap::with_capacity(0),
                 inputs: vec![
@@ -85,12 +82,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     name: "output_string".to_string(),
                     r#type: ArgumentType::String as i32,
                 }],
+                code: vec![],
+                entrypoint: "kanske".to_owned(),
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "wasm".to_owned(),
+                }),
             },
-        },
-    ];
+        ]
+        .iter()
+        .for_each(|f| {
+            futures::executor::block_on(
+                functions_registry_service.register(tonic::Request::new(f.clone())),
+            )
+            .map_or_else(
+                |e| println!("Failed to register function \"{}\". Err: {}", f.name, e),
+                |_| (),
+            );
+        });
+    }
 
-    let functions_service =
-        FunctionsService::new(log.new(o!("service" => "functions")), functions.iter());
+    let functions_service = FunctionsService::new(
+        log.new(o!("service" => "functions")),
+        functions_registry_service.clone(),
+    );
 
     info!(
         log,
@@ -99,6 +113,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Server::builder()
         .add_service(FunctionsServer::new(functions_service))
+        .add_service(FunctionsRegistryServer::new(Arc::clone(
+            &functions_registry_service,
+        )))
         .serve_with_shutdown(addr, ctrlc())
         .await?;
     info!(log, "👋 see you soon - no one leaves the Firm");
