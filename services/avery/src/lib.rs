@@ -104,7 +104,7 @@ impl FunctionsServiceTrait for FunctionsService {
             .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, e))?;
 
         // validate args
-        validate_args(function.function.inputs.iter(), &payload.arguments).map_err(|e| {
+        validate_args(function.function.inputs.iter(), payload.arguments).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
                 format!(
