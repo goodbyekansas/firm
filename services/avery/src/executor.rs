@@ -80,7 +80,7 @@ where
                                 .map_err(|tp| {
                                     ExecutorError::InvalidArgumentValue {
                                         argument_name: arg.name.clone(),
-                                        tp: tp,
+                                        tp,
                                         value: if arg.value.len() < MAX_PRINTABLE_VALUE_LENGTH {
                                             String::from_utf8(arg.value.clone()).unwrap_or_else(
                                                 |_| String::from("invalid utf-8 string 🚑"),
