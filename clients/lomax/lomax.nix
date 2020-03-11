@@ -4,7 +4,7 @@ let
   nixpkgs = import <nixpkgs> { overlays = [ moz_overlay ]; };
 in with nixpkgs;
 stdenv.mkDerivation {
-  name = "bendini";
+  name = "lomax";
   src = builtins.filterSource
     (path: type: (type != "directory" || baseNameOf path != "target")) ./.;
 
@@ -34,7 +34,7 @@ stdenv.mkDerivation {
 
   installPhase = ''
     mkdir -p $out/bin
-    cp target/release/bendini $out/bin
+    cp target/release/lomax $out/bin
   '';
 
   # always want backtraces when building or in dev
