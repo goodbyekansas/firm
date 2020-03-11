@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             id: Uuid::parse_str("ef394e5b-0b32-447d-b483-a34bcb70cbc0")
                 .unwrap_or_else(|_| Uuid::new_v4()),
             execution_environment: FunctionExecutionEnvironment {
-                name: "baya".to_owned(),
+                name: "wasm".to_owned(),
                 descriptor: FunctionExecutorEnvironmentDescriptor::Inline(vec![1]),
             },
             function: Function {

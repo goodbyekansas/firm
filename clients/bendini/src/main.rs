@@ -23,6 +23,7 @@ use proto::functions_client::FunctionsClient;
 use proto::{
     ArgumentType,
     ExecuteRequest,
+    ExecuteResponse,
     Function,
     FunctionArgument,
     FunctionId, 
@@ -143,7 +144,6 @@ impl Display for FunctionInput {
 
 impl Display for FunctionOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-
         let tp = ArgumentType::from_i32(self.r#type)
         .map(|at| match at {
             ArgumentType::String => "[string ]",
@@ -154,6 +154,16 @@ impl Display for FunctionOutput {
         }).unwrap_or(               "[Invalid type ]");
 
         write!(f, "[ensured ]:{ftype}:{name}", name = self.name, ftype = tp,)
+    }
+}
+
+impl Display for ExecuteResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let na = "n/a".to_string();
+        let id_str = self.function.clone().unwrap_or(FunctionId { value: na }).value;
+        let result = self.result.clone().unwrap();
+        writeln!(f, "\tid:     {}", id_str)?;
+        writeln!(f, "\tresult: {:?}", result)
     }
 }
 
@@ -251,7 +261,7 @@ fn main() -> Result<(), u32> {
 
             let dst_arguments: Vec<FunctionArgument> =
             if !function_record.inputs.is_empty() {
-                //// assumming we have arguements
+                // assumming we have arguements
                 let fm: HashMap<String, i32> = function_record.inputs.iter().map(
                     |f: &proto::FunctionInput| {
                         (f.name.clone(), f.r#type)
@@ -330,13 +340,14 @@ fn main() -> Result<(), u32> {
                 arguments: dst_arguments
             };
 
+            println!("Function Execution Response");
             let execute_response = basic_rt
                 .block_on(client.execute(Request::new(request)))
                 .map_err(|e| {
                     println!("Failed to execute function with id {}: {}", function_id, e);
                     4u32
                 })?;
-            println!("{:?}", execute_response.into_inner());
+            println!("{}", execute_response.into_inner());
         }
     }
 
