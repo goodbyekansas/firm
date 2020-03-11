@@ -75,7 +75,7 @@ message ExecuteResponse {
   FunctionId function = 1;
   oneof result {
     ExecutionError error = 2;
-    string ok = 3;
+    FunctionResult ok = 3;
   }
 }
 
@@ -99,14 +99,21 @@ message FunctionOutput {
   ArgumentType type = 2;
 }
 
-// this is how to do everything ...later
 message FunctionArgument {
   string name = 1;
   ArgumentType type = 2;
   bytes value = 3;
 }
 
-// FunctionResult {}
+message FunctionResult {
+  repeated ReturnValue values = 1;
+}
+
+message ReturnValue {
+  string name = 1;
+  ArgumentType type = 2;
+  bytes value = 3;
+}
 
 message ExecutionError {
   string msg = 1;

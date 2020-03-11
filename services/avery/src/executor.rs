@@ -6,7 +6,7 @@ mod wasm;
 
 use crate::executor::wasm::WasmExecutor;
 use crate::proto::execute_response::Result as ProtoResult;
-use crate::proto::{ArgumentType, FunctionArgument, FunctionInput};
+use crate::proto::{ArgumentType, FunctionArgument, FunctionInput, FunctionOutput, FunctionResult};
 
 pub trait FunctionExecutor {
     fn execute(&self, entrypoint: &str, code: &[u8], arguments: &[FunctionArgument])
@@ -23,17 +23,102 @@ pub fn lookup_executor(name: &str) -> Result<Box<dyn FunctionExecutor>, Executor
     }
 }
 
-/// Validate arguments in json format
+fn validate_argument_type(arg_type: ArgumentType, argument_value: &[u8]) -> Result<(), String> {
+    match arg_type {
+        ArgumentType::String => str::from_utf8(&argument_value)
+            .map(|_| ())
+            .map_err(|_| arg_type.to_string()),
+        ArgumentType::Int | ArgumentType::Float => {
+            if argument_value.len() == 8 {
+                Ok(())
+            } else {
+                Err(arg_type.to_string())
+            }
+        }
+        ArgumentType::Bool => {
+            if argument_value.len() == 1 {
+                Ok(())
+            } else {
+                Err(arg_type.to_string())
+            }
+        }
+        ArgumentType::Bytes => Ok(()), // really do not know a lot about bytes,
+    }
+}
+
+fn get_reasonable_value_string(argument_value: &[u8]) -> String {
+    const MAX_PRINTABLE_VALUE_LENGTH: usize = 256;
+    if argument_value.len() < MAX_PRINTABLE_VALUE_LENGTH {
+        String::from_utf8(argument_value.to_vec())
+            .unwrap_or_else(|_| String::from("invalid utf-8 string 🚑"))
+    } else {
+        format!(
+            "too long value (> {} bytes, vaccuum tubes will explode) 💣",
+            MAX_PRINTABLE_VALUE_LENGTH
+        )
+    }
+}
+
+pub fn validate_results<'a, I>(
+    outputs: I,
+    results: &FunctionResult,
+) -> Result<(), Vec<ExecutorError>>
+where
+    I: IntoIterator<Item = &'a FunctionOutput>,
+{
+    let (_, errors): (Vec<_>, Vec<_>) = outputs
+        .into_iter()
+        .map(|output| {
+            results
+                .values
+                .iter()
+                .find(|arg| arg.name == output.name)
+                .map_or_else(
+                    || Err(ExecutorError::RequiredResultMissing(output.name.clone())),
+                    |arg| {
+                        if output.r#type == arg.r#type {
+                            ArgumentType::from_i32(arg.r#type).map_or_else(
+                                || Err(ExecutorError::ResultTypeOutOfRange(arg.r#type)),
+                                |at| {
+                                    validate_argument_type(at, &arg.value).map_err(|tp| {
+                                        ExecutorError::InvalidResultValue {
+                                            result_name: arg.name.clone(),
+                                            tp,
+                                            value: get_reasonable_value_string(&arg.value),
+                                        }
+                                    })
+                                },
+                            )
+                        } else {
+                            Err(ExecutorError::MismatchedResultType {
+                                result_name: output.name.clone(),
+                                expected: ArgumentType::from_i32(output.r#type)
+                                    .map_or("invalid_type".to_owned(), |t| t.to_string()),
+                                got: ArgumentType::from_i32(arg.r#type)
+                                    .map_or("invalid_type".to_owned(), |t| t.to_string()),
+                            })
+                        }
+                    },
+                )
+        })
+        .partition(Result::is_ok);
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.into_iter().map(Result::unwrap_err).collect())
+    }
+}
+
+/// Validate arguments
 ///
 /// `inputs` is the functions' description of the arguments and `args` is the passed in arguments
-/// as a JSON formatted string. This function returns all validation errors as a
+/// as an array of `FunctionArgument`. This function returns all validation errors as a
 /// `Vec<ExecutionError>`.
 pub fn validate_args<'a, I>(inputs: I, args: &[FunctionArgument]) -> Result<(), Vec<ExecutorError>>
 where
     I: IntoIterator<Item = &'a FunctionInput>,
 {
-    const MAX_PRINTABLE_VALUE_LENGTH: usize = 256;
-
     // TODO: Currently we do not error on unknown arguments that were supplied
     // this can be done by generating a list of the arguments that we have used.
     // This list must be equal in size to the supplied arguments list.
@@ -56,28 +141,11 @@ where
                         ArgumentType::from_i32(arg.r#type).map_or_else(
                             || Err(ExecutorError::OutOfRangeArgumentType(arg.r#type)),
                             |at| {
-                                match at {
-                                    ArgumentType::String => str::from_utf8(&arg.value)
-                                        .map(|_| ())
-                                        .map_err(|_| at.to_string()),
-                                    ArgumentType::Int | ArgumentType::Float => if arg.value.len() == 8 { Ok(()) } else { Err(at.to_string()) },
-                                    ArgumentType::Bool => if arg.value.len() == 1 { Ok(()) } else { Err(at.to_string()) },
-                                    ArgumentType::Bytes => Ok(()) // really do not know a lot about bytes,
-                                }
-                                .map_err(|tp| {
+                                validate_argument_type(at, &arg.value).map_err(|tp| {
                                     ExecutorError::InvalidArgumentValue {
                                         argument_name: arg.name.clone(),
                                         tp,
-                                        value: if arg.value.len() < MAX_PRINTABLE_VALUE_LENGTH {
-                                            String::from_utf8(arg.value.clone()).unwrap_or_else(
-                                                |_| String::from("invalid utf-8 string 🚑"),
-                                            )
-                                        } else {
-                                            format!(
-                                                "too long value (> {} bytes, vaccuum tubes will explode) 💣",
-                                                MAX_PRINTABLE_VALUE_LENGTH
-                                            )
-                                        },
+                                        value: get_reasonable_value_string(&arg.value),
                                     }
                                 })
                             },
@@ -145,11 +213,33 @@ pub enum ExecutorError {
 
     #[error("Failed to find required argument {0}")]
     RequiredArgumentMissing(String),
+
+    #[error("Failed to find mandatory result \"{0}\"")]
+    RequiredResultMissing(String),
+
+    #[error(
+        "Output result \"{result_name}\" has unexpected type. Expected \"{expected}\", got \"{got}\""
+    )]
+    MismatchedResultType {
+        result_name: String,
+        expected: String,
+        got: String,
+    },
+    #[error("Out of range result type found: {0}. Protobuf definitions out of date?")]
+    ResultTypeOutOfRange(i32),
+
+    #[error("Result \"{result_name}\" could not be parsed into \"{tp}\". Value: \"{value}\"")]
+    InvalidResultValue {
+        result_name: String,
+        tp: String,
+        value: String,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::ReturnValue;
     #[test]
     fn parse_required() {
         let inputs = vec![FunctionInput {
@@ -307,5 +397,48 @@ mod tests {
 
         assert!(r.is_err());
         assert_eq!(4, r.unwrap_err().len());
+    }
+
+    // Tests for validating results
+    #[test]
+    fn validate_outputs() {
+        let outputs = vec![FunctionOutput {
+            name: "very_important_output".to_owned(),
+            r#type: ArgumentType::String as i32,
+        }];
+
+        let result = FunctionResult {
+            values: vec![ReturnValue {
+                name: "very_important_output".to_owned(),
+                r#type: ArgumentType::String as i32,
+                value: vec![],
+            }],
+        };
+
+        // no values
+        let r = validate_results(outputs.iter(), &FunctionResult { values: vec![] });
+        assert!(r.is_err());
+
+        // ok values
+        let r = validate_results(outputs.iter(), &result);
+        assert!(r.is_ok());
+
+        // give bad type
+        let result = FunctionResult {
+            values: vec![ReturnValue {
+                name: "very_important_output".to_owned(),
+                r#type: ArgumentType::String as i32,
+                value: vec![0, 159, 146, 150], // not a valid utf-8 string,,
+            }],
+        };
+
+        let r = validate_results(outputs.iter(), &result);
+        assert!(r.is_err());
+        let err = r.unwrap_err();
+        assert_eq!(1, err.len());
+        assert!(match err.first().unwrap() {
+            ExecutorError::InvalidResultValue { .. } => true,
+            _ => false,
+        })
     }
 }
