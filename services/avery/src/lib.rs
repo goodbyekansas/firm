@@ -13,10 +13,13 @@ use std::sync::Arc;
 use slog::Logger;
 
 // crate / internal includes
-use executor::{lookup_executor, validate_args};
+use executor::{lookup_executor, validate_args, validate_results};
 use proto::functions_registry_server::FunctionsRegistry;
 use proto::functions_server::Functions as FunctionsServiceTrait;
-use proto::{ExecuteRequest, ExecuteResponse, Function, FunctionId, ListRequest, ListResponse};
+use proto::{
+    execute_response::Result as ProtoResult, ExecuteRequest, ExecuteResponse, Function, FunctionId,
+    ListRequest, ListResponse,
+};
 
 // define the FunctionsService struct
 #[derive(Debug)]
@@ -127,17 +130,40 @@ impl FunctionsServiceTrait for FunctionsService {
 
         // lookup executor and run
         lookup_executor(&execution_environment.name)
-            .and_then(|executor| {
-                Ok(tonic::Response::new(ExecuteResponse {
-                    function: function.id.clone(),
-                    result: Some(executor.execute(&function_descriptor.entrypoint, &[], &args)),
-                }))
-            })
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Internal,
-                    format!("Failed to execute function: {}", e),
+                    format!("Failed to lookup function executor: {}", e),
                 )
+            })
+            .and_then(|executor| {
+                let res = executor.execute(&function_descriptor.entrypoint, &[], &args);
+                match res {
+                    ProtoResult::Ok(r) => validate_results(function.outputs.iter(), &r)
+                        .map(|_| {
+                            tonic::Response::new(ExecuteResponse {
+                                function: function.id.clone(),
+                                result: Some(ProtoResult::Ok(r)),
+                            })
+                        })
+                        .map_err(|e| {
+                            tonic::Status::new(
+                                tonic::Code::InvalidArgument,
+                                format!(
+                                    "Function \"{}\" generated invalid result: {}",
+                                    function.name.clone(),
+                                    e.iter()
+                                        .map(|ae| format!("{}", ae))
+                                        .collect::<Vec<String>>()
+                                        .join(", ")
+                                ),
+                            )
+                        }),
+                    ProtoResult::Error(e) => Ok(tonic::Response::new(ExecuteResponse {
+                        function: function.id.clone(),
+                        result: Some(ProtoResult::Error(e)),
+                    })),
+                }
             })
     }
 }
