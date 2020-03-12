@@ -273,7 +273,6 @@ fn main() -> Result<(), u32> {
 
                 arguments.iter().map(
                     |(key, val)| {
-                        (
                             fm.get(key).ok_or(format!("argument {} is not expected for function {}", key, function_record.name)).and_then(|tp| {
                             let parsed_type = ArgumentType::from_i32(*tp).ok_or(format!("argument type {} is out of range (out of date protobuf definitions?)", tp))?;
                             match parsed_type {
@@ -325,7 +324,7 @@ fn main() -> Result<(), u32> {
                                     }
                                 ),
                             }
-                        }))
+                        })
                     }
                 ).collect::<Result<Vec<FunctionArgument>, String>>().map_err(|e| {
                     println!("{}", e);
