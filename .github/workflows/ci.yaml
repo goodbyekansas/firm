@@ -6,6 +6,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        component: [services/avery/avery.nix, clients/bendini/bendini.nix, clients/lomax/lomax.nix]
+
     steps:
     - uses: actions/checkout@v2.0.0
     - name: Install Nix
@@ -16,9 +20,9 @@ jobs:
       run: |
         mkdir -p ~/.config/nix
         echo "sandbox = false" > ~/.config/nix/nix.conf
-    - name: Build, test and cache avery package
+    - name: Build, test and cache ${{ matrix.component }} package
       uses: cachix/cachix-action@v3
       with:
         name: firm
-        file: "services/avery/avery.nix"
+        file: "${{ matrix.component }}"
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'

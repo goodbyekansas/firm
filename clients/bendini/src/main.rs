@@ -7,10 +7,10 @@ pub mod proto {
 
 // std
 use std::{
-    i64,
     collections::HashMap,
     error::Error,
     fmt::{self, Display},
+    i64,
 };
 
 // 3rd party
@@ -21,15 +21,8 @@ use tonic::Request;
 // internal
 use proto::functions_client::FunctionsClient;
 use proto::{
-    ArgumentType,
-    ExecuteRequest,
-    ExecuteResponse,
-    Function,
-    FunctionArgument,
-    FunctionId, 
-    FunctionInput,
-    FunctionOutput,
-    ListRequest,
+    ArgumentType, ExecuteRequest, ExecuteResponse, Function, FunctionArgument, FunctionId,
+    FunctionInput, FunctionOutput, ListRequest,
 };
 
 // arguments
@@ -123,13 +116,14 @@ impl Display for FunctionInput {
         };
 
         let tp = ArgumentType::from_i32(self.r#type)
-        .map(|at| match at {
-            ArgumentType::String => "[string ]",
-            ArgumentType::Bool   => "[bool   ]",
-            ArgumentType::Int    => "[int    ]",
-            ArgumentType::Float  => "[float  ]",
-            ArgumentType::Bytes  => "[bytes  ]",
-        }).unwrap_or(               "[Invalid type ]");
+            .map(|at| match at {
+                ArgumentType::String => "[string ]",
+                ArgumentType::Bool => "[bool   ]",
+                ArgumentType::Int => "[int    ]",
+                ArgumentType::Float => "[float  ]",
+                ArgumentType::Bytes => "[bytes  ]",
+            })
+            .unwrap_or("[Invalid type ]");
 
         write!(
             f,
@@ -145,13 +139,14 @@ impl Display for FunctionInput {
 impl Display for FunctionOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let tp = ArgumentType::from_i32(self.r#type)
-        .map(|at| match at {
-            ArgumentType::String => "[string ]",
-            ArgumentType::Bool   => "[bool   ]",
-            ArgumentType::Int    => "[int    ]",
-            ArgumentType::Float  => "[float  ]",
-            ArgumentType::Bytes  => "[bytes  ]",
-        }).unwrap_or(               "[Invalid type ]");
+            .map(|at| match at {
+                ArgumentType::String => "[string ]",
+                ArgumentType::Bool => "[bool   ]",
+                ArgumentType::Int => "[int    ]",
+                ArgumentType::Float => "[float  ]",
+                ArgumentType::Bytes => "[bytes  ]",
+            })
+            .unwrap_or("[Invalid type ]");
 
         write!(f, "[ensured ]:{ftype}:{name}", name = self.name, ftype = tp,)
     }
@@ -160,13 +155,16 @@ impl Display for FunctionOutput {
 impl Display for ExecuteResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let na = "n/a".to_string();
-        let id_str = self.function.clone().unwrap_or(FunctionId { value: na }).value;
+        let id_str = self
+            .function
+            .clone()
+            .unwrap_or(FunctionId { value: na })
+            .value;
         let result = self.result.clone().unwrap();
         writeln!(f, "\tid:     {}", id_str)?;
         writeln!(f, "\tresult: {:?}", result)
     }
 }
-
 
 fn main() -> Result<(), u32> {
     // parse arguments
@@ -195,7 +193,7 @@ fn main() -> Result<(), u32> {
         })?;
 
     match args.cmd {
-        Command::List {pipeable_output} => {
+        Command::List { pipeable_output } => {
             // only prints the id list
             if pipeable_output {
                 let list_request = ListRequest {
@@ -216,14 +214,15 @@ fn main() -> Result<(), u32> {
                     .into_inner()
                     .functions
                     .into_iter()
-                    .for_each(
-                        |f| println!(
+                    .for_each(|f| {
+                        println!(
                             "{}",
-                            f.id.clone().unwrap_or(
-                                FunctionId { value: "n/a".to_string() }
-                            ).value.to_string()
+                            f.id.unwrap_or(FunctionId {
+                                value: "n/a".to_string()
+                            })
+                            .value
                         )
-                    )
+                    })
             // prints the full record for each function
             } else {
                 println!("Listing functions");
@@ -248,25 +247,29 @@ fn main() -> Result<(), u32> {
                     .for_each(|f| println!("{}", f))
             }
         }
-        Command::Execute {function_id, arguments} => {
+        Command::Execute {
+            function_id,
+            arguments,
+        } => {
             println!("Executing function: {}", function_id);
 
             let function_record = basic_rt
-                .block_on(client.get(Request::new(FunctionId{value: function_id.clone()})))
+                .block_on(client.get(Request::new(FunctionId {
+                    value: function_id.clone(),
+                })))
                 .map_err(|e| {
                     println!("{}", e);
                     4u32
                 })?
                 .into_inner();
 
-            let dst_arguments: Vec<FunctionArgument> =
-            if !function_record.inputs.is_empty() {
+            let dst_arguments: Vec<FunctionArgument> = if !function_record.inputs.is_empty() {
                 // assumming we have arguements
-                let fm: HashMap<String, i32> = function_record.inputs.iter().map(
-                    |f: &proto::FunctionInput| {
-                        (f.name.clone(), f.r#type)
-                    }
-                ).collect();
+                let fm: HashMap<String, i32> = function_record
+                    .inputs
+                    .iter()
+                    .map(|f: &proto::FunctionInput| (f.name.clone(), f.r#type))
+                    .collect();
 
                 arguments.iter().map(
                     |(key, val)| {
@@ -284,7 +287,7 @@ fn main() -> Result<(), u32> {
                                 ArgumentType::Bool => {
                                     val.parse::<bool>()
                                         .map_err(|e| format!("cant parse argument {} into bool value. err: {}", key, e))
-                                        .map(|x| 
+                                        .map(|x|
                                             FunctionArgument {
                                                 name:key.clone(),
                                                 r#type: *tp,
@@ -295,7 +298,7 @@ fn main() -> Result<(), u32> {
                                 ArgumentType::Int => {
                                     val.parse::<i64>()
                                         .map_err(|e| format!("cant parse argument {} into int value. err: {}", key, e))
-                                        .map(|x| 
+                                        .map(|x|
                                             FunctionArgument {
                                                 name:key.clone(),
                                                 r#type: *tp,
@@ -328,7 +331,6 @@ fn main() -> Result<(), u32> {
                     println!("{}", e);
                     1u32
                 })?
-
             } else {
                 Vec::new()
             };
@@ -337,7 +339,7 @@ fn main() -> Result<(), u32> {
                 function: Some(FunctionId {
                     value: function_id.clone(),
                 }),
-                arguments: dst_arguments
+                arguments: dst_arguments,
             };
 
             println!("Function Execution Response");
