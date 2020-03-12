@@ -91,7 +91,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
             FunctionDescriptor {
                 execution_environment: Some(ee),
                 entrypoint: payload.entrypoint,
-                code_url: "TODO".to_owned(), // TODO: Need to set this somehow (but not in all cases)
+                code_url: "".to_owned(), // TODO: Need to set this somehow (but not in all cases)
                 function: Some(Function {
                     id: Some(FunctionId {
                         value: id.to_string(),
