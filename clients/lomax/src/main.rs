@@ -8,10 +8,9 @@ pub mod proto {
 
 // std
 use std::{
-    i64,
     collections::HashMap,
-    error::Error,
     fmt::{self, Display},
+    path::PathBuf,
 };
 
 // 3rd party
@@ -21,16 +20,7 @@ use tonic::Request;
 
 // internal
 use proto::functions_registry_client::FunctionsRegistryClient;
-use proto::{
-    ArgumentType,
-    Function,
-    FunctionArgument,
-    FunctionId, 
-    FunctionInput,
-    FunctionOutput,
-    ListRequest,
-    RegisterRequest,
-};
+use proto::{ArgumentType, Function, FunctionId, FunctionInput, FunctionOutput, ListRequest};
 
 // arguments
 #[derive(StructOpt, Debug)]
@@ -55,18 +45,14 @@ enum Command {
         #[structopt(short, long)]
         pipeable_output: bool,
     },
-    Register {
-        function_id: String,
-        #[structopt(short = "i", parse(try_from_str = parse_key_val))]
-        arguments: Vec<(String, String)>,
-    },
-}
 
-fn parse_key_val(s: &str) -> Result<(String, String), Box<dyn Error>> {
-    let pos = s
-        .find('=')
-        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{}`", s))?;
-    Ok((s[..pos].parse()?, s[pos + 1..].parse()?))
+    Register {
+        #[structopt(parse(from_os_str))]
+        code: PathBuf,
+
+        #[structopt(parse(from_os_str))]
+        manifest: PathBuf,
+    },
 }
 
 // impl display of listed functions
@@ -123,13 +109,14 @@ impl Display for FunctionInput {
         };
 
         let tp = ArgumentType::from_i32(self.r#type)
-        .map(|at| match at {
-            ArgumentType::String => "[string ]",
-            ArgumentType::Bool   => "[bool   ]",
-            ArgumentType::Int    => "[int    ]",
-            ArgumentType::Float  => "[float  ]",
-            ArgumentType::Bytes  => "[bytes  ]",
-        }).unwrap_or(               "[Invalid type ]");
+            .map(|at| match at {
+                ArgumentType::String => "[string ]",
+                ArgumentType::Bool => "[bool   ]",
+                ArgumentType::Int => "[int    ]",
+                ArgumentType::Float => "[float  ]",
+                ArgumentType::Bytes => "[bytes  ]",
+            })
+            .unwrap_or("[Invalid type ]");
 
         write!(
             f,
@@ -145,28 +132,18 @@ impl Display for FunctionInput {
 impl Display for FunctionOutput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let tp = ArgumentType::from_i32(self.r#type)
-        .map(|at| match at {
-            ArgumentType::String => "[string ]",
-            ArgumentType::Bool   => "[bool   ]",
-            ArgumentType::Int    => "[int    ]",
-            ArgumentType::Float  => "[float  ]",
-            ArgumentType::Bytes  => "[bytes  ]",
-        }).unwrap_or(               "[Invalid type ]");
+            .map(|at| match at {
+                ArgumentType::String => "[string ]",
+                ArgumentType::Bool => "[bool   ]",
+                ArgumentType::Int => "[int    ]",
+                ArgumentType::Float => "[float  ]",
+                ArgumentType::Bytes => "[bytes  ]",
+            })
+            .unwrap_or("[Invalid type ]");
 
-        write!(f, "[ensured ]:{ftype}:{name}", name = self.name, ftype = tp,)
+        write!(f, "[ensured ]:{ftype}:{name}", name = self.name, ftype = tp)
     }
 }
-
-impl Display for RegisterResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let na = "n/a".to_string();
-        let id_str = self.function.clone().unwrap_or(FunctionId { value: na }).value;
-        let result = self.result.clone().unwrap();
-        writeln!(f, "\tid:     {}", id_str)?;
-        writeln!(f, "\tresult: {:?}", result)
-    }
-}
-
 
 fn main() -> Result<(), u32> {
     // parse arguments
@@ -195,7 +172,7 @@ fn main() -> Result<(), u32> {
         })?;
 
     match args.cmd {
-        Command::List {pipeable_output} => {
+        Command::List { .. } => {
             println!("Listing functions");
             let list_request = ListRequest {
                 name_filter: String::new(),
@@ -215,108 +192,11 @@ fn main() -> Result<(), u32> {
                 .into_inner()
                 .functions
                 .into_iter()
-                .for_each(|f| println!("{}", f))
+                .for_each(|f| println!("{:?}", f))
         }
-        Command::Register {function_id, arguments} => {
-            println!("Executing function: {}", function_id);
-
-            let function_record = basic_rt
-                .block_on(client.get(Request::new(FunctionId{value: function_id.clone()})))
-                .map_err(|e| {
-                    println!("{}", e);
-                    4u32
-                })?
-                .into_inner();
-
-            let dst_arguments: Vec<FunctionArgument> =
-            if !function_record.inputs.is_empty() {
-                // assumming we have arguements
-                let fm: HashMap<String, i32> = function_record.inputs.iter().map(
-                    |f: &proto::FunctionInput| {
-                        (f.name.clone(), f.r#type)
-                    }
-                ).collect();
-
-                arguments.iter().map(
-                    |(key, val)| {
-                        (
-                            fm.get(key).ok_or(format!("argument {} is not expected for function {}", key, function_record.name)).and_then(|tp| {
-                            let parsed_type = ArgumentType::from_i32(*tp).ok_or(format!("argument type {} is out of range (out of date protobuf definitions?)", tp))?;
-                            match parsed_type {
-                                ArgumentType::String => Ok(
-                                    FunctionArgument {
-                                        name:key.clone(),
-                                        r#type: *tp,
-                                        value: val.as_bytes().to_vec(),
-                                    }
-                                ),
-                                ArgumentType::Bool => {
-                                    val.parse::<bool>()
-                                        .map_err(|e| format!("cant parse argument {} into bool value. err: {}", key, e))
-                                        .map(|x| 
-                                            FunctionArgument {
-                                                name:key.clone(),
-                                                r#type: *tp,
-                                                value: vec![x as u8],
-                                            }
-                                        )
-                                },
-                                ArgumentType::Int => {
-                                    val.parse::<i64>()
-                                        .map_err(|e| format!("cant parse argument {} into int value. err: {}", key, e))
-                                        .map(|x| 
-                                            FunctionArgument {
-                                                name:key.clone(),
-                                                r#type: *tp,
-                                                value: x.to_le_bytes().to_vec(),
-                                            }
-                                        )
-                                },
-                                ArgumentType::Float => {
-                                    val.parse::<f64>()
-                                        .map_err(|e| format!("cant parse argument {} into float value. err: {}", key, e))
-                                        .map(|x|
-                                            FunctionArgument {
-                                                name:key.clone(),
-                                                r#type: *tp,
-                                                value: x.to_le_bytes().to_vec(),
-                                            }
-                                        )
-                                },
-                                ArgumentType::Bytes => Ok(
-                                    FunctionArgument {
-                                        name:key.clone(),
-                                        r#type: *tp,
-                                        value: val.as_bytes().to_vec(),
-                                    }
-                                ),
-                            }
-                        }))
-                    }
-                ).collect::<Result<Vec<FunctionArgument>, String>>().map_err(|e| {
-                    println!("{}", e);
-                    1u32
-                })?
-
-            } else {
-                Vec::new()
-            };
-
-            let request = RegisterRequest {
-                function: Some(FunctionId {
-                    value: function_id.clone(),
-                }),
-                arguments: dst_arguments
-            };
-
-            println!("Function Execution Response");
-            let execute_response = basic_rt
-                .block_on(client.register(Request::new(request)))
-                .map_err(|e| {
-                    println!("Failed to register function: {}", e);
-                    4u32
-                })?;
-            println!("{}", execute_response.into_inner());
+        Command::Register { .. } => {
+            // TODO: Parse manifest from TOML
+            println!("Registering function: TODO: FUNCTION NAME");
         }
     }
 
