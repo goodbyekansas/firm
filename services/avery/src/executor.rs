@@ -462,10 +462,7 @@ mod tests {
         assert!(r.is_err());
         let err = r.unwrap_err();
         assert_eq!(1, err.len());
-        assert!(match err.first().unwrap() {
-            ExecutorError::InvalidResultValue { .. } => true,
-            _ => false,
-        })
+        assert!(matches!(err.first().unwrap(), ExecutorError::InvalidResultValue { .. }));
     }
 
     #[test]
@@ -473,26 +470,20 @@ mod tests {
         // non-existent file
         let r = download_code("file://this-file-does-not-exist");
         assert!(r.is_err());
-        assert!(match r.unwrap_err() {
-            ExecutorError::CodeReadError(..) => true,
-            _ => false,
-        });
+        assert!(matches!(r.unwrap_err(), ExecutorError::CodeReadError(..)));
 
         // invalid url
         let r = download_code("this-is-not-url");
         assert!(r.is_err());
-        assert!(match r.unwrap_err() {
-            ExecutorError::InvalidCodeUrl(..) => true,
-            _ => false,
-        });
+        assert!(matches!(r.unwrap_err(), ExecutorError::InvalidCodeUrl(..)));
 
         // unsupported scheme
         let r = download_code("unsupported://that-scheme.fabrikam.com");
         assert!(r.is_err());
-        assert!(match r.unwrap_err() {
-            ExecutorError::UnsupportedTransport(..) => true,
-            _ => false,
-        });
+        assert!(matches!(
+            r.unwrap_err(),
+            ExecutorError::UnsupportedTransport(..)
+        ));
 
         // actual file
         let mut tf = NamedTempFile::new().unwrap();

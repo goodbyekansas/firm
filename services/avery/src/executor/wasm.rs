@@ -13,7 +13,8 @@ fn execute_function(
 ) -> Result<(), String> {
     const ENTRY: &str = "_start";
     let wasi_state = WasiState::new("some-wasi-state-name")
-        .build().map_err(|e| format!("Failed to create wasi state: {:?}", e))?;
+        .build()
+        .map_err(|e| format!("Failed to create wasi state: {:?}", e))?;
 
     let import_object =
         generate_import_object_from_state(wasi_state, wasmer_wasi::WasiVersion::Snapshot0);
@@ -39,7 +40,7 @@ impl FunctionExecutor for WasmExecutor {
         arguments: &[FunctionArgument],
     ) -> ProtoResult {
         execute_function(entrypoint, code, arguments).map_or_else(
-            |e| ProtoResult::Error(ExecutionError { msg: e.to_string() }),
+            |e| ProtoResult::Error(ExecutionError { msg: e }),
             |_| ProtoResult::Ok(FunctionResult { values: vec![] }),
         )
     }
@@ -61,11 +62,7 @@ mod tests {
     #[test]
     fn test_execution() {
         let executor = WasmExecutor {};
-        let res = executor.execute(
-            "could-be-anything",
-            include_bytes!("hello.wasm"),
-            &vec![],
-        );
+        let res = executor.execute("could-be-anything", include_bytes!("hello.wasm"), &vec![]);
 
         assert!(res.is_ok());
     }

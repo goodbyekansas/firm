@@ -103,10 +103,10 @@ fn test_get_function() {
     })));
 
     assert!(get_request.is_err());
-    assert!(match get_request.unwrap_err().code() {
-        tonic::Code::InvalidArgument => true,
-        _ => false,
-    });
+    assert!(matches!(
+        get_request.unwrap_err().code(),
+        tonic::Code::InvalidArgument
+    ));
 
     // Test with valid UUID but doesn't exist
     let get_request = futures::executor::block_on(fr.get(tonic::Request::new(FunctionId {
@@ -114,10 +114,10 @@ fn test_get_function() {
     })));
 
     assert!(get_request.is_err());
-    assert!(match get_request.unwrap_err().code() {
-        tonic::Code::NotFound => true,
-        _ => false,
-    });
+    assert!(matches!(
+        get_request.unwrap_err().code(),
+        tonic::Code::NotFound
+    ));
 
     // Test actually getting a function
     let f_id = futures::executor::block_on(fr.register(register_request!()))
@@ -150,10 +150,10 @@ fn test_register_function() {
     )));
 
     assert!(register_result.is_err());
-    assert!(match register_result.unwrap_err().code() {
-        tonic::Code::InvalidArgument => true,
-        _ => false,
-    });
+    assert!(matches!(
+        register_result.unwrap_err().code(),
+        tonic::Code::InvalidArgument
+    ));
 
     // Testing if we can register a valid function
     let register_result = futures::executor::block_on(fr.register(custom_register_request!(
