@@ -13,7 +13,7 @@ use std::sync::Arc;
 use slog::Logger;
 
 // crate / internal includes
-use executor::{lookup_executor, validate_args, validate_results};
+use executor::{download_code, lookup_executor, validate_args, validate_results};
 use proto::functions_registry_server::FunctionsRegistry;
 use proto::functions_server::Functions as FunctionsServiceTrait;
 use proto::{
@@ -137,7 +137,24 @@ impl FunctionsServiceTrait for FunctionsService {
                 )
             })
             .and_then(|executor| {
-                let res = executor.execute(&function_descriptor.entrypoint, &[], &args);
+                // not having any code for the function is a valid case used for example to execute
+                // external functions (gcp, aws lambdas, etc)
+                let code = if function_descriptor.code_url.is_empty() {
+                    Ok(vec![])
+                } else {
+                    download_code(&function_descriptor.code_url).map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Internal,
+                            format!(
+                                "Failed to download code 🖨️ for function \"{}\" from {}: {}",
+                                function.name.clone(),
+                                &function_descriptor.code_url,
+                                e
+                            ),
+                        )
+                    })
+                }?;
+                let res = executor.execute(&function_descriptor.entrypoint, &code, &args);
                 match res {
                     ProtoResult::Ok(r) => validate_results(function.outputs.iter(), &r)
                         .map(|_| {

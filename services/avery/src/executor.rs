@@ -1,8 +1,9 @@
-use std::{fmt, str};
+mod wasm;
+
+use std::{fmt, fs, str};
 
 use thiserror::Error;
-
-mod wasm;
+use url::Url;
 
 use crate::executor::wasm::WasmExecutor;
 use crate::proto::execute_response::Result as ProtoResult;
@@ -20,6 +21,19 @@ pub fn lookup_executor(name: &str) -> Result<Box<dyn FunctionExecutor>, Executor
     match name {
         "wasm" => Ok(Box::new(WasmExecutor {})),
         ee => Err(ExecutorError::ExecutorNotFound(ee.to_owned())),
+    }
+}
+
+/// Donwload function code from the given URL
+///
+/// This is a huge security hole and needs to be managed properly (gpg sign things?)
+pub fn download_code(url: &str) -> Result<Vec<u8>, ExecutorError> {
+    let url = Url::parse(url).map_err(|e| ExecutorError::InvalidCodeUrl(e.to_string()))?;
+    match url.scheme() {
+        "file" => fs::read(url.path())
+            .map_err(|e| ExecutorError::CodeReadError(url.to_string(), e.to_string())),
+
+        s => Err(ExecutorError::UnsupportedTransport(s.to_owned())),
     }
 }
 
@@ -189,6 +203,15 @@ impl fmt::Display for ArgumentType {
 
 #[derive(Error, Debug)]
 pub enum ExecutorError {
+    #[error("Unsupported code transport mechanism: \"{0}\"")]
+    UnsupportedTransport(String),
+
+    #[error("Invalid code url: {0}")]
+    InvalidCodeUrl(String),
+
+    #[error("Failed to read code from {0}: {1}")]
+    CodeReadError(String, String),
+
     #[error("Failed to find executor for execution environment \"{0}\"")]
     ExecutorNotFound(String),
 
@@ -240,6 +263,9 @@ pub enum ExecutorError {
 mod tests {
     use super::*;
     use crate::proto::ReturnValue;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
     #[test]
     fn parse_required() {
         let inputs = vec![FunctionInput {
@@ -440,5 +466,40 @@ mod tests {
             ExecutorError::InvalidResultValue { .. } => true,
             _ => false,
         })
+    }
+
+    #[test]
+    fn test_download() {
+        // non-existent file
+        let r = download_code("file://this-file-does-not-exist");
+        assert!(r.is_err());
+        assert!(match r.unwrap_err() {
+            ExecutorError::CodeReadError(..) => true,
+            _ => false,
+        });
+
+        // invalid url
+        let r = download_code("this-is-not-url");
+        assert!(r.is_err());
+        assert!(match r.unwrap_err() {
+            ExecutorError::InvalidCodeUrl(..) => true,
+            _ => false,
+        });
+
+        // unsupported scheme
+        let r = download_code("unsupported://that-scheme.fabrikam.com");
+        assert!(r.is_err());
+        assert!(match r.unwrap_err() {
+            ExecutorError::UnsupportedTransport(..) => true,
+            _ => false,
+        });
+
+        // actual file
+        let mut tf = NamedTempFile::new().unwrap();
+        let s = "some data 🖥️";
+        write!(tf, "{}", s).unwrap();
+        let r = download_code(&format!("file://{}", tf.path().display()));
+        assert!(r.is_ok());
+        assert_eq!(s.as_bytes(), r.unwrap().as_slice());
     }
 }

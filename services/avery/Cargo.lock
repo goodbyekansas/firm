@@ -95,6 +95,7 @@ dependencies = [
  "slog-async",
  "slog-term",
  "structopt",
+ "tempfile",
  "thiserror",
  "tokio",
  "tonic",
