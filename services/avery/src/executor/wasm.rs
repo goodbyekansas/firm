@@ -19,7 +19,18 @@ fn start_process(ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32) -> i64 {
     }
 }
 
+fn get_input(_ctx: &mut Ctx, _key: WasmPtr<u8, Array>, _keylen: u32) /* -> WasmPtr<u8, Array> */ {}
+fn set_output(
+    _ctx: &mut Ctx,
+    _key: WasmPtr<u8, Array>,
+    _keylen: u32,
+    _val: WasmPtr<u8, Array>,
+    _vallen: u32,
+) {
+}
+
 fn execute_function(
+    function_name: &str,
     _entrypoint: &str,
     code: &[u8],
     _arguments: &[FunctionArgument],
@@ -29,18 +40,22 @@ fn execute_function(
 
     let wasi_version = get_wasi_version(&module, true).unwrap_or(wasmer_wasi::WasiVersion::Latest);
 
-    let wasi_state = WasiState::new("some-wasi-state-name")
+    let wasi_state = WasiState::new(&format!("wasi-{}", function_name))
         .build()
         .map_err(|e| format!("Failed to create wasi state: {:?}", e))?;
 
     let mut import_object = generate_import_object_from_state(wasi_state, wasi_version);
+
+    // inject gbk specific functions in the wasm state
     let gbk_imports = imports! {
         "gbk" => {
             "start_host_process" => func!(start_process),
+            "get_input" => func!(get_input),
+            "set_ouptut" => func!(set_output),
         },
     };
-
     import_object.extend(gbk_imports);
+
     let instance = module
         .instantiate(&import_object)
         .map_err(|e| format!("failed to instantiate WASI module: {}", e))?;
@@ -49,6 +64,7 @@ fn execute_function(
         .func(ENTRY)
         .map_err(|e| format!("Failed to resolve entrypoint {}: {}", ENTRY, e))?;
 
+    // TODO: capture STDOUT and store/log
     entry_function
         .call()
         .map_err(|e| format!("Failed to call entrypoint function {}: {}", ENTRY, e))
@@ -59,11 +75,12 @@ pub struct WasmExecutor {}
 impl FunctionExecutor for WasmExecutor {
     fn execute(
         &self,
+        function_name: &str,
         entrypoint: &str,
         code: &[u8],
         arguments: &[FunctionArgument],
     ) -> ProtoResult {
-        execute_function(entrypoint, code, arguments).map_or_else(
+        execute_function(function_name, entrypoint, code, arguments).map_or_else(
             |e| ProtoResult::Error(ExecutionError { msg: e }),
             |_| ProtoResult::Ok(FunctionResult { values: vec![] }),
         )
@@ -86,7 +103,12 @@ mod tests {
     #[test]
     fn test_execution() {
         let executor = WasmExecutor {};
-        let res = executor.execute("could-be-anything", include_bytes!("hello.wasm"), &vec![]);
+        let res = executor.execute(
+            "hello-world",
+            "could-be-anything",
+            include_bytes!("hello.wasm"),
+            &vec![],
+        );
 
         assert!(res.is_ok());
     }

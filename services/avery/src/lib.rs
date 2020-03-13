@@ -154,7 +154,12 @@ impl FunctionsServiceTrait for FunctionsService {
                         )
                     })
                 }?;
-                let res = executor.execute(&function_descriptor.entrypoint, &code, &args);
+                let res = executor.execute(
+                    &function.name,
+                    &function_descriptor.entrypoint,
+                    &code,
+                    &args,
+                );
                 match res {
                     ProtoResult::Ok(r) => validate_results(function.outputs.iter(), &r)
                         .map(|_| {

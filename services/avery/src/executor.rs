@@ -10,8 +10,13 @@ use crate::proto::execute_response::Result as ProtoResult;
 use crate::proto::{ArgumentType, FunctionArgument, FunctionInput, FunctionOutput, FunctionResult};
 
 pub trait FunctionExecutor {
-    fn execute(&self, entrypoint: &str, code: &[u8], arguments: &[FunctionArgument])
-        -> ProtoResult;
+    fn execute(
+        &self,
+        function_name: &str,
+        entrypoint: &str,
+        code: &[u8],
+        arguments: &[FunctionArgument],
+    ) -> ProtoResult;
 }
 
 /// Lookup an executor for the given `name`
