@@ -73,7 +73,7 @@ impl Display for Function {
         writeln!(f, "\t{}", self.name)?;
         writeln!(f, "\tid:      {}", id_str)?;
         if self.inputs.is_empty() {
-            writeln!(f, "\tinputs:  n/a")?;
+            writeln!(f, "\tinputs:  [n/a]")?;
         } else {
             writeln!(f, "\tinputs:")?;
             self.inputs
@@ -83,7 +83,7 @@ impl Display for Function {
                 .collect::<fmt::Result>()?;
         }
         if self.outputs.is_empty() {
-            writeln!(f, "\toutputs: n/a")?;
+            writeln!(f, "\toutputs: [n/a]")?;
         } else {
             writeln!(f, "\toutputs:")?;
             self.outputs
@@ -93,7 +93,7 @@ impl Display for Function {
                 .collect::<fmt::Result>()?;
         }
         if self.tags.is_empty() {
-            writeln!(f, "\ttags:    n/a")
+            writeln!(f, "\ttags:    [n/a]")
         } else {
             writeln!(f, "\ttags:")?;
             self.tags

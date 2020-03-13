@@ -1,5 +1,5 @@
-//#![allow(warnings)]
-#![deny(warnings)]
+#![allow(warnings)]
+//#![deny(warnings)]
 
 // module declarations
 pub mod proto {
@@ -20,7 +20,16 @@ use tonic::Request;
 
 // internal
 use proto::functions_registry_client::FunctionsRegistryClient;
-use proto::{ArgumentType, Function, FunctionId, FunctionInput, FunctionOutput, ListRequest};
+use proto::{
+    ArgumentType,
+    ExecutionEnvironment,
+    Function,
+    FunctionDescriptor,
+    FunctionId,
+    FunctionInput,
+    FunctionOutput,
+    ListRequest,
+};
 
 // arguments
 #[derive(StructOpt, Debug)]
@@ -56,6 +65,80 @@ enum Command {
 }
 
 // impl display of listed functions
+impl Display for FunctionDescriptor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let env_name = self.execution_environment.clone().unwrap_or(
+            ExecutionEnvironment { name: "n/a".to_string() }
+        ).name;
+
+        // TODO: will this panic? how should I do this?
+        let k = self.function.as_ref().unwrap();
+        let id_str = k.id.clone().unwrap_or(
+            FunctionId { value: "n/a".to_string() }
+        ).value;
+
+        // on the cmd line each tab is 8 spaces
+        let t = "\t";
+        let t2 = "\t\t ";
+
+        // print everything
+        writeln!(f, "{}{}", &t, &k.name)?;
+        writeln!(f, "{}id:{}{}", &t, "      ", id_str)?;
+        writeln!(f, "{}name:{}{}", &t, "    ", &k.name)?;
+        // this will change to be more data
+        writeln!(f, "{}exeEnv:{}{}", &t, "  ", env_name)?;
+        write!(f, "{}entry:   ", &t)?;
+        if self.entrypoint.is_empty() {
+            //
+            writeln!(f, "n/a")?;
+        } else {
+            //
+            writeln!(f, "{}", self.entrypoint)?;
+        }
+        write!(f, "{}codeUrl: ", &t)?;
+        if self.code_url.is_empty() {
+            //
+            writeln!(f, "n/a")?;
+        } else {
+            //
+            writeln!(f, "{}", self.code_url)?;
+        }
+        if k.inputs.is_empty() {
+            //
+            writeln!(f, "{}inputs:{}[n/a]", &t, "  ")?;
+        } else {
+            writeln!(f, "{}inputs:", &t)?;
+            k.inputs
+                .clone()
+                .into_iter()
+                .map(|i| writeln!(f, "{}{}", &t2, i))
+                .collect::<fmt::Result>()?;
+        }
+        if k.outputs.is_empty() {
+            //
+            writeln!(f, "\toutputs: [n/a]")?;
+        } else {
+            writeln!(f, "\toutputs:")?;
+            k.outputs
+                .clone()
+                .into_iter()
+                .map(|i| writeln!(f, "{}{}", &t2, i))
+                .collect::<fmt::Result>()?;
+        }
+        if k.tags.is_empty() {
+            //
+            writeln!(f, "\ttags:{}[n/a]", "    ")
+        } else {
+            writeln!(f, "\ttags:")?;
+            k.tags
+                .clone()
+                .iter()
+                .map(|(x, y)| writeln!(f, "{}{}:{}", &t2, x, y))
+                .collect()
+        }
+    }
+}
+
 impl Display for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let na = "n/a".to_string();
@@ -192,7 +275,7 @@ fn main() -> Result<(), u32> {
                 .into_inner()
                 .functions
                 .into_iter()
-                .for_each(|f| println!("{:?}", f))
+                .for_each(|f| println!("{}", f))
         }
         Command::Register { .. } => {
             // TODO: Parse manifest from TOML
