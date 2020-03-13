@@ -11,7 +11,7 @@ use crate::proto::{
 fn start_process(ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32) -> i64 {
     let memory = ctx.memory(0);
     match s.get_utf8_string(memory, len) {
-        Some("maya") => match Command::new("/usr/autodesk/maya2019/bin/maya").spawn() {
+        Some(command) => match Command::new(command).spawn() {
             Ok(_) => 1,
             Err(_) => 0,
         },
@@ -36,7 +36,7 @@ fn execute_function(
     let mut import_object = generate_import_object_from_state(wasi_state, wasi_version);
     let gbk_imports = imports! {
         "gbk" => {
-            "start_process" => func!(start_process),
+            "start_host_process" => func!(start_process),
         },
     };
 
