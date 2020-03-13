@@ -25,29 +25,32 @@ use proto::{
     FunctionInput, FunctionOutput, ListRequest,
 };
 
-// arguments
+/// Bendini is a command line client to Avery, the function executor service of the GBK pipeline
 #[derive(StructOpt, Debug)]
 #[structopt(name = "bendini")]
 struct BendiniArgs {
-    // function executor servicen address
+    /// Function executor service address
     #[structopt(short, long, default_value = "tcp://[::1]")]
     address: String,
 
-    // function executor service port
+    /// Function executor service port
     #[structopt(short, long, default_value = "1939")]
     port: u32,
 
-    // Command to run
+    /// Command to run
     #[structopt(subcommand)]
     cmd: Command,
 }
 
 #[derive(StructOpt, Debug)]
 enum Command {
+    /// Lists functions known to the service
     List {
         #[structopt(short, long)]
         pipeable_output: bool,
     },
+
+    /// Executes a function with arguments
     Execute {
         function_id: String,
         #[structopt(short = "i", parse(try_from_str = parse_key_val))]

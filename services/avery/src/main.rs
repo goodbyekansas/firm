@@ -14,7 +14,7 @@ use avery::{
     proto::{
         functions_registry_server::{FunctionsRegistry, FunctionsRegistryServer},
         functions_server::FunctionsServer,
-        ArgumentType, ExecutionEnvironment, FunctionInput, FunctionOutput, RegisterRequest,
+        ExecutionEnvironment, RegisterRequest,
     },
     FunctionsService,
 };
@@ -49,56 +49,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("[::]:{}", port).parse().unwrap();
     let functions_registry_service = Arc::new(FunctionsRegistryService::new());
     if !args.skip_register_test_functions {
-        vec![
-            RegisterRequest {
-                name: "hello_world".to_owned(),
-                tags: HashMap::with_capacity(0),
-                inputs: Vec::with_capacity(0),
-                outputs: Vec::with_capacity(0),
-                code: vec![],
-                entrypoint: "det du!".to_owned(),
-                execution_environment: Some(ExecutionEnvironment {
-                    name: "wasm".to_owned(),
-                }),
-            },
-            RegisterRequest {
-                name: "say_hello_yourself".to_owned(),
-                tags: HashMap::with_capacity(0),
-                inputs: vec![
-                    FunctionInput {
-                        name: "say".to_string(),
-                        required: true,
-                        r#type: ArgumentType::String as i32,
-                        default_value: String::new(),
-                    },
-                    FunctionInput {
-                        name: "count".to_string(),
-                        required: false,
-                        r#type: ArgumentType::Int as i32,
-                        default_value: 1.to_string(),
-                    },
-                ],
-                outputs: vec![FunctionOutput {
-                    name: "output_string".to_string(),
-                    r#type: ArgumentType::String as i32,
-                }],
-                code: vec![],
-                entrypoint: "kanske".to_owned(),
-                execution_environment: Some(ExecutionEnvironment {
-                    name: "wasm".to_owned(),
-                }),
-            },
-        ]
-        .iter()
-        .for_each(|f| {
-            futures::executor::block_on(
-                functions_registry_service.register(tonic::Request::new(f.clone())),
-            )
-            .map_or_else(
-                |e| println!("Failed to register function \"{}\". Err: {}", f.name, e),
-                |_| (),
-            );
-        });
+        // TODO: this is very temp but gives a nice workflow atm
+        match std::option_env!("inputFunctions") {
+            Some(fnstring) => {
+                fnstring
+                    .split(';')
+                    .map(|p| RegisterRequest {
+                        name: std::path::Path::new(p)
+                            .file_stem()
+                            .unwrap_or(std::ffi::OsStr::new("unknown-file-name"))
+                            .to_string_lossy()
+                            .to_string(),
+                        tags: HashMap::with_capacity(0),
+                        inputs: Vec::with_capacity(0),
+                        outputs: Vec::with_capacity(0),
+                        code: std::fs::read(p).unwrap_or(vec![]).to_vec(),
+                        entrypoint: String::new(),
+                        execution_environment: Some(ExecutionEnvironment {
+                            name: "wasm".to_owned(),
+                        }),
+                    })
+                    .for_each(|f| {
+                        futures::executor::block_on(
+                            functions_registry_service.register(tonic::Request::new(f.clone())),
+                        )
+                        .map_or_else(
+                            |e| println!("Failed to register function \"{}\". Err: {}", f.name, e),
+                            |_| (),
+                        );
+                    });
+            }
+            None => {
+                println!("Tried to add functions from the env var but $inputFunctions was not set")
+            }
+        };
     }
 
     let functions_service = FunctionsService::new(

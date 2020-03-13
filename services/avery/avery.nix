@@ -13,6 +13,11 @@ stdenv.mkDerivation {
     (latest.rustChannels.stable.rust.override {extensions = ["rust-src"];})
   ];
 
+  # TODO: This gives a nice workflow for now but should be removed later
+  inputFunctions = [
+    "${(import ../../functions/start-maya/start-maya.nix)}/bin/start-maya.wasm"
+  ];
+
   doCheck = true; # TODO: When nedryland takes over the world remove this.
 
   buildPhase = ''
