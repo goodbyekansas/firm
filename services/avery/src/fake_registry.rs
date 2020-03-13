@@ -1,8 +1,10 @@
 use std::{
     collections::HashMap,
+    fs,
     sync::{Arc, RwLock},
 };
 
+use tempfile::NamedTempFile;
 use tonic;
 use uuid::Uuid;
 
@@ -86,12 +88,43 @@ impl FunctionsRegistry for FunctionsRegistryService {
             )
         })?;
 
+        // TODO: A better storage mechanism _will_ be needed 🏩
+        let code_url = if payload.code.is_empty() {
+            String::new()
+        } else {
+            let saved_code = NamedTempFile::new().map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to create temp file to save code in 😿: {}", e),
+                )
+            })?;
+
+            fs::write(saved_code.path(), payload.code).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!(
+                        "Failed to save the code in {} 🐼: {}",
+                        saved_code.path().display(),
+                        e
+                    ),
+                )
+            })?;
+
+            let (_, path) = saved_code.keep().map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to persist temp file with code: {}", e),
+                )
+            })?;
+            format!("file://{}", path.display())
+        };
+
         writer.insert(
             id.clone(),
             FunctionDescriptor {
                 execution_environment: Some(ee),
                 entrypoint: payload.entrypoint,
-                code_url: "".to_owned(), // TODO: Need to set this somehow (but not in all cases)
+                code_url,
                 function: Some(Function {
                     id: Some(FunctionId {
                         value: id.to_string(),
