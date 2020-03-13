@@ -57,13 +57,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .map(|p| RegisterRequest {
                         name: std::path::Path::new(p)
                             .file_stem()
-                            .unwrap_or(std::ffi::OsStr::new("unknown-file-name"))
+                            .unwrap_or_else(|| std::ffi::OsStr::new("unknown-file-name"))
                             .to_string_lossy()
                             .to_string(),
                         tags: HashMap::with_capacity(0),
                         inputs: Vec::with_capacity(0),
                         outputs: Vec::with_capacity(0),
-                        code: std::fs::read(p).unwrap_or(vec![]).to_vec(),
+                        code: std::fs::read(p).unwrap_or_else(|_| vec![]).to_vec(),
                         entrypoint: String::new(),
                         execution_environment: Some(ExecutionEnvironment {
                             name: "wasm".to_owned(),
