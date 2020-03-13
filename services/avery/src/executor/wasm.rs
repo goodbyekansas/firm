@@ -19,7 +19,18 @@ fn start_process(ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32) -> i64 {
     }
 }
 
-fn get_input(_ctx: &mut Ctx, _key: WasmPtr<u8, Array>, _keylen: u32) /* -> WasmPtr<u8, Array> */ {}
+fn get_input(
+    _ctx: &mut Ctx,
+    _key: WasmPtr<u8, Array>,
+    _keylen: u32,
+    _arguments: &[FunctionArgument],
+) /* -> WasmPtr<u8, Array> {
+ let p: WasmPtr<u8, Array> = WasmPtr::new();
+
+p */
+{
+}
+
 fn set_output(
     _ctx: &mut Ctx,
     _key: WasmPtr<u8, Array>,
@@ -33,7 +44,7 @@ fn execute_function(
     function_name: &str,
     _entrypoint: &str,
     code: &[u8],
-    _arguments: &[FunctionArgument],
+    arguments: &[FunctionArgument],
 ) -> Result<(), String> {
     const ENTRY: &str = "_start";
     let module = compile(code).map_err(|e| format!("failed to compile wasm: {}", e))?;
@@ -47,10 +58,11 @@ fn execute_function(
     let mut import_object = generate_import_object_from_state(wasi_state, wasi_version);
 
     // inject gbk specific functions in the wasm state
+    let a = arguments.to_vec();
     let gbk_imports = imports! {
         "gbk" => {
             "start_host_process" => func!(start_process),
-            "get_input" => func!(get_input),
+            "get_input" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32| get_input(ctx, key, keylen, &a)),
             "set_ouptut" => func!(set_output),
         },
     };
