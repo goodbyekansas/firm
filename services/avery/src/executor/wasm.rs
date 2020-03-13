@@ -112,18 +112,4 @@ mod tests {
 
         assert!(res.is_ok());
     }
-
-    /*#[test]
-    fn test_sune() {
-        let executor = WasmExecutor {};
-        let res = executor.execute(
-            "could-be-anything",
-            include_bytes!(
-                "../../../../functions/start-maya/target/wasm32-wasi/debug/start-maya.wasm"
-            ),
-            &vec![],
-        );
-
-        assert!(dbg!(res).is_ok());
-    }*/
 }
