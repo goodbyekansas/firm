@@ -13,6 +13,10 @@ stdenv.mkDerivation {
     (latest.rustChannels.stable.rust.override {extensions = ["rust-src"];})
   ];
   
+  # this is needed on NixOS but does not hurt on other
+  # OSes either
+  PROTOC = "${pkgs.protobuf}/bin/protoc";
+
   doCheck = true; # TODO: When nedryland takes over the world remove this.
 
   buildPhase = ''
