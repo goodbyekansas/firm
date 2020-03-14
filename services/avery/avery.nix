@@ -18,6 +18,10 @@ stdenv.mkDerivation {
     "${(import ../../functions/start-maya/start-maya.nix)}/bin/start-maya.wasm"
   ];
 
+  # this is needed on NixOS but does not hurt on other
+  # OSes either
+  PROTOC = "${pkgs.protobuf}/bin/protoc";
+
   doCheck = true; # TODO: When nedryland takes over the world remove this.
 
   buildPhase = ''
