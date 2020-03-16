@@ -3,3 +3,11 @@ name = "start-maya"
 version = "0.1.0"
 authors = ["GBK pipeline  <pipeline@goodbyekansas.com>"]
 edition = "2018"
+
+
+[dependencies]
+thiserror = "1"
+prost = "0.6"
+
+[build-dependencies]
+prost-build = "0.6"
