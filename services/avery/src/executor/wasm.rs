@@ -70,6 +70,9 @@ fn get_input(
             byte_array_from_wasmptr_mut(&value, &vm_memory, valuelen as usize).and_then(
                 |mut buff| {
                     a.encode(&mut buff).ok()?;
+
+                    // note that we cannot use buff here since it is
+                    // consumed by the above
                     Some(valuelen as u32)
                 },
             )
@@ -267,8 +270,8 @@ mod tests {
         write_to_ptr(&ptr, &mem, arg_name.as_bytes());
         let encoded_len = function_argument.encoded_len();
 
-        let mut value = Vec::with_capacity(encoded_len);
-        function_argument.encode(&mut value).unwrap();
+        let mut reference_value = Vec::with_capacity(encoded_len);
+        function_argument.encode(&mut reference_value).unwrap();
 
         let value_ptr: WasmPtr<u8, Array> = WasmPtr::new(arg_name.as_bytes().len() as u32);
         let res = get_input(
@@ -281,5 +284,15 @@ mod tests {
         );
 
         assert_eq!(encoded_len, res as usize);
+
+        // check that the byte patterns are identical
+        let encoded = value_ptr
+            .deref(&mem, 0, encoded_len as u32)
+            .unwrap()
+            .iter()
+            .map(|c| c.get())
+            .collect::<Vec<u8>>();
+
+        assert_eq!(reference_value, encoded);
     }
 }
