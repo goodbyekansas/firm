@@ -114,7 +114,7 @@ fn get_input_len(
             unsafe {
                 value
                     .deref_mut(vm_memory)
-                    .ok_or_else(|| WasmError::FailedToDerefPointer())
+                    .ok_or_else(WasmError::FailedToDerefPointer)
                     .map(|c| {
                         c.set(len as u64);
                     })
@@ -148,14 +148,14 @@ fn get_input(
                 })
                 .and_then(|mut buff| {
                     a.encode(&mut buff)
-                        .map_err(|e| WasmError::FailedToEncodeProtobuf(e))
+                        .map_err(WasmError::FailedToEncodeProtobuf)
                 })
         })
 }
 
 fn set_output(vm_memory: &Memory, val: WasmPtr<u8, Array>, vallen: u32) -> Result<ReturnValue> {
     val.deref(vm_memory, 0, vallen)
-        .ok_or_else(|| WasmError::FailedToDerefPointer())
+        .ok_or_else(WasmError::FailedToDerefPointer)
         .and_then(|cells| {
             ReturnValue::decode(
                 cells
@@ -164,7 +164,7 @@ fn set_output(vm_memory: &Memory, val: WasmPtr<u8, Array>, vallen: u32) -> Resul
                     .collect::<Vec<u8>>()
                     .as_slice(),
             )
-            .map_err(|e| WasmError::FailedToDecodeProtobuf(e))
+            .map_err(WasmError::FailedToDecodeProtobuf)
         })
 }
 
