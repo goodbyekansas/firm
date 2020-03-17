@@ -1,2 +1,5 @@
 # Ignore nix build output
 result*
+
+# Ignore editor settings
+.vscode
