@@ -295,4 +295,31 @@ mod tests {
 
         assert_eq!(reference_value, encoded);
     }
+
+    #[test]
+    fn test_set_output() {
+        let mem = create_mem!();
+        let ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+
+        let return_value = ReturnValue {
+            name: "sune".to_owned(),
+            r#type: ArgumentType::Int as i32,
+            value: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        };
+
+        let encoded_len = return_value.encoded_len();
+        let mut return_value_bytes = Vec::with_capacity(encoded_len);
+        return_value.encode(&mut return_value_bytes).unwrap();
+
+        // Try with empty pointer
+        let res = set_output(&mem, ptr, encoded_len as u32);
+        assert!(res.is_none());
+
+        // Try with written pointer
+        write_to_ptr(&ptr, &mem, &return_value_bytes);
+        let res = set_output(&mem, ptr, encoded_len as u32);
+
+        assert!(res.is_some());
+        assert_eq!(return_value, res.unwrap());
+    }
 }
