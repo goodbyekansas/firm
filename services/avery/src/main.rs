@@ -29,7 +29,7 @@ async fn ctrlc() {
 #[derive(StructOpt, Debug)]
 #[structopt(name = "avery")]
 struct AveryArgs {
-    // function executor servicen address
+    /// function executor service address
     #[structopt(short, long)]
     skip_register_test_functions: bool,
 }
