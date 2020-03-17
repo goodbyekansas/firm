@@ -306,7 +306,10 @@ mod tests {
         );
 
         assert!(res.is_err());
-        assert!(matches!(dbg!(res).unwrap_err(), WasmError::FailedToReadStringPointer(..)));
+        assert!(matches!(
+            dbg!(res).unwrap_err(),
+            WasmError::FailedToReadStringPointer(..)
+        ));
 
         // get non existant input
         let mem = create_mem!();
@@ -355,9 +358,7 @@ mod tests {
         );
         assert!(res.is_ok());
 
-        let write_len: u64 = val.deref(&mem).map(|cell| {
-            cell.get() as u64
-        }).unwrap();
+        let write_len: u64 = val.deref(&mem).map(|cell| cell.get() as u64).unwrap();
         assert_eq!(function_argument.encoded_len(), write_len as usize);
 
         // get existing input with invalid pointer
@@ -383,11 +384,102 @@ mod tests {
         );
 
         assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), WasmError::FailedToDerefPointer()));
+        assert!(matches!(
+            res.unwrap_err(),
+            WasmError::FailedToDerefPointer()
+        ));
     }
 
     #[test]
     fn test_get_input() {
+        // testing invalid key pointer
+        let mem = create_mem!();
+        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(std::u32::MAX);
+        let value_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+
+        let res = get_input(&mem, key_ptr, 5 as u32, value_ptr, 0 as u32, &vec![]);
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            WasmError::FailedToReadStringPointer(..)
+        ));
+
+        // testing failed to find key
+        let mem = create_mem!();
+        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let key_name = "input1".to_owned();
+        write_to_ptr(&key_ptr, &mem, key_name.as_bytes());
+
+        let res = get_input(
+            &mem,
+            key_ptr,
+            key_name.len() as u32,
+            WasmPtr::new(0),
+            0 as u32,
+            &vec![],
+        );
+
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), WasmError::FailedToFindKey(..)));
+
+        // testing failing to convert provided input
+        let mem = create_mem!();
+        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let key_name = "input1".to_owned();
+        write_to_ptr(&key_ptr, &mem, key_name.as_bytes());
+
+        let function_argument = FunctionArgument {
+            name: "input1".to_owned(),
+            r#type: ArgumentType::Bytes as i32,
+            value: vec![1, 2, 3],
+        };
+
+        let res = get_input(
+            &mem,
+            key_ptr,
+            key_name.len() as u32,
+            WasmPtr::new(std::u32::MAX),
+            1 as u32,
+            &vec![function_argument],
+        );
+
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), WasmError::ConversionError(..)));
+
+        // testing failed to encode protobuf
+        let mem = create_mem!();
+        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let key_name = "input1".to_owned();
+
+        let function_argument = FunctionArgument {
+            name: "input1".to_owned(),
+            r#type: ArgumentType::Bytes as i32,
+            value: vec![1, 2, 3],
+        };
+
+        write_to_ptr(&key_ptr, &mem, key_name.as_bytes());
+        let encoded_len = function_argument.encoded_len();
+
+        let mut reference_value = Vec::with_capacity(encoded_len);
+        function_argument.encode(&mut reference_value).unwrap();
+
+        let value_ptr: WasmPtr<u8, Array> = WasmPtr::new(key_name.as_bytes().len() as u32);
+        let res = get_input(
+            &mem,
+            key_ptr,
+            key_name.len() as u32,
+            value_ptr,
+            (encoded_len - 1) as u32,
+            &vec![function_argument],
+        );
+
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            WasmError::FailedToEncodeProtobuf(..)
+        ));
+
+        // testing getting valid input
         let mem = create_mem!();
         let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
         let key_name = "input1".to_owned();
@@ -432,6 +524,16 @@ mod tests {
         let mem = create_mem!();
         let ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
 
+        // testing bad pointer
+
+        let res = set_output(&mem, WasmPtr::new(0), std::u32::MAX);
+
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            WasmError::FailedToDerefPointer()
+        ));
+
         let return_value = ReturnValue {
             name: "sune".to_owned(),
             r#type: ArgumentType::Int as i32,
@@ -444,7 +546,10 @@ mod tests {
 
         // Try with empty pointer
         let res = set_output(&mem, ptr, encoded_len as u32);
-        assert!(matches!(res.unwrap_err(), WasmError::FailedToDecodeProtobuf(..)));
+        assert!(matches!(
+            res.unwrap_err(),
+            WasmError::FailedToDecodeProtobuf(..)
+        ));
 
         // Try with written pointer
         write_to_ptr(&ptr, &mem, &return_value_bytes);
