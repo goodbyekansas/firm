@@ -57,11 +57,11 @@ enum WasmError {
 type Result<T> = std::result::Result<T, WasmError>;
 
 trait ToErrorCode<T> {
-    fn to_error_code(self) -> i32;
+    fn to_error_code(self) -> u32;
 }
 
 impl<T> ToErrorCode<T> for Result<T> {
-    fn to_error_code(self) -> i32 {
+    fn to_error_code(self) -> u32 {
         match self {
             Ok(_) => 0,
             Err(e) => e.into(),
@@ -69,13 +69,16 @@ impl<T> ToErrorCode<T> for Result<T> {
     }
 }
 
-impl From<WasmError> for i32 {
+impl From<WasmError> for u32 {
     fn from(err: WasmError) -> Self {
         match err {
             WasmError::Unknown(_) => 1,
             WasmError::FailedToDerefPointer() => 2,
             WasmError::FailedToDecodeProtobuf(_) => 3,
-            _ => -1, // TODO som fan
+            WasmError::ConversionError(_) => 4,
+            WasmError::FailedToReadStringPointer(_) => 5,
+            WasmError::FailedToFindKey(_) => 6,
+            WasmError::FailedToEncodeProtobuf(_) => 7,
         }
     }
 }

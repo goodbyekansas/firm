@@ -2,7 +2,11 @@ name = "start-maya"
 
 [inputs]
     [inputs.version]
-        type="string"
+    type="string"
+
+[outputs]
+    [outputs.pid]
+    type="int"
 
 [execution-environment]
 type = "wasm"
