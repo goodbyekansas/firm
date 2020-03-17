@@ -6,7 +6,8 @@ use std::{
 };
 
 use prost::Message;
-use wasmer_runtime::{compile, func, imports, memory::Memory, Array, Ctx, Func, WasmPtr};
+use thiserror::Error;
+use wasmer_runtime::{compile, func, imports, memory::Memory, Array, Ctx, Func, Item, WasmPtr};
 use wasmer_wasi::{generate_import_object_from_state, get_wasi_version, state::WasiState};
 
 use crate::executor::FunctionExecutor;
@@ -29,6 +30,56 @@ impl<'a> WasmPtrExt<'a> for WasmPtr<u8, Array> {
     }
 }
 
+#[derive(Error, Debug)]
+enum WasmError {
+    #[error("Unknown: {0}")]
+    Unknown(String),
+
+    #[error("{0}")]
+    ConversionError(String),
+
+    #[error("Failed to read string pointer for \"{0}\"")]
+    FailedToReadStringPointer(String),
+
+    #[error("Failed to find key: {0}")]
+    FailedToFindKey(String),
+
+    #[error("Failed to deref pointer.")]
+    FailedToDerefPointer(),
+
+    #[error("Failed to decode value from protobuf: {0}")]
+    FailedToDecodeProtobuf(#[from] prost::DecodeError),
+
+    #[error("Failed to encode value from protobuf: {0}")]
+    FailedToEncodeProtobuf(#[from] prost::EncodeError),
+}
+
+type Result<T> = std::result::Result<T, WasmError>;
+
+trait ToErrorCode<T> {
+    fn to_error_code(self) -> i32;
+}
+
+impl<T> ToErrorCode<T> for Result<T> {
+    fn to_error_code(self) -> i32 {
+        match self {
+            Ok(_) => 0,
+            Err(e) => e.into(),
+        }
+    }
+}
+
+impl From<WasmError> for i32 {
+    fn from(err: WasmError) -> Self {
+        match err {
+            WasmError::Unknown(_) => 1,
+            WasmError::FailedToDerefPointer() => 2,
+            WasmError::FailedToDecodeProtobuf(_) => 3,
+            _ => -1, // TODO som fan
+        }
+    }
+}
+
 fn start_process(ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32) -> i64 {
     let memory = ctx.memory(0);
     match s.get_utf8_string(memory, len) {
@@ -44,16 +95,28 @@ fn get_input_len(
     vm_memory: &Memory,
     key: WasmPtr<u8, Array>,
     keylen: u32,
+    value: WasmPtr<u64, Item>,
     arguments: &[FunctionArgument],
-) -> u64 {
-    // TODO: Do not do unwrap_or
-    let key = key.get_utf8_string(vm_memory, keylen).unwrap_or("");
+) -> Result<()> {
+    let key = key
+        .get_utf8_string(vm_memory, keylen)
+        .ok_or_else(|| WasmError::FailedToReadStringPointer("key".to_owned()))?;
 
     arguments
         .iter()
         .find(|a| a.name == key)
-        .map(|a| a.encoded_len())
-        .unwrap_or(0) as u64
+        .ok_or_else(|| WasmError::FailedToFindKey(key.to_string()))
+        .and_then(|a| {
+            let len = a.encoded_len();
+            unsafe {
+                value
+                    .deref_mut(vm_memory)
+                    .ok_or_else(|| WasmError::FailedToDerefPointer())
+                    .map(|c| {
+                        c.set(len as u64);
+                    })
+            }
+        })
 }
 
 fn get_input(
@@ -63,36 +126,43 @@ fn get_input(
     value: WasmPtr<u8, Array>,
     valuelen: u32,
     arguments: &[FunctionArgument],
-) -> u32 {
-    let key = key.get_utf8_string(vm_memory, keylen).unwrap_or("");
+) -> Result<()> {
+    let key = key
+        .get_utf8_string(vm_memory, keylen)
+        .ok_or_else(|| WasmError::FailedToReadStringPointer("key".to_owned()))?;
+
     arguments
         .iter()
         .find(|a| a.name == key)
+        .ok_or_else(|| WasmError::FailedToFindKey(key.to_string()))
         .and_then(|a| {
-            value.as_byte_array_mut(&vm_memory, valuelen as usize).and_then(
-                |mut buff| {
-                    a.encode(&mut buff).ok()?;
-
-                    // note that we cannot use buff here since it is
-                    // consumed by the above
-                    Some(valuelen as u32)
-                },
-            )
+            value
+                .as_byte_array_mut(&vm_memory, valuelen as usize)
+                .ok_or_else(|| {
+                    WasmError::ConversionError(
+                        "Failed to convert provided input buffer to mut byte array.".to_owned(),
+                    )
+                })
+                .and_then(|mut buff| {
+                    a.encode(&mut buff)
+                        .map_err(|e| WasmError::FailedToEncodeProtobuf(e))
+                })
         })
-        .unwrap_or(0u32)
 }
 
-fn set_output(vm_memory: &Memory, val: WasmPtr<u8, Array>, vallen: u32) -> Option<ReturnValue> {
-    val.deref(vm_memory, 0, vallen).and_then(|cells| {
-        ReturnValue::decode(
-            cells
-                .iter()
-                .map(|v| v.get())
-                .collect::<Vec<u8>>()
-                .as_slice(),
-        )
-        .ok()
-    })
+fn set_output(vm_memory: &Memory, val: WasmPtr<u8, Array>, vallen: u32) -> Result<ReturnValue> {
+    val.deref(vm_memory, 0, vallen)
+        .ok_or_else(|| WasmError::FailedToDerefPointer())
+        .and_then(|cells| {
+            ReturnValue::decode(
+                cells
+                    .iter()
+                    .map(|v| v.get())
+                    .collect::<Vec<u8>>()
+                    .as_slice(),
+            )
+            .map_err(|e| WasmError::FailedToDecodeProtobuf(e))
+        })
 }
 
 fn execute_function(
@@ -100,7 +170,7 @@ fn execute_function(
     _entrypoint: &str,
     code: &[u8],
     arguments: &[FunctionArgument],
-) -> Result<Vec<ReturnValue>, String> {
+) -> std::result::Result<Vec<ReturnValue>, String> {
     const ENTRY: &str = "_start";
     let module = compile(code).map_err(|e| format!("failed to compile wasm: {}", e))?;
 
@@ -120,14 +190,14 @@ fn execute_function(
     let gbk_imports = imports! {
         "gbk" => {
             "start_host_process" => func!(start_process),
-            "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32| get_input_len(ctx.memory(0), key, keylen, &a)),
-            "get_input" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u8, Array>, valuelen: u32| get_input(ctx.memory(0), key, keylen, value, valuelen, &a2)),
+            "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u64, Item>| get_input_len(ctx.memory(0), key, keylen, value, &a).to_error_code()),
+            "get_input" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u8, Array>, valuelen: u32| get_input(ctx.memory(0), key, keylen, value, valuelen, &a2).to_error_code()),
             "set_ouptut" => func!(move |ctx: &mut Ctx, val: WasmPtr<u8, Array>, vallen: u32| {
                 set_output(ctx.memory(0), val, vallen).and_then(|v| {
                     res.write().map(|mut writer| {
                         writer.push(v);
-                    }).ok()
-                }).unwrap_or(());
+                    }).map_err(|e| {WasmError::Unknown(format!("{}", e))})
+                }).to_error_code();
             }),
         },
     };
@@ -216,16 +286,18 @@ mod tests {
 
     #[test]
     fn test_get_input_len() {
-        // get non existant input
+        // get with bad key ptr
         let mem = create_mem!();
-        let ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let arg_name = "sune was here".to_owned();
-        write_to_ptr(&ptr, &mem, arg_name.as_bytes());
 
+        // Will fail to parse key as str if the size is larger than its
+        // memory available
+        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(std::u32::MAX);
+        let val: WasmPtr<u64, Item> = WasmPtr::new(0);
         let res = get_input_len(
             &mem,
-            ptr,
-            arg_name.len() as u32,
+            key_ptr,
+            5 as u32,
+            val,
             &[FunctionArgument {
                 name: "chorizo korvén".to_owned(),
                 r#type: ArgumentType::Bytes as i32,
@@ -233,12 +305,38 @@ mod tests {
             }],
         );
 
-        assert_eq!(0, res);
+        assert!(res.is_err());
+        assert!(matches!(dbg!(res).unwrap_err(), WasmError::FailedToReadStringPointer(..)));
+
+        // get non existant input
+        let mem = create_mem!();
+        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+
+        let arg_name = "sune was here".to_owned();
+        let arg_name_bytes = arg_name.as_bytes();
+        write_to_ptr(&key_ptr, &mem, arg_name_bytes);
+
+        let val: WasmPtr<u64, Item> = WasmPtr::new(arg_name_bytes.len() as u32);
+        let res = get_input_len(
+            &mem,
+            key_ptr,
+            arg_name.len() as u32,
+            val,
+            &[FunctionArgument {
+                name: "chorizo korvén".to_owned(),
+                r#type: ArgumentType::Bytes as i32,
+                value: vec![1, 2, 3],
+            }],
+        );
+
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), WasmError::FailedToFindKey(..)));
 
         // get existing input
         let mem = create_mem!();
-        let ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
         let arg_name = "input1".to_owned();
+        let arg_name_bytes = arg_name.as_bytes();
 
         let function_argument = FunctionArgument {
             name: "input1".to_owned(),
@@ -246,22 +344,53 @@ mod tests {
             value: vec![1, 2, 3],
         };
 
-        write_to_ptr(&ptr, &mem, arg_name.as_bytes());
+        write_to_ptr(&key_ptr, &mem, arg_name_bytes);
+        let val: WasmPtr<u64, Item> = WasmPtr::new(arg_name_bytes.len() as u32);
         let res = get_input_len(
             &mem,
-            ptr,
+            key_ptr,
             arg_name.len() as u32,
+            val,
+            &[function_argument.clone()],
+        );
+        assert!(res.is_ok());
+
+        let write_len: u64 = val.deref(&mem).map(|cell| {
+            cell.get() as u64
+        }).unwrap();
+        assert_eq!(function_argument.encoded_len(), write_len as usize);
+
+        // get existing input with invalid pointer
+        let mem = create_mem!();
+        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let arg_name = "input1".to_owned();
+        let arg_name_bytes = arg_name.as_bytes();
+
+        let function_argument = FunctionArgument {
+            name: "input1".to_owned(),
+            r#type: ArgumentType::Bytes as i32,
+            value: vec![1, 2, 3],
+        };
+
+        write_to_ptr(&key_ptr, &mem, arg_name_bytes);
+        let val: WasmPtr<u64, Item> = WasmPtr::new(std::u32::MAX);
+        let res = get_input_len(
+            &mem,
+            key_ptr,
+            arg_name.len() as u32,
+            val,
             &[function_argument.clone()],
         );
 
-        assert_eq!(function_argument.encoded_len(), res as usize);
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), WasmError::FailedToDerefPointer()));
     }
 
     #[test]
     fn test_get_input() {
         let mem = create_mem!();
-        let ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let arg_name = "input1".to_owned();
+        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let key_name = "input1".to_owned();
 
         let function_argument = FunctionArgument {
             name: "input1".to_owned(),
@@ -269,23 +398,23 @@ mod tests {
             value: vec![1, 2, 3],
         };
 
-        write_to_ptr(&ptr, &mem, arg_name.as_bytes());
+        write_to_ptr(&key_ptr, &mem, key_name.as_bytes());
         let encoded_len = function_argument.encoded_len();
 
         let mut reference_value = Vec::with_capacity(encoded_len);
         function_argument.encode(&mut reference_value).unwrap();
 
-        let value_ptr: WasmPtr<u8, Array> = WasmPtr::new(arg_name.as_bytes().len() as u32);
+        let value_ptr: WasmPtr<u8, Array> = WasmPtr::new(key_name.as_bytes().len() as u32);
         let res = get_input(
             &mem,
-            ptr,
-            arg_name.len() as u32,
+            key_ptr,
+            key_name.len() as u32,
             value_ptr,
             encoded_len as u32,
             &vec![function_argument],
         );
 
-        assert_eq!(encoded_len, res as usize);
+        assert!(res.is_ok());
 
         // check that the byte patterns are identical
         let encoded = value_ptr
@@ -315,13 +444,13 @@ mod tests {
 
         // Try with empty pointer
         let res = set_output(&mem, ptr, encoded_len as u32);
-        assert!(res.is_none());
+        assert!(matches!(res.unwrap_err(), WasmError::FailedToDecodeProtobuf(..)));
 
         // Try with written pointer
         write_to_ptr(&ptr, &mem, &return_value_bytes);
         let res = set_output(&mem, ptr, encoded_len as u32);
 
-        assert!(res.is_some());
+        assert!(res.is_ok());
         assert_eq!(return_value, res.unwrap());
     }
 }
