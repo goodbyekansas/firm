@@ -15,15 +15,17 @@ use crate::proto::{
     ReturnValue,
 };
 
-fn byte_array_from_wasmptr_mut<'a>(
-    ptr: &'a WasmPtr<u8, Array>,
-    mem: &'a Memory,
-    len: usize,
-) -> Option<&'a mut [u8]> {
-    unsafe {
-        // black magic casting (Cell doesn't contain any data which is why this works)
-        ptr.deref_mut(&mem, 0, len as u32)
-            .map(|cells| (&mut *(cells as *mut [Cell<u8>] as *mut Cell<[u8]>)).get_mut())
+trait WasmPtrExt<'a> {
+    fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]>;
+}
+
+impl<'a> WasmPtrExt<'a> for WasmPtr<u8, Array> {
+    fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]> {
+        unsafe {
+            // black magic casting (Cell doesn't contain any data which is why this works)
+            self.deref_mut(&mem, 0, len as u32)
+                .map(|cells| (&mut *(cells as *mut [Cell<u8>] as *mut Cell<[u8]>)).get_mut())
+        }
     }
 }
 
@@ -67,7 +69,7 @@ fn get_input(
         .iter()
         .find(|a| a.name == key)
         .and_then(|a| {
-            byte_array_from_wasmptr_mut(&value, &vm_memory, valuelen as usize).and_then(
+            value.as_byte_array_mut(&vm_memory, valuelen as usize).and_then(
                 |mut buff| {
                     a.encode(&mut buff).ok()?;
 
