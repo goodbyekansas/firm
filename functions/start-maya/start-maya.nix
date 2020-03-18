@@ -18,9 +18,19 @@ stdenv.mkDerivation rec {
 
   manifest = ./function.toml;
 
+  doCheck = true; # TODO: When nedryland takes over the world remove this.
+
   buildPhase = ''
     export HOME=$PWD
     cargo build --release
+  '';
+
+  checkPhase = ''
+    export HOME=$PWD
+
+    cargo fmt -- --check
+
+    cargo clippy
   '';
 
   installPhase = ''

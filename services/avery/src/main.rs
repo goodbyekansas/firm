@@ -3,7 +3,7 @@
 use std::{path::Path, sync::Arc};
 
 use futures;
-use slog::{info, o, Drain};
+use slog::{error, info, o, Drain};
 use slog_async;
 use slog_term;
 use structopt::StructOpt;
@@ -51,8 +51,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let functions_registry_service = Arc::new(FunctionsRegistryService::new());
     if !args.skip_register_test_functions {
         // TODO: this is very temp but gives a nice workflow atm
-        match std::option_env!("inputFunctions") {
-            Some(fnstring) => {
+        info!(log, "registering functions from $inputFunctions...");
+        match std::env::var("inputFunctions") {
+            Ok(fnstring) => {
                 fnstring
                     .split(';')
                     .filter_map(|p| {
@@ -62,13 +63,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .map(|p| p.join("manifest.toml"))?;
 
                         let manifest = FunctionManifest::parse(manifest_path)
-                            .map_err(|e| println!("\"{}\". Skipping", e))
+                            .map_err(|e| error!(log, "\"{}\". Skipping", e))
                             .ok()?;
 
                         let mut register_request = RegisterRequest::from(&manifest);
+                        info!(log, "reading code file from: {}", p);
                         register_request.code = std::fs::read(p)
                             .map_err(|e| {
-                                println!(
+                                error!(
+                                    log,
                                     "Failed to read code for function {}: {}. Skipping.",
                                     manifest.name(),
                                     e
@@ -83,15 +86,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             functions_registry_service.register(tonic::Request::new(f.clone())),
                         )
                         .map_or_else(
-                            |e| println!("Failed to register function \"{}\". Err: {}", f.name, e),
+                            |e| {
+                                error!(
+                                    log,
+                                    "Failed to register function \"{}\". Err: {}", f.name, e
+                                )
+                            },
                             |_| (),
                         );
                     });
             }
-            None => {
-                println!("Tried to add functions from the env var but $inputFunctions was not set")
-            }
+            Err(e) => error!(
+                log,
+                "Tried to add functions from the env var but $inputFunctions was not set. {}", e
+            ),
         };
+
+        info!(log, "done registering functions from $inputFunctions");
     }
 
     let functions_service = FunctionsService::new(
