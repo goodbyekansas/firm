@@ -3,6 +3,7 @@ name = "start-maya"
 [inputs]
     [inputs.version]
     type="string"
+    default="2019"
 
 [outputs]
     [outputs.pid]

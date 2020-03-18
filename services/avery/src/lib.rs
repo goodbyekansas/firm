@@ -7,6 +7,7 @@ pub mod proto {
 
 mod executor;
 pub mod fake_registry;
+pub mod manifest;
 
 use std::sync::Arc;
 
