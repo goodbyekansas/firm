@@ -91,6 +91,12 @@ pub mod gbk {
         }};
     }
 
+    macro_rules! host_call {
+        ($call: expr) => {
+            unsafe { $call }.to_result()
+        };
+    }
+
     impl FromFunctionArgument for i64 {
         fn from_arg(arg: FunctionArgument) -> Option<Self> {
             Some(i64::from_le_bytes(bytes_as_64_bit_array!(arg.value)))
@@ -111,19 +117,19 @@ pub mod gbk {
 
     pub fn get_input<T: FromFunctionArgument>(key: &str) -> Result<T, Error> {
         let mut size: u64 = 0;
-        unsafe { raw::get_input_len(key.as_ptr(), key.len(), &mut size as *mut u64) }
-            .to_result()?;
+        host_call!(raw::get_input_len(
+            key.as_ptr(),
+            key.len(),
+            &mut size as *mut u64
+        ))?;
 
         let mut value_buffer = Vec::with_capacity(size as usize);
-        unsafe {
-            raw::get_input(
-                key.as_ptr(),
-                key.len(),
-                value_buffer.as_mut_ptr(),
-                size as usize,
-            )
-        }
-        .to_result()?;
+        host_call!(raw::get_input(
+            key.as_ptr(),
+            key.len(),
+            value_buffer.as_mut_ptr(),
+            size as usize,
+        ))?;
 
         FunctionArgument::decode(value_buffer.as_slice())
             .map_err(|e| e.into())
@@ -133,11 +139,11 @@ pub mod gbk {
     pub fn set_output(ret_value: &ReturnValue) -> Result<(), Error> {
         let mut value = Vec::with_capacity(ret_value.encoded_len());
         ret_value.encode(&mut value)?;
-        unsafe { raw::set_output(value.as_mut_ptr(), value.len()) }.to_result()
+        host_call!(raw::set_output(value.as_mut_ptr(), value.len()))
     }
 
     pub fn set_error(msg: &str) -> Result<(), Error> {
-        unsafe { raw::set_error(msg.as_ptr(), msg.len()) }.to_result()
+        host_call!(raw::set_error(msg.as_ptr(), msg.len()))
     }
 }
 
