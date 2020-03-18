@@ -26,7 +26,7 @@ stdenv.mkDerivation rec {
   installPhase = ''
     mkdir -p $out/bin
     cp target/wasm32-wasi/release/${name}.wasm $out/bin
-    cp $manifest $out/
+    cp $manifest $out/manifest.toml
   '';
 
   # always want backtraces when building or in dev

@@ -1,6 +1,6 @@
 #![deny(warnings)]
 
-use std::{collections::HashMap, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 use futures;
 use slog::{info, o, Drain};
@@ -11,10 +11,11 @@ use tonic::transport::Server;
 
 use avery::{
     fake_registry::FunctionsRegistryService,
+    manifest::FunctionManifest,
     proto::{
         functions_registry_server::{FunctionsRegistry, FunctionsRegistryServer},
         functions_server::FunctionsServer,
-        ExecutionEnvironment, RegisterRequest,
+        RegisterRequest,
     },
     FunctionsService,
 };
@@ -54,20 +55,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(fnstring) => {
                 fnstring
                     .split(';')
-                    .map(|p| RegisterRequest {
-                        name: std::path::Path::new(p)
-                            .file_stem()
-                            .unwrap_or_else(|| std::ffi::OsStr::new("unknown-file-name"))
-                            .to_string_lossy()
-                            .to_string(),
-                        tags: HashMap::with_capacity(0),
-                        inputs: Vec::with_capacity(0),
-                        outputs: Vec::with_capacity(0),
-                        code: std::fs::read(p).unwrap_or_else(|_| vec![]).to_vec(),
-                        entrypoint: String::new(),
-                        execution_environment: Some(ExecutionEnvironment {
-                            name: "wasm".to_owned(),
-                        }),
+                    .filter_map(|p| {
+                        let manifest_path = Path::new(p)
+                            .parent()
+                            .and_then(|p| p.parent())
+                            .map(|p| p.join("manifest.toml"))?;
+
+                        let manifest = FunctionManifest::parse(manifest_path)
+                            .map_err(|e| println!("\"{}\". Skipping", e))
+                            .ok()?;
+
+                        let mut register_request = RegisterRequest::from(&manifest);
+                        register_request.code = std::fs::read(p)
+                            .map_err(|e| {
+                                println!(
+                                    "Failed to read code for function {}: {}. Skipping.",
+                                    manifest.name(),
+                                    e
+                                )
+                            })
+                            .ok()?
+                            .to_vec();
+                        Some(register_request)
                     })
                     .for_each(|f| {
                         futures::executor::block_on(
