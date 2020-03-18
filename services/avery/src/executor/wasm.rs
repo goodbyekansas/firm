@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    io,
     process::Command,
     str,
     sync::{Arc, RwLock},
@@ -47,6 +48,9 @@ enum WasmError {
     #[error("Failed to deref pointer.")]
     FailedToDerefPointer(),
 
+    #[error("Failed to start process: {0}.")]
+    FailedToStartProcess(#[from] io::Error),
+
     #[error("Failed to decode value from protobuf: {0}")]
     FailedToDecodeProtobuf(#[from] prost::DecodeError),
 
@@ -79,18 +83,32 @@ impl From<WasmError> for u32 {
             WasmError::FailedToReadStringPointer(_) => 5,
             WasmError::FailedToFindKey(_) => 6,
             WasmError::FailedToEncodeProtobuf(_) => 7,
+            WasmError::FailedToStartProcess(_) => 8,
         }
     }
 }
 
-fn start_process(ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32) -> i64 {
-    let memory = ctx.memory(0);
-    match s.get_utf8_string(memory, len) {
-        Some(command) => match Command::new(command).spawn() {
-            Ok(_) => 1,
-            Err(_) => 0,
-        },
-        _ => 0,
+fn start_process(
+    vm_memory: &Memory,
+    s: WasmPtr<u8, Array>,
+    len: u32,
+    pid_out: WasmPtr<u64, Item>,
+) -> Result<()> {
+    unsafe {
+        match s.get_utf8_string(vm_memory, len) {
+            Some(command) => Command::new(command)
+                .spawn()
+                .map_err(WasmError::FailedToStartProcess)
+                .and_then(|c| {
+                    pid_out
+                        .deref_mut(&vm_memory)
+                        .ok_or_else(WasmError::FailedToDerefPointer)
+                        .map(|cell| cell.set(c.id() as u64))
+                }),
+            _ => Err(WasmError::FailedToReadStringPointer(
+                "program_name".to_owned(),
+            )),
+        }
     }
 }
 
@@ -168,6 +186,12 @@ fn set_output(vm_memory: &Memory, val: WasmPtr<u8, Array>, vallen: u32) -> Resul
         })
 }
 
+fn set_error(vm_memory: &Memory, msg: WasmPtr<u8, Array>, msglen: u32) -> Result<String> {
+    msg.get_utf8_string(vm_memory, msglen)
+        .ok_or_else(|| WasmError::FailedToReadStringPointer("msg".to_owned()))
+        .map(|s| s.to_owned())
+}
+
 fn execute_function(
     function_name: &str,
     _entrypoint: &str,
@@ -188,19 +212,34 @@ fn execute_function(
     // inject gbk specific functions in the wasm state
     let a = arguments.to_vec();
     let a2 = arguments.to_vec();
-    let results = Arc::new(RwLock::new(Vec::new()));
+    let v: Vec<std::result::Result<ReturnValue, String>> = Vec::new();
+    let results = Arc::new(RwLock::new(v));
     let res = Arc::clone(&results);
+    let res2 = Arc::clone(&results);
     let gbk_imports = imports! {
         "gbk" => {
-            "start_host_process" => func!(start_process),
-            "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u64, Item>| get_input_len(ctx.memory(0), key, keylen, value, &a).to_error_code()),
-            "get_input" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u8, Array>, valuelen: u32| get_input(ctx.memory(0), key, keylen, value, valuelen, &a2).to_error_code()),
-            "set_ouptut" => func!(move |ctx: &mut Ctx, val: WasmPtr<u8, Array>, vallen: u32| {
+            "start_host_process" => func!(|ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
+                start_process(ctx.memory(0), s, len, pid_out).to_error_code()
+            }),
+            "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u64, Item>| {
+                get_input_len(ctx.memory(0), key, keylen, value, &a).to_error_code()
+            }),
+            "get_input" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u8, Array>, valuelen: u32| {
+                get_input(ctx.memory(0), key, keylen, value, valuelen, &a2).to_error_code()
+            }),
+            "set_output" => func!(move |ctx: &mut Ctx, val: WasmPtr<u8, Array>, vallen: u32| {
                 set_output(ctx.memory(0), val, vallen).and_then(|v| {
                     res.write().map(|mut writer| {
-                        writer.push(v);
+                        writer.push(Ok(v));
                     }).map_err(|e| {WasmError::Unknown(format!("{}", e))})
-                }).to_error_code();
+                }).to_error_code()
+            }),
+            "set_error" => func!(move |ctx: &mut Ctx, msg: WasmPtr<u8, Array>, msglen: u32 | {
+                set_error(ctx.memory(0), msg, msglen).and_then(|v| {
+                    res2.write().map(|mut writer| {
+                        writer.push(Err(v));
+                    }).map_err(|e| {WasmError::Unknown(format!("{}", e))})
+                }).to_error_code()
             }),
         },
     };
@@ -221,9 +260,9 @@ fn execute_function(
         .and_then(|_| {
             results
                 .read()
-                .map(|reader| reader.iter().cloned().collect())
                 .map_err(|e| format!("Failed to read function results: {}", e))
         })
+        .and_then(|reader| reader.iter().cloned().collect())
 }
 
 pub struct WasmExecutor {}
@@ -238,7 +277,7 @@ impl FunctionExecutor for WasmExecutor {
     ) -> ProtoResult {
         execute_function(function_name, entrypoint, code, arguments).map_or_else(
             |e| ProtoResult::Error(ExecutionError { msg: e }),
-            |_| ProtoResult::Ok(FunctionResult { values: vec![] }),
+            |v| ProtoResult::Ok(FunctionResult { values: v }),
         )
     }
 }

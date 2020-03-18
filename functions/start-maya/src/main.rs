@@ -4,7 +4,7 @@ pub mod proto {
 
 #[link(wasm_import_module = "gbk")]
 extern "C" {
-    pub fn start_host_process(string_ptr: *const u8, len: usize) -> u32;
+    pub fn start_host_process(string_ptr: *const u8, len: usize, pid: *mut u64) -> u32;
     pub fn get_input_len(key_ptr: *const u8, len: usize, value: *mut u64) -> u32;
     pub fn get_input(
         key_ptr: *const u8,
@@ -13,15 +13,16 @@ extern "C" {
         value_len: usize,
     ) -> u32;
     pub fn set_output(value_ptr: *const u8, value_len: usize) -> u32;
+    pub fn set_error(msg_ptr: *const u8, msg_len: usize) -> u32;
 }
 
 pub mod gbk {
-    pub use crate::proto::{FunctionArgument, ReturnValue};
+    pub use crate::proto::{ArgumentType, FunctionArgument, ReturnValue};
     use prost::Message;
     use thiserror::Error;
 
     mod raw {
-        pub use crate::{get_input, get_input_len, set_output, start_host_process};
+        pub use crate::{get_input, get_input_len, set_error, set_output, start_host_process};
     }
 
     trait ToResult: Copy {
@@ -55,14 +56,11 @@ pub mod gbk {
         HostError(u32),
     }
 
-    pub fn start_host_process(name: &str) -> Result<(), Error> {
-        let ri64 = unsafe { raw::start_host_process(name.as_ptr(), name.len()) };
-
-        if ri64 != 0 {
-            Ok(())
-        } else {
-            Err(Error::FailedToStartProcess())
-        }
+    pub fn start_host_process(name: &str) -> Result<u64, Error> {
+        let mut pid: u64 = 0;
+        unsafe { raw::start_host_process(name.as_ptr(), name.len(), &mut pid as *mut u64) }
+            .to_result()
+            .map(|_| pid)
     }
 
     pub fn get_input(key: &str) -> Result<FunctionArgument, Error> {
@@ -89,13 +87,33 @@ pub mod gbk {
         ret_value.encode(&mut value)?;
         unsafe { raw::set_output(value.as_mut_ptr(), value.len()) }.to_result()
     }
+
+    pub fn set_error(msg: &str) -> Result<(), Error> {
+        unsafe { raw::set_error(msg.as_ptr(), msg.len()) }.to_result()
+    }
 }
 
 fn main() {
     println!("Hello! I will start maya from WASI now!");
 
-    match gbk::start_host_process("/usr/autodesk/maya2019/bin/maya") {
-        Ok(_) => println!("started maya"),
-        Err(e) => println!("failed to start maya because of: {}", e),
+    let maya_version = gbk::get_input("version")
+        .ok()
+        .and_then(|a| String::from_utf8(a.value).ok())
+        .unwrap_or_else(|| "2019".to_owned());
+
+    match gbk::start_host_process(&format!("/usr/autodesk/maya{}/bin/maya", maya_version)) {
+        Ok(pid) => {
+            println!("started maya");
+            gbk::set_output(&gbk::ReturnValue {
+                name: "pid".to_owned(),
+                r#type: gbk::ArgumentType::Int as i32,
+                value: pid.to_le_bytes().to_vec(),
+            })
+            .map_or_else(|e| println!("Failed to set output: {}", e), |_| ()); // 🕍🥿🕍 🎾
+        }
+        Err(e) => {
+            gbk::set_error(&format!("Failed to start maya 🛕 because of: {}", e))
+                .map_or_else(|e| println!("failed to set error: {}", e), |_| ());
+        }
     };
 }
