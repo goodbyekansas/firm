@@ -54,6 +54,9 @@ pub mod gbk {
 
         #[error("Host error occured. Error code: {0}")]
         HostError(u32),
+
+        #[error("Failed to convert to requested type")]
+        ConversionError(),
     }
 
     pub fn start_host_process(name: &str) -> Result<u64, Error> {
@@ -63,7 +66,50 @@ pub mod gbk {
             .map(|_| pid)
     }
 
-    pub fn get_input(key: &str) -> Result<FunctionArgument, Error> {
+    pub trait FromFunctionArgument: Sized {
+        fn from_arg(arg: FunctionArgument) -> Option<Self>;
+    }
+
+    impl FromFunctionArgument for String {
+        fn from_arg(arg: FunctionArgument) -> Option<Self> {
+            String::from_utf8(arg.value).ok()
+        }
+    }
+
+    macro_rules! bytes_as_64_bit_array {
+        ($bytes: expr) => {{
+            [
+                $bytes.get(0).cloned().unwrap_or_default(),
+                $bytes.get(1).cloned().unwrap_or_default(),
+                $bytes.get(2).cloned().unwrap_or_default(),
+                $bytes.get(3).cloned().unwrap_or_default(),
+                $bytes.get(4).cloned().unwrap_or_default(),
+                $bytes.get(5).cloned().unwrap_or_default(),
+                $bytes.get(6).cloned().unwrap_or_default(),
+                $bytes.get(7).cloned().unwrap_or_default(),
+            ]
+        }};
+    }
+
+    impl FromFunctionArgument for i64 {
+        fn from_arg(arg: FunctionArgument) -> Option<Self> {
+            Some(i64::from_le_bytes(bytes_as_64_bit_array!(arg.value)))
+        }
+    }
+
+    impl FromFunctionArgument for f64 {
+        fn from_arg(arg: FunctionArgument) -> Option<Self> {
+            Some(f64::from_le_bytes(bytes_as_64_bit_array!(arg.value)))
+        }
+    }
+
+    impl FromFunctionArgument for bool {
+        fn from_arg(arg: FunctionArgument) -> Option<Self> {
+            arg.value.first().map(|b| *b != 0)
+        }
+    }
+
+    pub fn get_input<T: FromFunctionArgument>(key: &str) -> Result<T, Error> {
         let mut size: u64 = 0;
         unsafe { raw::get_input_len(key.as_ptr(), key.len(), &mut size as *mut u64) }
             .to_result()?;
@@ -79,7 +125,9 @@ pub mod gbk {
         }
         .to_result()?;
 
-        FunctionArgument::decode(value_buffer.as_slice()).map_err(|e| e.into())
+        FunctionArgument::decode(value_buffer.as_slice())
+            .map_err(|e| e.into())
+            .and_then(|a| T::from_arg(a).ok_or_else(Error::ConversionError))
     }
 
     pub fn set_output(ret_value: &ReturnValue) -> Result<(), Error> {
@@ -98,7 +146,6 @@ fn main() {
 
     let maya_version = gbk::get_input("version")
         .ok()
-        .and_then(|a| String::from_utf8(a.value).ok())
         .unwrap_or_else(|| "2019".to_owned());
 
     match gbk::start_host_process(&format!("/usr/autodesk/maya{}/bin/maya", maya_version)) {
