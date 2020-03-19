@@ -9,16 +9,16 @@ jobs:
     strategy:
       matrix:
         component: [
-          services/avery/avery.nix,
-          clients/bendini/bendini.nix,
-          clients/lomax/lomax.nix,
-          functions/start-maya/start-maya.nix
+          avery,
+          bendini,
+          lomax,
+          start-maya
         ]
 
     steps:
     - uses: actions/checkout@v2.0.0
     - name: Install Nix
-      uses: cachix/install-nix-action@v6
+      uses: cachix/install-nix-action@v8
     - name: Remove rustup since it interferes with the build
       run: rustup self uninstall -y
     - name: Disable Nix sandboxing
@@ -26,8 +26,8 @@ jobs:
         mkdir -p ~/.config/nix
         echo "sandbox = false" > ~/.config/nix/nix.conf
     - name: Build, test and cache ${{ matrix.component }} package
-      uses: cachix/cachix-action@v3
+      uses: cachix/cachix-action@v5
       with:
         name: firm
-        file: "${{ matrix.component }}"
+        attributes: "${{ matrix.component }}.packageWithCheck"
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
