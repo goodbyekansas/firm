@@ -16,6 +16,11 @@ jobs:
         ]
 
     steps:
+    - name: Install SSH key
+      uses: shimataro/ssh-key-action@v2
+      with:
+        key: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
+        known_hosts: ${{ secrets.KNOWN_HOSTS }}
     - uses: actions/checkout@v2.0.0
     - name: Install Nix
       uses: cachix/install-nix-action@v8
@@ -29,5 +34,5 @@ jobs:
       uses: cachix/cachix-action@v5
       with:
         name: firm
-        attributes: "${{ matrix.component }}.packageWithCheck"
+        attributes: "${{ matrix.component }}.packageWithChecks"
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
