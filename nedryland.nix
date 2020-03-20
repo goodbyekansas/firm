@@ -4,6 +4,6 @@ else
   builtins.fetchGit {
     name = "nedryland";
     url = "git@github.com:goodbyekansas/nedryland.git";
-    ref = "fcf187f0a0cbd9f85bd736c20e79e458b01f92a5";
+    ref = "4505394a1d52de47483f8205c016aa99c5c6fa19";
   }
 
