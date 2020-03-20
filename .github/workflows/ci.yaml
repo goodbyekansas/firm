@@ -3,6 +3,16 @@ name: Checks
 on: [push]
 
 jobs:
+  format-nix:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2.0.0
+    - name: Install Nix
+      uses: cachix/install-nix-action@v6
+    - name: Format the Firm 💋
+      run:  nix-shell -p nixpkgs-fmt --command "nixpkgs-fmt . --check"
+
   build:
     runs-on: ubuntu-latest
 
