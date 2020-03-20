@@ -1,11 +1,26 @@
 import (import ./nedryland.nix)
 {
-    projectName = "firm";
-    defaultConfigFile = ./firm.json;
-    componentPaths = [
-        ./services/avery/avery.nix
-        ./functions/start-maya/start-maya.nix
-        ./clients/bendini/bendini.nix
-        ./clients/lomax/lomax.nix
-    ];
-}
+  name = "firm";
+  configFile = ./firm.json;
+  componentInitFn =
+    { nedryland }:
+    rec {
+      avery = nedryland.declareComponent ./services/avery/avery.nix {};
+      start-maya = nedryland.declareComponent ./functions/start-maya/start-maya.nix {};
+      bendini = nedryland.declareComponent ./clients/bendini/bendini.nix {};
+      lomax = nedryland.declareComponent ./clients/lomax/lomax.nix {};
+
+      os-packaging = nedryland.declareComponent ./deployment/os-packaging.nix {
+        dependencies = {
+          linuxPackages = [
+            avery
+          ];
+
+          windowsPackages = [
+          ];
+        };
+      };
+    };
+  }
+
+
