@@ -7,10 +7,10 @@ base.mkComponent {
       (path: type: (type != "directory" || baseNameOf path != "target")) ./.;
 
     buildInputs = with pkgs; [
-      cacert 
-      (latest.rustChannels.stable.rust.override {extensions = ["rust-src"];})
+      cacert
+      (latest.rustChannels.stable.rust.override { extensions = [ "rust-src" ]; })
     ];
-    
+
     # this is needed on NixOS but does not hurt on other
     # OSes either
     PROTOC = "${pkgs.protobuf}/bin/protoc";
@@ -39,10 +39,9 @@ base.mkComponent {
 
     # always want backtraces when building or in dev
     RUST_BACKTRACE = 1;
-    PROTOBUF_DEFINITIONS_LOCATION=../../protocols;
+    PROTOBUF_DEFINITIONS_LOCATION = ../../protocols;
     shellHook = ''
       export PROTOBUF_DEFINITIONS_LOCATION=../../protocols
     '';
   };
 }
-
