@@ -9,7 +9,7 @@ let
       builtins.fetchGit {
         name = "nedryland";
         url = "git@github.com:goodbyekansas/nedryland.git";
-        ref = "41bfa2daf29fdaa357b10bedde09ec6659b37ddd";
+        ref = "5e9aa695e5b81c6f9370110f946a1e7489163d43";
       }
   );
 
