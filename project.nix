@@ -9,7 +9,7 @@ let
       builtins.fetchGit {
         name = "nedryland";
         url = "git@github.com:goodbyekansas/nedryland.git";
-        ref = "ab10505833e336ca7b8a8feaabd6c24306a71cdd";
+        ref = "e55571e0f9ada58912b772dbfb2f22ba44ceeb66";
       }
   );
 
@@ -17,6 +17,7 @@ let
   project = nedryland.mkProject {
     name = "firm";
     configFile = ./firm.json;
+    protoLocation = ./protocols;
   };
 
   # declare the components of the project and their dependencies
