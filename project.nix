@@ -22,8 +22,12 @@ let
 
   # declare the components of the project and their dependencies
   components = rec {
-    avery = project.declareComponent ./services/avery/avery.nix {};
     start-maya = project.declareComponent ./functions/start-maya/start-maya.nix {};
+    avery = project.declareComponent ./services/avery/avery.nix {
+      dependencies = {
+        inputFunctions = [ start-maya ];
+      };
+    };
     bendini = project.declareComponent ./clients/bendini/bendini.nix {};
     lomax = project.declareComponent ./clients/lomax/lomax.nix {};
 

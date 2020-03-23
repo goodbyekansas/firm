@@ -57,18 +57,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 fnstring
                     .split(';')
                     .filter_map(|p| {
-                        let manifest_path = Path::new(p)
-                            .parent()
-                            .and_then(|p| p.parent())
-                            .map(|p| p.join("manifest.toml"))?;
+                        let manifest_path = Path::new(p).join("manifest.toml");
 
                         let manifest = FunctionManifest::parse(manifest_path)
                             .map_err(|e| error!(log, "\"{}\". Skipping", e))
                             .ok()?;
 
                         let mut register_request = RegisterRequest::from(&manifest);
-                        info!(log, "reading code file from: {}", p);
-                        register_request.code = std::fs::read(p)
+                        let code_path = Path::new(p)
+                            .join("bin")
+                            .join(format!("{}.wasm", manifest.name()));
+                        info!(log, "reading code file from: {}", code_path.display());
+                        register_request.code = std::fs::read(code_path)
                             .map_err(|e| {
                                 error!(
                                     log,

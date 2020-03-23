@@ -1,4 +1,4 @@
-{ pkgs, base }:
+{ pkgs, base, inputFunctions }:
 with pkgs;
 base.mkComponent {
   package = stdenv.mkDerivation {
@@ -12,9 +12,8 @@ base.mkComponent {
     ];
 
     # TODO: This gives a nice workflow for now but should be removed later
-    inputFunctions = [
-      "${(import ../../functions/start-maya/start-maya.nix { inherit pkgs base; }).package}/bin/start-maya.wasm"
-    ];
+    inputFunctions = builtins.map (c: c.package) inputFunctions;
+
 
     # this is needed on NixOS but does not hurt on other
     # OSes either
