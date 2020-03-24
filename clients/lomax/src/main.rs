@@ -301,7 +301,7 @@ fn main() -> Result<(), u32> {
                 3u32
             })?;
 
-            basic_rt
+            let r = basic_rt
                 .block_on(client.register(tonic::Request::new(register_request)))
                 .map_err(|e| {
                     println!(
@@ -313,8 +313,9 @@ fn main() -> Result<(), u32> {
                 })?;
 
             println!(
-                "Registered function \"{}\" with registry at {}",
+                "Registered function \"{}\" ({}) with registry at {}",
                 manifest.name(),
+                r.into_inner().value,
                 address
             );
         }
