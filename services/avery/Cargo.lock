@@ -86,7 +86,6 @@ checksum = "f8aac770f1885fd7e387acedd76065302551364496e46b3dd00860b2f8359b9d"
 name = "avery"
 version = "0.1.0"
 dependencies = [
- "bufstream",
  "futures",
  "prost",
  "serde",
@@ -162,12 +161,6 @@ dependencies = [
  "crypto-mac",
  "digest",
 ]
-
-[[package]]
-name = "bufstream"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40e38929add23cdf8a366df9b0e088953150724bcbe5fc330b0d8eb3b328eec8"
 
 [[package]]
 name = "byteorder"

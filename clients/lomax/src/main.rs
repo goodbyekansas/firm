@@ -1,10 +1,11 @@
-#![allow(warnings)]
-//#![deny(warnings)]
+#![deny(warnings)]
 
 // module declarations
 pub mod proto {
     tonic::include_proto!("functions");
 }
+
+mod manifest;
 
 // std
 use std::{
@@ -14,6 +15,7 @@ use std::{
 };
 
 // 3rd party
+use manifest::FunctionManifest;
 use structopt::StructOpt;
 use tokio::runtime;
 use tonic::Request;
@@ -21,14 +23,8 @@ use tonic::Request;
 // internal
 use proto::functions_registry_client::FunctionsRegistryClient;
 use proto::{
-    ArgumentType,
-    ExecutionEnvironment,
-    Function,
-    FunctionDescriptor,
-    FunctionId,
-    FunctionInput,
-    FunctionOutput,
-    ListRequest,
+    ArgumentType, ExecutionEnvironment, Function, FunctionDescriptor, FunctionId, FunctionInput,
+    FunctionOutput, ListRequest, RegisterRequest,
 };
 
 // arguments
@@ -67,74 +63,78 @@ enum Command {
 // impl display of listed functions
 impl Display for FunctionDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let env_name = self.execution_environment.clone().unwrap_or(
-            ExecutionEnvironment { name: "n/a".to_string() }
-        ).name;
+        let env_name = self
+            .execution_environment
+            .clone()
+            .unwrap_or(ExecutionEnvironment {
+                name: "n/a".to_string(),
+            })
+            .name;
 
-        // TODO: will this panic? how should I do this?
-        let k = self.function.as_ref().unwrap();
-        let id_str = k.id.clone().unwrap_or(
-            FunctionId { value: "n/a".to_string() }
-        ).value;
+        match &self.function {
+            Some(k) => {
+                let id_str =
+                    k.id.clone()
+                        .unwrap_or(FunctionId {
+                            value: "n/a".to_string(),
+                        })
+                        .value;
 
-        // on the cmd line each tab is 8 spaces
-        let t = "\t";
-        let t2 = "\t\t ";
+                // on the cmd line each tab is 8 spaces
+                let t = "\t";
+                let t2 = "\t\t ";
 
-        // print everything
-        writeln!(f, "{}{}", &t, &k.name)?;
-        writeln!(f, "{}id:{}{}", &t, "      ", id_str)?;
-        writeln!(f, "{}name:{}{}", &t, "    ", &k.name)?;
-        // this will change to be more data
-        writeln!(f, "{}exeEnv:{}{}", &t, "  ", env_name)?;
-        write!(f, "{}entry:   ", &t)?;
-        if self.entrypoint.is_empty() {
-            //
-            writeln!(f, "n/a")?;
-        } else {
-            //
-            writeln!(f, "{}", self.entrypoint)?;
-        }
-        write!(f, "{}codeUrl: ", &t)?;
-        if self.code_url.is_empty() {
-            //
-            writeln!(f, "n/a")?;
-        } else {
-            //
-            writeln!(f, "{}", self.code_url)?;
-        }
-        if k.inputs.is_empty() {
-            //
-            writeln!(f, "{}inputs:{}[n/a]", &t, "  ")?;
-        } else {
-            writeln!(f, "{}inputs:", &t)?;
-            k.inputs
-                .clone()
-                .into_iter()
-                .map(|i| writeln!(f, "{}{}", &t2, i))
-                .collect::<fmt::Result>()?;
-        }
-        if k.outputs.is_empty() {
-            //
-            writeln!(f, "\toutputs: [n/a]")?;
-        } else {
-            writeln!(f, "\toutputs:")?;
-            k.outputs
-                .clone()
-                .into_iter()
-                .map(|i| writeln!(f, "{}{}", &t2, i))
-                .collect::<fmt::Result>()?;
-        }
-        if k.tags.is_empty() {
-            //
-            writeln!(f, "\ttags:{}[n/a]", "    ")
-        } else {
-            writeln!(f, "\ttags:")?;
-            k.tags
-                .clone()
-                .iter()
-                .map(|(x, y)| writeln!(f, "{}{}:{}", &t2, x, y))
-                .collect()
+                // print everything
+                writeln!(f, "{}{}", &t, &k.name)?;
+                writeln!(f, "{}id:      {}", &t, id_str)?;
+                writeln!(f, "{}name:    {}", &t, &k.name)?;
+                // this will change to be more data
+                writeln!(f, "{}exeEnv:  {}", &t, env_name)?;
+                write!(f, "{}entry:   ", &t)?;
+                if self.entrypoint.is_empty() {
+                    writeln!(f, "n/a")?;
+                } else {
+                    writeln!(f, "{}", self.entrypoint)?;
+                }
+                write!(f, "{}codeUrl: ", &t)?;
+                if self.code_url.is_empty() {
+                    writeln!(f, "n/a")?;
+                } else {
+                    writeln!(f, "{}", self.code_url)?;
+                }
+                if k.inputs.is_empty() {
+                    writeln!(f, "{}inputs:  [n/a]", &t)?;
+                } else {
+                    writeln!(f, "{}inputs:", &t)?;
+                    k.inputs
+                        .clone()
+                        .into_iter()
+                        .map(|i| writeln!(f, "{}{}", &t2, i))
+                        .collect::<fmt::Result>()?;
+                }
+                if k.outputs.is_empty() {
+                    writeln!(f, "\toutputs: [n/a]")?;
+                } else {
+                    writeln!(f, "\toutputs:")?;
+                    k.outputs
+                        .clone()
+                        .into_iter()
+                        .map(|i| writeln!(f, "{}{}", &t2, i))
+                        .collect::<fmt::Result>()?;
+                }
+                if k.tags.is_empty() {
+                    writeln!(f, "\ttags:    [n/a]")
+                } else {
+                    writeln!(f, "\ttags:")?;
+                    k.tags
+                        .clone()
+                        .iter()
+                        .map(|(x, y)| writeln!(f, "{}{}:{}", &t2, x, y))
+                        .collect()
+                }
+            }
+
+            None => writeln!(f, "function descriptor did not contain function 🤔"),
         }
     }
 }
@@ -277,9 +277,46 @@ fn main() -> Result<(), u32> {
                 .into_iter()
                 .for_each(|f| println!("{}", f))
         }
-        Command::Register { .. } => {
-            // TODO: Parse manifest from TOML
-            println!("Registering function: TODO: FUNCTION NAME");
+
+        Command::Register { code, manifest } => {
+            let manifest_path = manifest;
+            let code_path = code;
+
+            let manifest = FunctionManifest::parse(&manifest_path).map_err(|e| {
+                println!("\"{}\".", e);
+                1u32
+            })?;
+
+            println!("Registering function \"{}\"...", manifest.name());
+
+            println!("Reading manifest file from: {}", manifest_path.display());
+            let mut register_request: RegisterRequest = (&manifest).into();
+            println!("Reading code file from: {}", code_path.display());
+            register_request.code = std::fs::read(code_path).map_err(|e| {
+                println!(
+                    "Failed to read code for function {}: {}. Skipping.",
+                    manifest.name(),
+                    e
+                );
+                3u32
+            })?;
+
+            basic_rt
+                .block_on(client.register(tonic::Request::new(register_request)))
+                .map_err(|e| {
+                    println!(
+                        "Failed to register function \"{}\". Err: {}",
+                        manifest.name(),
+                        e
+                    );
+                    3u32
+                })?;
+
+            println!(
+                "Registered function \"{}\" with registry at {}",
+                manifest.name(),
+                address
+            );
         }
     }
 
