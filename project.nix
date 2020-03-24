@@ -9,14 +9,14 @@ let
       builtins.fetchGit {
         name = "nedryland";
         url = "git@github.com:goodbyekansas/nedryland.git";
-        ref = "5e9aa695e5b81c6f9370110f946a1e7489163d43";
+        ref = "afaa0e912df2c97a015a8e3565d0eb56690b6760";
       }
   );
 
   # declare our project
   project = nedryland.mkProject {
     name = "firm";
-    configFile = ./firm.json;
+    configFile = ./firm.toml;
     protoLocation = ./protocols;
   };
 
