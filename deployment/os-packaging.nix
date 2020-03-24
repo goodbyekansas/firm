@@ -32,10 +32,10 @@ base.mkComponent {
   };
 
   deployment = {
-    windowsInstaller = base.mkWindowsInstaller {};
-    rpmPackage = base.mkRPMPackage {};
+    windowsInstaller = base.deployment.mkWindowsInstaller {};
+    rpmPackage = base.deployment.mkRPMPackage {};
 
-    upload = base.uploadFiles [
+    upload = base.deployment.uploadFiles [
       windowsInstaller
       rpmPackage
     ];

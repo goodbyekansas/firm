@@ -9,7 +9,7 @@ let
       builtins.fetchGit {
         name = "nedryland";
         url = "git@github.com:goodbyekansas/nedryland.git";
-        rev = "afaa0e912df2c97a015a8e3565d0eb56690b6760";
+        rev = "957e39f8d1b7fcb9462e6b6fb80555fe8586fc0a";
       }
   );
 
@@ -50,6 +50,27 @@ in
   # create the build grid (accessed with nix-build, exposed through default.nix)
   grid = project.mkGrid {
     inherit components;
+    deploy = rec {
+      functions = nedryland.getFunctionDeployments {
+        inherit components;
+        lomax = components.lomax.package;
+      };
+
+      local = [
+        functions
+      ];
+
+      prod = [
+        (
+          nedryland.getFunctionDeployments {
+            inherit components;
+            lomax = components.lomax.package;
+            endpoint = "tcp://a.production.registry";
+            port = 1337;
+          }
+        )
+      ];
+    };
   };
 
 
