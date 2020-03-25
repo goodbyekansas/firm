@@ -45,6 +45,9 @@ pub struct FunctionManifest {
     name: String,
 
     #[serde(default)]
+    version: String,
+
+    #[serde(default)]
     inputs: HashMap<String, FunctionInput>,
 
     #[serde(default)]
@@ -97,6 +100,7 @@ impl From<&FunctionManifest> for RegisterRequest {
     fn from(fm: &FunctionManifest) -> Self {
         RegisterRequest {
             name: fm.name.clone(),
+            version: fm.version.clone(),
             tags: fm.tags.clone(),
             inputs: fm
                 .inputs

@@ -7,6 +7,8 @@ package functions;
 service FunctionsRegistry {
   rpc List (ListRequest) returns (RegistryListResponse);
   rpc Get (FunctionId) returns (FunctionDescriptor);
+  rpc GetLatestVersion (GetLatestVersionRequest) returns (FunctionDescriptor);
+  rpc ListVersions (ListVersionsRequest) returns (RegistryListResponse);
   rpc Register (RegisterRequest) returns (FunctionId);
 }
 
@@ -21,6 +23,21 @@ message ListRequest {
   map<string, string> tags_filter = 2;
   uint32 offset = 3;
   uint32 limit = 4;
+}
+
+enum Ordering { ASCENDING = 0; DESCENDING = 1; }
+
+message ListVersionsRequest {
+  string name = 1;
+  string version_requirement = 2;
+  uint32 offset = 3;
+  uint32 limit = 4;
+  Ordering ordering = 5;
+}
+
+message GetLatestVersionRequest {
+  string name = 1;
+  string version_requirement = 2;
 }
 
 message ListResponse {
@@ -46,9 +63,10 @@ message Function {
   // this record is only for discussing metadata of a function not its code
   FunctionId id = 1;
   string name = 2;
-  map<string, string> tags = 3;
-  repeated FunctionInput inputs = 4;
-  repeated FunctionOutput outputs = 5;
+  string version = 3;
+  map<string, string> tags = 4;
+  repeated FunctionInput inputs = 5;
+  repeated FunctionOutput outputs = 6;
 }
 
 message RegisterRequest {
@@ -59,6 +77,7 @@ message RegisterRequest {
   bytes code = 5;
   string entrypoint = 6;
   ExecutionEnvironment execution_environment = 7;
+  string version = 8;
 }
 
 message FunctionId {

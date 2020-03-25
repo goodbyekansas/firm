@@ -4,7 +4,8 @@ use futures;
 
 use avery::proto::{
     functions_registry_server::FunctionsRegistry, ArgumentType, ExecutionEnvironment, FunctionId,
-    FunctionInput, FunctionOutput, ListRequest, RegisterRequest,
+    FunctionInput, FunctionOutput, GetLatestVersionRequest, ListRequest, ListVersionsRequest,
+    Ordering, RegisterRequest,
 };
 use avery::registry::FunctionsRegistryService;
 
@@ -18,6 +19,7 @@ macro_rules! register_request {
     ($name: expr) => {{
         tonic::Request::new(RegisterRequest {
             name: $name.to_owned(),
+            version: "0.1.0".to_owned(),
             tags: HashMap::with_capacity(0),
             inputs: vec![
                 FunctionInput {
@@ -50,12 +52,30 @@ macro_rules! custom_register_request {
     ($name:expr, $entrypoint:expr, $execution_environment:expr) => {{
         tonic::Request::new(RegisterRequest {
             name: $name.to_owned(),
+            version: "0.1.0".to_owned(),
             tags: HashMap::with_capacity(0),
             inputs: vec![],
             outputs: vec![],
             code: vec![],
             entrypoint: $entrypoint.to_owned(),
             execution_environment: $execution_environment,
+        })
+    }};
+}
+
+macro_rules! register_request_with_version {
+    ($name:expr, $version:expr) => {{
+        tonic::Request::new(RegisterRequest {
+            name: $name.to_owned(),
+            version: $version.to_owned(),
+            tags: HashMap::with_capacity(0),
+            inputs: vec![],
+            outputs: vec![],
+            code: vec![],
+            entrypoint: "kanske".to_owned(),
+            execution_environment: Some(ExecutionEnvironment {
+                name: "wasm".to_owned(),
+            }),
         })
     }};
 }
@@ -164,8 +184,88 @@ fn test_register_function() {
         })
     )));
     assert!(register_result.is_ok());
+}
 
-    // Test that we can not register the same name again
+#[test]
+fn test_list_versions() {
+    let fr = registry!();
+
+    futures::executor::block_on(fr.register(register_request_with_version!("my-name", "1.2.3")))
+        .unwrap();
+    futures::executor::block_on(fr.register(register_request_with_version!("my-name", "2.0.3")))
+        .unwrap();
+    futures::executor::block_on(fr.register(register_request_with_version!("my-name", "8.1.4")))
+        .unwrap();
+
+    // since these are prereleases, they will only match exact version requirements
+    let list_result =
+        futures::executor::block_on(fr.list_versions(tonic::Request::new(ListVersionsRequest {
+            name: "my-name".to_owned(),
+            version_requirement: "1.2.3-dev".to_owned(),
+            limit: 100,
+            offset: 0,
+            ordering: Ordering::Descending as i32,
+        })));
+
+    assert!(list_result.is_ok());
+
+    let functions = list_result.unwrap().into_inner().functions;
+    assert_eq!(1, functions.len());
+
+    let list_result =
+        futures::executor::block_on(fr.list_versions(tonic::Request::new(ListVersionsRequest {
+            name: "my-name".to_owned(),
+            version_requirement: "2.0.3-dev".to_owned(),
+            limit: 100,
+            offset: 0,
+            ordering: Ordering::Descending as i32,
+        })));
+
+    assert!(list_result.is_ok());
+
+    let functions = list_result.unwrap().into_inner().functions;
+    assert_eq!(1, functions.len());
+
+    let list_result =
+        futures::executor::block_on(fr.list_versions(tonic::Request::new(ListVersionsRequest {
+            name: "my-name".to_owned(),
+            version_requirement: "8.1.4-dev".to_owned(),
+            limit: 100,
+            offset: 0,
+            ordering: Ordering::Descending as i32,
+        })));
+
+    assert!(list_result.is_ok());
+
+    let functions = list_result.unwrap().into_inner().functions;
+    assert_eq!(1, functions.len());
+
+    let latest_result = futures::executor::block_on(fr.get_latest_version(tonic::Request::new(
+        GetLatestVersionRequest {
+            name: "my-name".to_owned(),
+            version_requirement: "2.0.3-dev".to_owned(),
+        },
+    )));
+
+    assert!(latest_result.is_ok());
+
+    let latest_result = futures::executor::block_on(fr.get_latest_version(tonic::Request::new(
+        GetLatestVersionRequest {
+            name: "my-name".to_owned(),
+            version_requirement: "2.0.3".to_owned(),
+        },
+    )));
+
+    assert!(latest_result.is_err());
+    assert!(matches!(
+        latest_result.unwrap_err().code(),
+        tonic::Code::NotFound
+    ));
+}
+
+#[test]
+fn test_register_dev_version() {
+    let fr = registry!();
     let register_result = futures::executor::block_on(fr.register(custom_register_request!(
         "my-name",
         "my-entrypoint",
@@ -173,5 +273,35 @@ fn test_register_function() {
             name: "wassaa".to_owned(),
         })
     )));
-    assert!(register_result.is_err());
+
+    assert!(register_result.is_ok());
+
+    // make sure that the function registered above ends with "-dev"
+    // because the local function registry should always append that
+    let get_request = futures::executor::block_on(fr.get(tonic::Request::new(
+        register_result.unwrap().into_inner().clone(),
+    )));
+    let f = get_request.unwrap().into_inner().function.unwrap();
+    assert!(f.version.ends_with("-dev"));
+
+    // make sure that registering another function with the same name and version gives us a new
+    // id. Deleting functions instead of replacing guarantees that functions are immutable
+    let first_id = f.id.unwrap();
+    let register_result = futures::executor::block_on(fr.register(custom_register_request!(
+        "my-name",
+        "my-entrypoint",
+        Some(ExecutionEnvironment {
+            name: "wassaa".to_owned(),
+        })
+    )));
+
+    assert!(first_id != register_result.unwrap().into_inner());
+
+    // make sure that the first function we registered is actually deleted
+    let get_request = futures::executor::block_on(fr.get(tonic::Request::new(first_id)));
+    assert!(get_request.is_err());
+    assert!(matches!(
+        get_request.unwrap_err().code(),
+        tonic::Code::NotFound
+    ));
 }

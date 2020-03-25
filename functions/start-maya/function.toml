@@ -1,4 +1,5 @@
 name = "start-maya"
+version = "0.1.0"
 
 [inputs]
     [inputs.version]

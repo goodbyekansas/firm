@@ -3,6 +3,12 @@ use std::{env, path::Path};
 fn main() {
     let proto_env = env::var("PROTOBUF_DEFINITIONS_LOCATION").unwrap();
     let proto_path = Path::new(&proto_env);
+
+    println!(
+        "cargo:rerun-if-changed={}/functions.proto",
+        proto_path.display()
+    );
+
     tonic_build::configure()
         .build_client(false)
         .compile(
