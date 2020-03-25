@@ -10,13 +10,13 @@ use structopt::StructOpt;
 use tonic::transport::Server;
 
 use avery::{
-    fake_registry::FunctionsRegistryService,
     manifest::FunctionManifest,
     proto::{
         functions_registry_server::{FunctionsRegistry, FunctionsRegistryServer},
         functions_server::FunctionsServer,
         RegisterRequest,
     },
+    registry::FunctionsRegistryService,
     FunctionsService,
 };
 

@@ -6,8 +6,8 @@ pub mod proto {
 }
 
 mod executor;
-pub mod fake_registry;
 pub mod manifest;
+pub mod registry;
 
 use std::sync::Arc;
 
@@ -25,16 +25,13 @@ use proto::{
 // define the FunctionsService struct
 #[derive(Debug)]
 pub struct FunctionsService {
-    functions_register: Arc<fake_registry::FunctionsRegistryService>,
+    functions_register: Arc<registry::FunctionsRegistryService>,
     log: Logger,
 }
 
 // local methods to operate on a FunctionsService struct
 impl FunctionsService {
-    pub fn new(
-        log: Logger,
-        functions_register: Arc<fake_registry::FunctionsRegistryService>,
-    ) -> Self {
+    pub fn new(log: Logger, functions_register: Arc<registry::FunctionsRegistryService>) -> Self {
         Self {
             functions_register,
             log,

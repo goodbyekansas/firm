@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 futures = "0.3"
 prost = "0.6"
+regex = "1"
 serde = "1"
 slog = "2"
 slog-async = "2"

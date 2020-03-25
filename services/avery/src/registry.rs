@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use regex::Regex;
 use tempfile::NamedTempFile;
 use tonic;
 use uuid::Uuid;
@@ -71,20 +72,38 @@ impl FunctionsRegistry for FunctionsRegistryService {
         &self,
         register_request: tonic::Request<RegisterRequest>,
     ) -> Result<tonic::Response<FunctionId>, tonic::Status> {
-        // TODO: We should have checks for having valid names. Just to make sure we can make nice urls and such
-        let id = Uuid::new_v4();
         let payload = register_request.into_inner();
+        validate_name(&payload.name).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("Invalid function name \"{}\": {}", payload.name, e),
+            )
+        })?;
+        let mut functions = self.functions.write().map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("Failed to get write lock for functions: {}", e),
+            )
+        })?;
+
+        if functions.values().any(|f| {
+            &f.function
+                .as_ref()
+                .map(|fun| fun.name.clone())
+                .unwrap_or_default()
+                == &payload.name
+        }) {
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("A function with name \"{}\" already exists, did you mean to create a new version instead?", payload.name),
+            ));
+        }
+
+        let id = Uuid::new_v4();
         let ee = payload.execution_environment.ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
                 String::from("Execution environment is required when registering function"),
-            )
-        })?;
-
-        let mut writer = self.functions.write().map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("Failed to get write lock for functions: {}", e),
             )
         })?;
 
@@ -119,7 +138,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
             format!("file://{}", path.display())
         };
 
-        writer.insert(
+        functions.insert(
             id.clone(),
             FunctionDescriptor {
                 execution_environment: Some(ee),
@@ -172,5 +191,48 @@ impl FunctionsRegistry for Arc<FunctionsRegistryService> {
         register_request: tonic::Request<RegisterRequest>,
     ) -> Result<tonic::Response<FunctionId>, tonic::Status> {
         (**self).register(register_request).await
+    }
+}
+
+fn validate_name(name: &str) -> Result<(), String> {
+    const MAX_LEN: usize = 128;
+    const MIN_LEN: usize = 3;
+    if name.len() > MAX_LEN {
+        Err(format!(
+            "Function name is too long! Max {} characters",
+            MAX_LEN
+        ))
+    } else if name.len() < MIN_LEN {
+        Err(format!(
+            "Function name is too short! Min {} characters",
+            MIN_LEN
+        ))
+    } else {
+        let regex = Regex::new(r"^[a-z0-9]{2,}([a-z0-9\-]?[a-z0-9]+)+$|^[a-z0-9]{3,}$")
+            .map_err(|e| format!("Invalid regex: {}", e))?;
+        if regex.is_match(name) {
+            Ok(())
+        } else {
+            Err(String::from("Name contains invalid characters. Only lower case characters, numbers and dashes are allowed"))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_validate_name() {
+        assert!(validate_name("a").is_err());
+        assert!(validate_name("ab").is_err());
+        assert!(validate_name("abc").is_ok());
+        assert!(validate_name("-ab").is_err());
+        assert!(validate_name("ab-").is_err());
+        assert!(validate_name("ab-c").is_ok());
+        assert!(validate_name("ab-C").is_err());
+        assert!(validate_name(&vec!['a'; 129].iter().collect::<String>()).is_err());
+        assert!(validate_name("abc!").is_err());
+        assert!(validate_name("ab1").is_ok());
+        assert!(validate_name("😭").is_err());
     }
 }
