@@ -33,6 +33,7 @@ macro_rules! functions_service_with_functions {
         vec![
             RegisterRequest {
                 name: "hello-world".to_owned(),
+                version: "0.5.1-beta".to_owned(),
                 tags: HashMap::with_capacity(0),
                 inputs: Vec::with_capacity(0),
                 outputs: Vec::with_capacity(0),
@@ -44,6 +45,7 @@ macro_rules! functions_service_with_functions {
             },
             RegisterRequest {
                 name: "say-hello-yourself".to_owned(),
+                version: "1.6.8".to_owned(),
                 tags: HashMap::with_capacity(0),
                 inputs: vec![
                     FunctionInput {
@@ -162,6 +164,7 @@ fn test_get() {
 fn test_execute() {
     let svc = functions_service_with_specified_functions!(vec![RegisterRequest {
         name: "say-hello-yourself".to_owned(),
+        version: "1.1.1".to_owned(),
         tags: HashMap::with_capacity(0),
         inputs: vec![
             FunctionInput {
