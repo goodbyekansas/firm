@@ -5,13 +5,13 @@ use slog::o;
 use tonic::Request;
 
 use avery::{
-    fake_registry::FunctionsRegistryService,
     proto::{
         functions_registry_server::FunctionsRegistry,
         functions_server::Functions as FunctionsTrait, ArgumentType, ExecuteRequest,
         ExecutionEnvironment, FunctionArgument, FunctionId, FunctionInput, FunctionOutput,
         ListRequest, RegisterRequest,
     },
+    registry::FunctionsRegistryService,
     FunctionsService,
 };
 
@@ -32,7 +32,7 @@ macro_rules! functions_service_with_functions {
         let functions_registry_service = Arc::new(FunctionsRegistryService::new());
         vec![
             RegisterRequest {
-                name: "hello_world".to_owned(),
+                name: "hello-world".to_owned(),
                 tags: HashMap::with_capacity(0),
                 inputs: Vec::with_capacity(0),
                 outputs: Vec::with_capacity(0),
@@ -43,7 +43,7 @@ macro_rules! functions_service_with_functions {
                 }),
             },
             RegisterRequest {
-                name: "say_hello_yourself".to_owned(),
+                name: "say-hello-yourself".to_owned(),
                 tags: HashMap::with_capacity(0),
                 inputs: vec![
                     FunctionInput {
@@ -161,7 +161,7 @@ fn test_get() {
 #[test]
 fn test_execute() {
     let svc = functions_service_with_specified_functions!(vec![RegisterRequest {
-        name: "say_hello_yourself".to_owned(),
+        name: "say-hello-yourself".to_owned(),
         tags: HashMap::with_capacity(0),
         inputs: vec![
             FunctionInput {

@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use futures;
 
-use avery::fake_registry::FunctionsRegistryService;
 use avery::proto::{
     functions_registry_server::FunctionsRegistry, ArgumentType, ExecutionEnvironment, FunctionId,
     FunctionInput, FunctionOutput, ListRequest, RegisterRequest,
 };
+use avery::registry::FunctionsRegistryService;
 
 macro_rules! registry {
     () => {{
@@ -15,9 +15,9 @@ macro_rules! registry {
 }
 
 macro_rules! register_request {
-    () => {{
+    ($name: expr) => {{
         tonic::Request::new(RegisterRequest {
-            name: "say_hello_yourself".to_owned(),
+            name: $name.to_owned(),
             tags: HashMap::with_capacity(0),
             inputs: vec![
                 FunctionInput {
@@ -76,9 +76,9 @@ fn test_list_functions() {
     assert_eq!(0, list_request.unwrap().into_inner().functions.len());
 
     // Test with 3
-    futures::executor::block_on(fr.register(register_request!())).unwrap();
-    futures::executor::block_on(fr.register(register_request!())).unwrap();
-    futures::executor::block_on(fr.register(register_request!())).unwrap();
+    futures::executor::block_on(fr.register(register_request!("test-1"))).unwrap();
+    futures::executor::block_on(fr.register(register_request!("test-2"))).unwrap();
+    futures::executor::block_on(fr.register(register_request!("test-3"))).unwrap();
 
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
         name_filter: "".to_owned(),
@@ -120,7 +120,7 @@ fn test_get_function() {
     ));
 
     // Test actually getting a function
-    let f_id = futures::executor::block_on(fr.register(register_request!()))
+    let f_id = futures::executor::block_on(fr.register(register_request!("func")))
         .unwrap()
         .into_inner();
     let get_request = futures::executor::block_on(fr.get(tonic::Request::new(f_id.clone())));
@@ -164,4 +164,14 @@ fn test_register_function() {
         })
     )));
     assert!(register_result.is_ok());
+
+    // Test that we can not register the same name again
+    let register_result = futures::executor::block_on(fr.register(custom_register_request!(
+        "my-name",
+        "my-entrypoint",
+        Some(ExecutionEnvironment {
+            name: "wassaa".to_owned(),
+        })
+    )));
+    assert!(register_result.is_err());
 }
