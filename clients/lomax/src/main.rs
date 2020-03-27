@@ -85,31 +85,32 @@ impl Display for FunctionDescriptor {
                 let t2 = "\t\t ";
 
                 // print everything
-                writeln!(f, "{}{}", &t, &k.name)?;
-                writeln!(f, "{}id:      {}", &t, id_str)?;
-                writeln!(f, "{}name:    {}", &t, &k.name)?;
+                writeln!(f, "{}{}", t, &k.name)?;
+                writeln!(f, "{}id:      {}", t, id_str)?;
+                writeln!(f, "{}name:    {}", t, &k.name)?;
+                writeln!(f, "{}version: {}", t, &k.version)?;
                 // this will change to be more data
-                writeln!(f, "{}exeEnv:  {}", &t, env_name)?;
-                write!(f, "{}entry:   ", &t)?;
+                writeln!(f, "{}exeEnv:  {}", t, env_name)?;
+                write!(f, "{}entry:   ", t)?;
                 if self.entrypoint.is_empty() {
                     writeln!(f, "n/a")?;
                 } else {
                     writeln!(f, "{}", self.entrypoint)?;
                 }
-                write!(f, "{}codeUrl: ", &t)?;
+                write!(f, "{}codeUrl: ", t)?;
                 if self.code_url.is_empty() {
                     writeln!(f, "n/a")?;
                 } else {
                     writeln!(f, "{}", self.code_url)?;
                 }
                 if k.inputs.is_empty() {
-                    writeln!(f, "{}inputs:  [n/a]", &t)?;
+                    writeln!(f, "{}inputs:  [n/a]", t)?;
                 } else {
-                    writeln!(f, "{}inputs:", &t)?;
+                    writeln!(f, "{}inputs:", t)?;
                     k.inputs
                         .clone()
                         .into_iter()
-                        .map(|i| writeln!(f, "{}{}", &t2, i))
+                        .map(|i| writeln!(f, "{}{}", t2, i))
                         .collect::<fmt::Result>()?;
                 }
                 if k.outputs.is_empty() {
@@ -119,7 +120,7 @@ impl Display for FunctionDescriptor {
                     k.outputs
                         .clone()
                         .into_iter()
-                        .map(|i| writeln!(f, "{}{}", &t2, i))
+                        .map(|i| writeln!(f, "{}{}", t2, i))
                         .collect::<fmt::Result>()?;
                 }
                 if k.tags.is_empty() {
@@ -129,7 +130,7 @@ impl Display for FunctionDescriptor {
                     k.tags
                         .clone()
                         .iter()
-                        .map(|(x, y)| writeln!(f, "{}{}:{}", &t2, x, y))
+                        .map(|(x, y)| writeln!(f, "{}{}:{}", t2, x, y))
                         .collect()
                 }
             }
