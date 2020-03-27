@@ -348,7 +348,7 @@ fn validate_name(name: &str) -> Result<(), String> {
             MIN_LEN
         ))
     } else {
-        let regex = Regex::new(r"^[a-z0-9]{2,}([a-z0-9\-]?[a-z0-9]+)+$|^[a-z0-9]{3,}$")
+        let regex = Regex::new(r"^[a-z][a-z0-9]{1,}([a-z0-9\-]?[a-z0-9]+)+$|^[a-z][a-z0-9]{2,}$")
             .map_err(|e| format!("Invalid regex: {}", e))?;
         if regex.is_match(name) {
             Ok(())
@@ -380,9 +380,11 @@ mod tests {
         assert!(validate_name("ab-").is_err());
         assert!(validate_name("ab-c").is_ok());
         assert!(validate_name("ab-C").is_err());
+        assert!(validate_name("1ab").is_err());
+        assert!(validate_name("a1b").is_ok());
+        assert!(validate_name("ab1").is_ok());
         assert!(validate_name(&vec!['a'; 129].iter().collect::<String>()).is_err());
         assert!(validate_name("abc!").is_err());
-        assert!(validate_name("ab1").is_ok());
         assert!(validate_name("😭").is_err());
     }
 
