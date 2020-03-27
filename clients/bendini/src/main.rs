@@ -72,6 +72,7 @@ impl Display for Function {
         let id_str = self.id.clone().unwrap_or(FunctionId { value: na }).value;
         writeln!(f, "\t{}", self.name)?;
         writeln!(f, "\tid:      {}", id_str)?;
+        writeln!(f, "\tversion: {}", self.version)?;
         if self.inputs.is_empty() {
             writeln!(f, "\tinputs:  [n/a]")?;
         } else {
