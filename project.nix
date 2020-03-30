@@ -9,7 +9,7 @@ let
       builtins.fetchGit {
         name = "nedryland";
         url = "git@github.com:goodbyekansas/nedryland.git";
-        rev = "1bfc6dbb12518e25ca6da4c0df00b2ed137b95b2";
+        rev = "0b380506fd684cc4204823a54df1ab39035c61b1";
       }
   );
 
@@ -18,6 +18,9 @@ let
     name = "firm";
     configFile = ./firm.toml;
     protoLocation = ./protocols;
+    baseExtensions = [
+      (import ./nedryland/function.nix)
+    ];
   };
 
   # declare the components of the project and their dependencies
@@ -39,38 +42,44 @@ let
       windowsPackages = [];
     };
   };
-in
-{
-  # create the build grid (accessed with nix-build, exposed through default.nix)
-  grid = project.mkGrid {
-    inherit components;
-    deploy = rec {
-      functions = nedryland.getFunctionDeployments {
-        inherit components;
+  getFunctionDeployments = { components, endpoint ? "tcp://[::1]", port ? 1939 }: builtins.map (
+    drv:
+      drv {
+        inherit endpoint port;
         lomax = components.lomax.package;
-      };
-
-      local = [
-        functions
-      ];
-
-      prod = [
-        (
-          nedryland.getFunctionDeployments {
-            inherit components;
-            lomax = components.lomax.package;
-            endpoint = "tcp://a.production.registry";
-            port = 1337;
-          }
-        )
-      ];
+      }
+  ) (
+    nedryland.getDeployments { inherit components; type = "function"; }
+  );
+in
+  # create the build grid (accessed with nix-build, exposed through default.nix)
+project.mkGrid {
+  inherit components;
+  deploy = rec {
+    functions = getFunctionDeployments {
+      inherit components;
     };
+
+    local = [
+      functions
+    ];
+
+    prod = [
+      (
+        getFunctionDeployments {
+          inherit components;
+          endpoint = "tcp://a.production.registry";
+          port = 1337;
+        }
+      )
+    ];
   };
 
-
   # create the project shells (accessed with nix-shell, exposed through shell.nix)
-  shells = project.mkShells {
-    inherit components;
-    extraShells = {};
+  extraShells = {};
+
+  # Add functions and other things you want to re-export, making it publicly visible to users of firm.
+  lib = {
+    inherit getFunctionDeployments;
   };
 }

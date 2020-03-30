@@ -1,11 +1,10 @@
 mod gbk;
 
 fn main() {
-    let maya_version = gbk::get_input("version")
-        .ok()
-        .unwrap_or_else(|| "2019".to_owned());
+    let maya_version = gbk::get_input("version").unwrap_or_else(|_| "2019".to_owned());
 
     println!("Hello! I will start maya {} from WASI now!", maya_version);
+
     match gbk::start_host_process(&format!("/usr/autodesk/maya{}/bin/maya", maya_version)) {
         Ok(pid) => {
             println!("started maya");
