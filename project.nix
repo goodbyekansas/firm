@@ -9,7 +9,7 @@ let
       builtins.fetchGit {
         name = "nedryland";
         url = "git@github.com:goodbyekansas/nedryland.git";
-        rev = "867cc8779ad1075cab555b4325a767e650efed71";
+        rev = "1bfc6dbb12518e25ca6da4c0df00b2ed137b95b2";
       }
   );
 
@@ -24,25 +24,19 @@ let
   components = rec {
     start-maya = project.declareComponent ./functions/start-maya/start-maya.nix {};
     avery = project.declareComponent ./services/avery/avery.nix {
-      dependencies = {
-        inputFunctions = [ start-maya ];
-      };
+      inputFunctions = [ start-maya ];
     };
     bendini = project.declareComponent ./clients/bendini/bendini.nix {};
     lomax = project.declareComponent ./clients/lomax/lomax.nix {
-      dependencies = {
-        inherit avery;
-      };
+      inherit avery;
     };
 
     os-packaging = project.declareComponent ./deployment/os-packaging.nix {
-      dependencies = {
-        linuxPackages = [
-          avery
-        ];
+      linuxPackages = [
+        avery
+      ];
 
-        windowsPackages = [];
-      };
+      windowsPackages = [];
     };
   };
 in
