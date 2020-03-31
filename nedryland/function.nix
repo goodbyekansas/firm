@@ -48,12 +48,14 @@ base.extend.mkExtension {
             attrs // {
               targets = targets ++ [ "wasm32-wasi" ];
               hasTests = false;
+              defaultTarget = "wasm32-wasi";
             }
           );
           newPackage = component.package.overrideAttrs (
             oldAttrs: {
               installPhase = ''
                 ${oldAttrs.installPhase}
+                mkdir -p $out/bin
                 cp target/wasm32-wasi/release/*.wasm $out/bin
               '';
             }

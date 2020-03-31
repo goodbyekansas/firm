@@ -1,4 +1,4 @@
-mod gbk;
+use gbk;
 
 fn main() {
     let maya_version = gbk::get_input("version").unwrap_or_else(|_| "2019".to_owned());
