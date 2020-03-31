@@ -9,7 +9,7 @@ let
       builtins.fetchGit {
         name = "nedryland";
         url = "git@github.com:goodbyekansas/nedryland.git";
-        rev = "0b380506fd684cc4204823a54df1ab39035c61b1";
+        rev = "d68cfd1a5387279bc32610721cfaec2c62090cfb";
       }
   );
 
@@ -25,7 +25,8 @@ let
 
   # declare the components of the project and their dependencies
   components = rec {
-    start-maya = project.declareComponent ./functions/start-maya/start-maya.nix {};
+    rustGbkUtils = project.declareComponent ./utils/rust/gbk/gbk.nix {};
+    start-maya = project.declareComponent ./functions/start-maya/start-maya.nix { inherit rustGbkUtils; };
     avery = project.declareComponent ./services/avery/avery.nix {
       inputFunctions = [ start-maya ];
     };
