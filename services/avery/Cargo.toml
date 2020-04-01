@@ -7,7 +7,6 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-futures = "0.3"
 prost = "0.6"
 regex = "1"
 semver = "0.9"
@@ -28,3 +27,6 @@ wasmer-wasi = "0.16"
 
 [build-dependencies]
 tonic-build = "0.1"
+
+[dev-dependencies]
+futures = "0.3" # used in tests

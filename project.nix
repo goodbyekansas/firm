@@ -26,14 +26,9 @@ let
   # declare the components of the project and their dependencies
   components = rec {
     rustGbkUtils = project.declareComponent ./utils/rust/gbk/gbk.nix {};
-    start-maya = project.declareComponent ./functions/start-maya/start-maya.nix { inherit rustGbkUtils; };
-    avery = project.declareComponent ./services/avery/avery.nix {
-      inputFunctions = [ start-maya ];
-    };
+    avery = project.declareComponent ./services/avery/avery.nix {};
     bendini = project.declareComponent ./clients/bendini/bendini.nix {};
-    lomax = project.declareComponent ./clients/lomax/lomax.nix {
-      inherit avery;
-    };
+    lomax = project.declareComponent ./clients/lomax/lomax.nix {};
 
     os-packaging = project.declareComponent ./deployment/os-packaging.nix {
       linuxPackages = [
@@ -43,11 +38,12 @@ let
       windowsPackages = [];
     };
   };
+  capturedLomaxPackage = components.lomax.package;
   getFunctionDeployments = { components, endpoint ? "tcp://[::1]", port ? 1939 }: builtins.map (
     drv:
       drv {
         inherit endpoint port;
-        lomax = components.lomax.package;
+        lomax = capturedLomaxPackage;
       }
   ) (
     nedryland.getDeployments { inherit components; type = "function"; }

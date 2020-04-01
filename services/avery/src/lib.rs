@@ -6,7 +6,6 @@ pub mod proto {
 }
 
 mod executor;
-pub mod manifest;
 pub mod registry;
 
 use std::sync::Arc;
