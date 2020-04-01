@@ -138,3 +138,9 @@ message ExecutionError {
   string msg = 1;
 }
 
+// GBK library
+message StartProcessRequest {
+  string command = 1;
+  repeated string args = 2;
+  map<string, string> environment_variables = 3;
+}

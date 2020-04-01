@@ -10,7 +10,7 @@ pub mod registry;
 
 use std::sync::Arc;
 
-use slog::Logger;
+use slog::{o, Logger};
 
 // crate / internal includes
 use executor::{download_code, lookup_executor, validate_args, validate_results};
@@ -126,7 +126,7 @@ impl FunctionsServiceTrait for FunctionsService {
             })?;
 
         // lookup executor and run
-        lookup_executor(&execution_environment.name)
+        lookup_executor(self.log.new(o!()), &execution_environment.name)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Internal,

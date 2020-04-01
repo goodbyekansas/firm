@@ -2,14 +2,17 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/functions.rs"));
 }
 
+use std::collections::HashMap;
+
+pub use proto::ReturnValue;
 use prost::Message;
-pub use proto::{ArgumentType, FunctionArgument, ReturnValue};
+use proto::{FunctionArgument, StartProcessRequest};
 use thiserror::Error;
 
 mod raw {
     #[link(wasm_import_module = "gbk")]
     extern "C" {
-        pub fn start_host_process(string_ptr: *const u8, len: usize, pid: *mut u64) -> u32;
+        pub fn start_host_process(request_ptr: *const u8, len: usize, pid: *mut u64) -> u32;
         pub fn get_input_len(key_ptr: *const u8, len: usize, value: *mut u64) -> u32;
         pub fn get_input(
             key_ptr: *const u8,
@@ -50,11 +53,24 @@ pub enum Error {
     ConversionError(),
 }
 
-pub fn start_host_process(name: &str) -> Result<u64, Error> {
+macro_rules! host_call {
+    ($call: expr) => {
+        unsafe { $call }.to_result()
+    };
+}
+
+pub fn start_host_process<S: AsRef<str>>(name: &str, args: &[S], environment: &HashMap<String, String>) -> Result<u64, Error> {
+    let request = StartProcessRequest {
+        command: name.to_owned(),
+        args: args.iter().map(|s| s.as_ref().to_owned()).collect(),
+        environment_variables: environment.clone(),
+    };
+
+    let mut value = Vec::with_capacity(request.encoded_len());
+    request.encode(&mut value)?;
+
     let mut pid: u64 = 0;
-    unsafe { raw::start_host_process(name.as_ptr(), name.len(), &mut pid as *mut u64) }
-        .to_result()
-        .map(|_| pid)
+    host_call!(raw::start_host_process(value.as_ptr(), value.len(), &mut pid as *mut u64)).map(|_| pid)
 }
 
 pub trait FromFunctionArgument: Sized {
@@ -80,12 +96,6 @@ macro_rules! bytes_as_64_bit_array {
             $bytes.get(7).cloned().unwrap_or_default(),
         ]
     }};
-}
-
-macro_rules! host_call {
-    ($call: expr) => {
-        unsafe { $call }.to_result()
-    };
 }
 
 impl FromFunctionArgument for i64 {
@@ -129,6 +139,7 @@ pub fn get_input<T: FromFunctionArgument>(key: &str) -> Result<T, Error> {
         .and_then(|a| T::from_arg(a).ok_or_else(Error::ConversionError))
 }
 
+// TODO: Do not expose the ReturnValue type from proto
 pub fn set_output(ret_value: &ReturnValue) -> Result<(), Error> {
     let mut value = Vec::with_capacity(ret_value.encoded_len());
     ret_value.encode(&mut value)?;
