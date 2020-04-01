@@ -22,7 +22,6 @@ jobs:
           avery,
           bendini,
           lomax,
-          start-maya
         ]
 
     steps:
