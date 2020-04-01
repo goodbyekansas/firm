@@ -7,6 +7,7 @@ use std::{
 };
 
 use prost::Message;
+use slog::{info, o, Logger};
 use thiserror::Error;
 use wasmer_runtime::{compile, func, imports, memory::Memory, Array, Ctx, Func, Item, WasmPtr};
 use wasmer_wasi::{generate_import_object_from_state, get_wasi_version, state::WasiState};
@@ -14,7 +15,7 @@ use wasmer_wasi::{generate_import_object_from_state, get_wasi_version, state::Wa
 use crate::executor::FunctionExecutor;
 use crate::proto::{
     execute_response::Result as ProtoResult, ExecutionError, FunctionArgument, FunctionResult,
-    ReturnValue,
+    ReturnValue, StartProcessRequest,
 };
 
 trait WasmPtrExt<'a> {
@@ -89,27 +90,44 @@ impl From<WasmError> for u32 {
 }
 
 fn start_process(
+    logger: &Logger,
     vm_memory: &Memory,
-    s: WasmPtr<u8, Array>,
+    request: WasmPtr<u8, Array>,
     len: u32,
     pid_out: WasmPtr<u64, Item>,
 ) -> Result<()> {
-    unsafe {
-        match s.get_utf8_string(vm_memory, len) {
-            Some(command) => Command::new(command)
-                .spawn()
-                .map_err(WasmError::FailedToStartProcess)
-                .and_then(|c| {
-                    pid_out
-                        .deref_mut(&vm_memory)
-                        .ok_or_else(WasmError::FailedToDerefPointer)
-                        .map(|cell| cell.set(c.id() as u64))
-                }),
-            _ => Err(WasmError::FailedToReadStringPointer(
-                "program_name".to_owned(),
-            )),
-        }
-    }
+    let request: StartProcessRequest = request
+        .deref(vm_memory, 0, len)
+        .ok_or_else(WasmError::FailedToDerefPointer)
+        .and_then(|cells| {
+            StartProcessRequest::decode(
+                cells
+                    .iter()
+                    .map(|v| v.get())
+                    .collect::<Vec<u8>>()
+                    .as_slice(),
+            )
+            .map_err(WasmError::FailedToDecodeProtobuf)
+        })?;
+
+    info!(
+        logger,
+        "Launching host process {}, args: {:#?}", request.command, &request.args
+    );
+
+    Command::new(request.command)
+        .args(request.args)
+        .spawn()
+        .map_err(|e| {
+            println!("Failed to launch host process: {}", e);
+            WasmError::FailedToStartProcess(e)
+        })
+        .and_then(|c| unsafe {
+            pid_out
+                .deref_mut(&vm_memory)
+                .ok_or_else(WasmError::FailedToDerefPointer)
+                .map(|cell| cell.set(c.id() as u64))
+        })
 }
 
 fn get_input_len(
@@ -193,6 +211,7 @@ fn set_error(vm_memory: &Memory, msg: WasmPtr<u8, Array>, msglen: u32) -> Result
 }
 
 fn execute_function(
+    logger: Logger,
     function_name: &str,
     _entrypoint: &str,
     code: &[u8],
@@ -216,10 +235,11 @@ fn execute_function(
     let results = Arc::new(RwLock::new(v));
     let res = Arc::clone(&results);
     let res2 = Arc::clone(&results);
+    let start_process_logger = logger.new(o!("scope" => "start_process"));
     let gbk_imports = imports! {
         "gbk" => {
-            "start_host_process" => func!(|ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
-                start_process(ctx.memory(0), s, len, pid_out).to_error_code()
+            "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
+                start_process(&start_process_logger, ctx.memory(0), s, len, pid_out).to_error_code()
             }),
             "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u64, Item>| {
                 get_input_len(ctx.memory(0), key, keylen, value, &a).to_error_code()
@@ -265,7 +285,15 @@ fn execute_function(
         .and_then(|reader| reader.iter().cloned().collect())
 }
 
-pub struct WasmExecutor {}
+pub struct WasmExecutor {
+    logger: Logger,
+}
+
+impl WasmExecutor {
+    pub fn new(logger: Logger) -> Self {
+        Self { logger }
+    }
+}
 
 impl FunctionExecutor for WasmExecutor {
     fn execute(
@@ -275,7 +303,14 @@ impl FunctionExecutor for WasmExecutor {
         code: &[u8],
         arguments: &[FunctionArgument],
     ) -> ProtoResult {
-        execute_function(function_name, entrypoint, code, arguments).map_or_else(
+        execute_function(
+            self.logger.new(o!("function" => function_name.to_owned())),
+            function_name,
+            entrypoint,
+            code,
+            arguments,
+        )
+        .map_or_else(
             |e| ProtoResult::Error(ExecutionError { msg: e }),
             |v| ProtoResult::Ok(FunctionResult { values: v }),
         )
@@ -287,6 +322,12 @@ mod tests {
     use super::*;
     use crate::proto::ArgumentType;
     use wasmer_runtime::{types::MemoryDescriptor, units::Pages};
+
+    macro_rules! null_logger {
+        () => {{
+            slog::Logger::root(slog::Discard, o!())
+        }};
+    }
 
     fn write_to_ptr(ptr: &WasmPtr<u8, Array>, mem: &Memory, data: &[u8]) {
         unsafe {
@@ -309,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_execution() {
-        let executor = WasmExecutor {};
+        let executor = WasmExecutor::new(null_logger!());
         let res = executor.execute(
             "hello-world",
             "could-be-anything",

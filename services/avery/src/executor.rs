@@ -2,6 +2,7 @@ mod wasm;
 
 use std::{fmt, fs, str};
 
+use slog::{o, Logger};
 use thiserror::Error;
 use url::Url;
 
@@ -22,9 +23,14 @@ pub trait FunctionExecutor {
 /// Lookup an executor for the given `name`
 ///
 /// If an executor is not supported, an error is returned
-pub fn lookup_executor(name: &str) -> Result<Box<dyn FunctionExecutor>, ExecutorError> {
+pub fn lookup_executor(
+    logger: Logger,
+    name: &str,
+) -> Result<Box<dyn FunctionExecutor>, ExecutorError> {
     match name {
-        "wasm" => Ok(Box::new(WasmExecutor {})),
+        "wasm" => Ok(Box::new(WasmExecutor::new(
+            logger.new(o!("executor" => "wasm")),
+        ))),
         ee => Err(ExecutorError::ExecutorNotFound(ee.to_owned())),
     }
 }
