@@ -1,5 +1,5 @@
 { pkgs, base }:
-base.languages.rust.mkRustClient {
+base.languages.rust.mkClient {
   name = "bendini";
   src = ./.;
 }

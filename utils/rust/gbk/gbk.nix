@@ -1,4 +1,4 @@
-{ base, pkgs }: base.languages.rust.mkRustUtility {
+{ base, pkgs }: base.languages.rust.mkUtility {
   name = "gbk";
   src = ./.;
   hasTests = false;

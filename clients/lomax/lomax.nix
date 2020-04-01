@@ -1,5 +1,5 @@
 { pkgs, base, avery }:
-base.languages.rust.mkRustClient {
+base.languages.rust.mkClient {
   name = "lomax";
   src = ./.;
 

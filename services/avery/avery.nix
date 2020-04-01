@@ -1,6 +1,6 @@
 { pkgs, base, inputFunctions }:
 with pkgs;
-base.languages.rust.mkRustService {
+base.languages.rust.mkService {
   name = "avery";
   src = ./.;
 

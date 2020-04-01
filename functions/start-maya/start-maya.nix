@@ -1,5 +1,5 @@
 { pkgs, base, rustGbkUtils }:
-base.languages.rust.mkRustFunction {
+base.languages.rust.mkFunction {
   manifest = ./function.toml;
   name = "start-maya";
   src = ./.;
