@@ -42,9 +42,9 @@ base.extend.mkExtension {
   languages = base.extend.mkLanguageHelper {
     language = "rust";
     functions = {
-      mkRustFunction = attrs@{ name, src, manifest, buildInputs ? [], extensions ? [], targets ? [], ... }:
+      mkFunction = attrs@{ name, src, manifest, buildInputs ? [], extensions ? [], targets ? [], ... }:
         let
-          component = base.languages.rust.mkRustComponent (
+          component = base.languages.rust.mkComponent (
             attrs // {
               targets = targets ++ [ "wasm32-wasi" ];
               hasTests = false;
