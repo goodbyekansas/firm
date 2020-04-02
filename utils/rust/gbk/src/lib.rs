@@ -2,10 +2,10 @@ pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/functions.rs"));
 }
 
-use std::collections::HashMap;
+use std::collections::{hash_map::RandomState, HashMap};
 
-pub use proto::ReturnValue;
 use prost::Message;
+pub use proto::ReturnValue;
 use proto::{FunctionArgument, StartProcessRequest};
 use thiserror::Error;
 
@@ -59,7 +59,11 @@ macro_rules! host_call {
     };
 }
 
-pub fn start_host_process<S: AsRef<str>>(name: &str, args: &[S], environment: &HashMap<String, String>) -> Result<u64, Error> {
+pub fn start_host_process<S: AsRef<str>>(
+    name: &str,
+    args: &[S],
+    environment: &HashMap<String, String, RandomState>,
+) -> Result<u64, Error> {
     let request = StartProcessRequest {
         command: name.to_owned(),
         args: args.iter().map(|s| s.as_ref().to_owned()).collect(),
@@ -70,7 +74,12 @@ pub fn start_host_process<S: AsRef<str>>(name: &str, args: &[S], environment: &H
     request.encode(&mut value)?;
 
     let mut pid: u64 = 0;
-    host_call!(raw::start_host_process(value.as_ptr(), value.len(), &mut pid as *mut u64)).map(|_| pid)
+    host_call!(raw::start_host_process(
+        value.as_ptr(),
+        value.len(),
+        &mut pid as *mut u64
+    ))
+    .map(|_| pid)
 }
 
 pub trait FromFunctionArgument: Sized {
