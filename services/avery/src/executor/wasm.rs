@@ -1,3 +1,5 @@
+mod sandbox;
+
 use std::{
     cell::Cell,
     io,
@@ -17,6 +19,7 @@ use crate::proto::{
     execute_response::Result as ProtoResult, ExecutionError, FunctionArgument, FunctionResult,
     ReturnValue, StartProcessRequest,
 };
+use sandbox::Sandbox;
 
 trait WasmPtrExt<'a> {
     fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]>;
@@ -91,6 +94,7 @@ impl From<WasmError> for u32 {
 
 fn start_process(
     logger: &Logger,
+    sandbox: &Sandbox,
     vm_memory: &Memory,
     request: WasmPtr<u8, Array>,
     len: u32,
@@ -110,13 +114,25 @@ fn start_process(
             .map_err(WasmError::FailedToDecodeProtobuf)
         })?;
 
+    let args: Vec<String> = request
+        .args
+        .iter()
+        .map(|arg| {
+            if arg.starts_with("/sandbox") {
+                arg.replace("/sandbox", &sandbox.path().to_string_lossy())
+            } else {
+                arg.clone()
+            }
+        })
+        .collect();
+
     info!(
         logger,
-        "Launching host process {}, args: {:#?}", request.command, &request.args
+        "Launching host process {}, args: {:#?}", request.command, &args
     );
 
     Command::new(request.command)
-        .args(request.args)
+        .args(args)
         .spawn()
         .map_err(|e| {
             println!("Failed to launch host process: {}", e);
@@ -222,8 +238,23 @@ fn execute_function(
 
     let wasi_version = get_wasi_version(&module, true).unwrap_or(wasmer_wasi::WasiVersion::Latest);
 
+    let sandbox = Sandbox::new();
+
+    info!(
+        logger,
+        "using sandbox directory: {}",
+        sandbox.path().display()
+    );
+
     let wasi_state = WasiState::new(&format!("wasi-{}", function_name))
-        .build()
+        .preopen(|p| {
+            p.directory(sandbox.path())
+                .alias("sandbox")
+                .read(true)
+                .write(true)
+                .create(true)
+        })
+        .and_then(|state| state.build())
         .map_err(|e| format!("Failed to create wasi state: {:?}", e))?;
 
     let mut import_object = generate_import_object_from_state(wasi_state, wasi_version);
@@ -239,7 +270,7 @@ fn execute_function(
     let gbk_imports = imports! {
         "gbk" => {
             "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
-                start_process(&start_process_logger, ctx.memory(0), s, len, pid_out).to_error_code()
+                start_process(&start_process_logger, &sandbox, ctx.memory(0), s, len, pid_out).to_error_code()
             }),
             "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u64, Item>| {
                 get_input_len(ctx.memory(0), key, keylen, value, &a).to_error_code()
