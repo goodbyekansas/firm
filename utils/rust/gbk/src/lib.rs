@@ -6,7 +6,7 @@ use std::collections::{hash_map::RandomState, HashMap};
 
 use prost::Message;
 pub use proto::ReturnValue;
-use proto::{FunctionArgument, StartProcessRequest};
+use proto::{ArgumentType, FunctionArgument, StartProcessRequest};
 use thiserror::Error;
 
 mod raw {
@@ -86,9 +86,23 @@ pub trait FromFunctionArgument: Sized {
     fn from_arg(arg: FunctionArgument) -> Option<Self>;
 }
 
+pub trait ToReturnValue: Sized {
+    fn to_return_value(&self, name: &str) -> ReturnValue;
+}
+
 impl FromFunctionArgument for String {
     fn from_arg(arg: FunctionArgument) -> Option<Self> {
         String::from_utf8(arg.value).ok()
+    }
+}
+
+impl ToReturnValue for &str {
+    fn to_return_value(&self, name: &str) -> ReturnValue {
+        ReturnValue {
+            name: name.to_owned(),
+            value: self.as_bytes().to_vec(),
+            r#type: ArgumentType::String as i32,
+        }
     }
 }
 
@@ -113,15 +127,61 @@ impl FromFunctionArgument for i64 {
     }
 }
 
+impl ToReturnValue for i64 {
+    fn to_return_value(&self, name: &str) -> ReturnValue {
+        ReturnValue {
+            name: name.to_owned(),
+            value: self.to_le_bytes().to_vec(),
+            r#type: ArgumentType::Int as i32,
+        }
+    }
+}
+
 impl FromFunctionArgument for f64 {
     fn from_arg(arg: FunctionArgument) -> Option<Self> {
         Some(f64::from_le_bytes(bytes_as_64_bit_array!(arg.value)))
     }
 }
 
+impl ToReturnValue for f64 {
+    fn to_return_value(&self, name: &str) -> ReturnValue {
+        ReturnValue {
+            name: name.to_owned(),
+            value: self.to_le_bytes().to_vec(),
+            r#type: ArgumentType::Float as i32,
+        }
+    }
+}
+
 impl FromFunctionArgument for bool {
     fn from_arg(arg: FunctionArgument) -> Option<Self> {
         arg.value.first().map(|b| *b != 0)
+    }
+}
+
+impl ToReturnValue for bool {
+    fn to_return_value(&self, name: &str) -> ReturnValue {
+        ReturnValue {
+            name: name.to_owned(),
+            value: vec![*self as u8],
+            r#type: ArgumentType::Bool as i32,
+        }
+    }
+}
+
+impl FromFunctionArgument for Vec<u8> {
+    fn from_arg(arg: FunctionArgument) -> Option<Self> {
+        Some(arg.value)
+    }
+}
+
+impl ToReturnValue for Vec<u8> {
+    fn to_return_value(&self, name: &str) -> ReturnValue {
+        ReturnValue {
+            name: name.to_owned(),
+            value: self.to_vec(),
+            r#type: ArgumentType::Bytes as i32,
+        }
     }
 }
 
@@ -148,8 +208,8 @@ pub fn get_input<T: FromFunctionArgument>(key: &str) -> Result<T, Error> {
         .and_then(|a| T::from_arg(a).ok_or_else(Error::ConversionError))
 }
 
-// TODO: Do not expose the ReturnValue type from proto
-pub fn set_output(ret_value: &ReturnValue) -> Result<(), Error> {
+pub fn set_output<T: ToReturnValue>(name: &str, value: &T) -> Result<(), Error> {
+    let ret_value = value.to_return_value(name);
     let mut value = Vec::with_capacity(ret_value.encoded_len());
     ret_value.encode(&mut value)?;
     host_call!(raw::set_output(value.as_mut_ptr(), value.len()))
