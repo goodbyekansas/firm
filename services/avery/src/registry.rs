@@ -76,7 +76,7 @@ impl FunctionsRegistryService {
 
         let mut filtered_functions: Vec<_> = functions
             .values()
-            .filter(|f| f.name == name && dbg!(version_requirement).matches(&f.version))
+            .filter(|f| f.name == name && version_requirement.matches(&f.version))
             .collect();
 
         filtered_functions.sort_unstable_by(|a, b| match sort_order {

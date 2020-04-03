@@ -8,6 +8,8 @@ service FunctionsRegistry {
   rpc List (ListRequest) returns (RegistryListResponse);
   rpc Get (FunctionId) returns (FunctionDescriptor);
   rpc GetLatestVersion (GetLatestVersionRequest) returns (FunctionDescriptor);
+
+  // TODO: ListVersions must be removed and combined with List instead.
   rpc ListVersions (ListVersionsRequest) returns (RegistryListResponse);
   rpc Register (RegisterRequest) returns (FunctionId);
 }
@@ -15,6 +17,7 @@ service FunctionsRegistry {
 service Functions {
   rpc List (ListRequest) returns (ListResponse);
   rpc Get (FunctionId) returns (Function);
+  rpc GetLatestVersion (GetLatestVersionRequest) returns (Function);
   rpc Execute (ExecuteRequest) returns (ExecuteResponse);
 }
 
