@@ -18,7 +18,7 @@ use proto::functions_registry_server::FunctionsRegistry;
 use proto::functions_server::Functions as FunctionsServiceTrait;
 use proto::{
     execute_response::Result as ProtoResult, ExecuteRequest, ExecuteResponse, Function, FunctionId,
-    ListRequest, ListResponse,
+    GetLatestVersionRequest, ListRequest, ListResponse,
 };
 
 // define the FunctionsService struct
@@ -66,6 +66,26 @@ impl FunctionsServiceTrait for FunctionsService {
         let function_descriptor = self
             .functions_register
             .get(tonic::Request::new(request.into_inner()))
+            .await?
+            .into_inner();
+        function_descriptor
+            .function
+            .map(tonic::Response::new)
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    "Function descriptor did not contain any function.",
+                )
+            })
+    }
+
+    async fn get_latest_version(
+        &self,
+        request: tonic::Request<GetLatestVersionRequest>,
+    ) -> Result<tonic::Response<Function>, tonic::Status> {
+        let function_descriptor = self
+            .functions_register
+            .get_latest_version(tonic::Request::new(request.into_inner()))
             .await?
             .into_inner();
         function_descriptor

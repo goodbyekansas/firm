@@ -17,12 +17,13 @@ use std::{
 use structopt::StructOpt;
 use tokio::runtime;
 use tonic::Request;
+use uuid::Uuid;
 
 // internal
 use proto::functions_client::FunctionsClient;
 use proto::{
     ArgumentType, ExecuteRequest, ExecuteResponse, Function, FunctionArgument, FunctionId,
-    FunctionInput, FunctionOutput, ListRequest,
+    FunctionInput, FunctionOutput, GetLatestVersionRequest, ListRequest,
 };
 
 /// Bendini is a command line client to Avery, the function executor service of the GBK pipeline
@@ -255,17 +256,56 @@ fn main() -> Result<(), u32> {
             function_id,
             arguments,
         } => {
-            println!("Executing function: {}", function_id);
+            let function_record: Result<Function, u32> = match Uuid::parse_str(&function_id) {
+                Err(_) => {
+                    let split = function_id.splitn(2, ':').collect::<Vec<&str>>();
+                    // Not UUID assuming it's a name:version
+                    let (function_name, function_version): (&str, Option<&str>) = match &split[..] {
+                        [name, version] => Ok((*name, Some(*version))),
+                        [name] => Ok((*name, None)),
+                        _ => {
+                            println!("Invalid function name and/or version specifier.");
+                            Err(4u32)
+                        }
+                    }?;
 
-            let function_record = basic_rt
-                .block_on(client.get(Request::new(FunctionId {
-                    value: function_id.clone(),
-                })))
-                .map_err(|e| {
-                    println!("{}", e);
-                    4u32
-                })?
-                .into_inner();
+                    Ok(basic_rt
+                        .block_on(client.get_latest_version(Request::new(
+                            GetLatestVersionRequest {
+                                name: function_name.to_owned(),
+                                version_requirement:
+                                    function_version.unwrap_or_else(|| "*").to_owned(),
+                            },
+                        )))
+                        .map_err(|e| {
+                            println!("{}", e);
+                            4u32
+                        })?
+                        .into_inner())
+                }
+                Ok(func_id) => Ok(basic_rt
+                    .block_on(client.get(Request::new(FunctionId {
+                        value: func_id.to_string(),
+                    })))
+                    .map_err(|e| {
+                        println!("{}", e);
+                        4u32
+                    })?
+                    .into_inner()),
+            };
+
+            let function_record = function_record?;
+
+            println!(
+                "Executing function: {}",
+                function_record
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| FunctionId {
+                        value: "Empty Id".to_owned(),
+                    })
+                    .value
+            );
 
             let dst_arguments: Vec<FunctionArgument> = if !function_record.inputs.is_empty() {
                 // assumming we have arguements
@@ -339,9 +379,7 @@ fn main() -> Result<(), u32> {
             };
 
             let request = ExecuteRequest {
-                function: Some(FunctionId {
-                    value: function_id.clone(),
-                }),
+                function: function_record.id,
                 arguments: dst_arguments,
             };
 
