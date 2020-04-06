@@ -94,7 +94,7 @@ impl From<WasmError> for u32 {
 }
 
 fn map_sandbox_dir(sandbox: &Sandbox, arg: &str) -> String {
-    let regex = Regex::new(r"(^|[=\s;:])/sandbox").unwrap();
+    let regex = Regex::new(r"(^|[=\s;:])sandbox").unwrap();
 
     regex
         .replace_all(arg, |caps: &regex::Captures| {
@@ -739,32 +739,32 @@ mod tests {
         let sandbox = Sandbox::new();
         assert_eq!(
             sandbox.path().join("some").join("dir"),
-            Path::new(&map_sandbox_dir(&sandbox, "/sandbox/some/dir"))
+            Path::new(&map_sandbox_dir(&sandbox, "sandbox/some/dir"))
         );
 
         assert_eq!(
             format!("--some-arg={}", sandbox.path().display()),
-            map_sandbox_dir(&sandbox, "--some-arg=/sandbox")
+            map_sandbox_dir(&sandbox, "--some-arg=sandbox")
         );
 
         assert_eq!(
             format!("{0};{0}", sandbox.path().display()),
-            map_sandbox_dir(&sandbox, "/sandbox;/sandbox")
+            map_sandbox_dir(&sandbox, "sandbox;sandbox")
         );
 
         assert_eq!(
             format!("{0}:{0}", sandbox.path().display()),
-            map_sandbox_dir(&sandbox, "/sandbox:/sandbox")
+            map_sandbox_dir(&sandbox, "sandbox:sandbox")
         );
 
         assert_eq!(
-            "/some/dir/sandbox/something/else",
-            &map_sandbox_dir(&sandbox, "/some/dir/sandbox/something/else")
+            "some/dir/sandbox/something/else",
+            &map_sandbox_dir(&sandbox, "some/dir/sandbox/something/else")
         );
 
         assert_eq!(
-            format!("{};/kallekula/sandbox", sandbox.path().display()),
-            map_sandbox_dir(&sandbox, "/sandbox;/kallekula/sandbox")
+            format!("{};kallekula/sandbox", sandbox.path().display()),
+            map_sandbox_dir(&sandbox, "sandbox;kallekula/sandbox")
         );
     }
 }
