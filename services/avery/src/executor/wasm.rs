@@ -146,6 +146,60 @@ fn start_process(
         })
 }
 
+fn run_process(
+    logger: &Logger,
+    sandbox: &Sandbox,
+    vm_memory: &Memory,
+    request: WasmPtr<u8, Array>,
+    len: u32,
+    exit_code_out: WasmPtr<i32, Item>,
+) -> Result<()> {
+    let request: StartProcessRequest = request
+        .deref(vm_memory, 0, len)
+        .ok_or_else(WasmError::FailedToDerefPointer)
+        .and_then(|cells| {
+            StartProcessRequest::decode(
+                cells
+                    .iter()
+                    .map(|v| v.get())
+                    .collect::<Vec<u8>>()
+                    .as_slice(),
+            )
+            .map_err(WasmError::FailedToDecodeProtobuf)
+        })?;
+
+    let args: Vec<String> = request
+        .args
+        .iter()
+        .map(|arg| {
+            if arg.starts_with("/sandbox") {
+                arg.replace("/sandbox", &sandbox.path().to_string_lossy())
+            } else {
+                arg.clone()
+            }
+        })
+        .collect();
+
+    info!(
+        logger,
+        "Launching host process {}, args: {:#?}", request.command, &args
+    );
+
+    Command::new(request.command)
+        .args(args)
+        .status()
+        .map_err(|e| {
+            println!("Failed to launch host process: {}", e);
+            WasmError::FailedToStartProcess(e)
+        })
+        .and_then(|c| unsafe {
+            exit_code_out
+                .deref_mut(&vm_memory)
+                .ok_or_else(WasmError::FailedToDerefPointer)
+                .map(|cell| cell.set(c.code().unwrap_or(-1)))
+        })
+}
+
 fn get_input_len(
     vm_memory: &Memory,
     key: WasmPtr<u8, Array>,
@@ -238,7 +292,8 @@ fn execute_function(
 
     let wasi_version = get_wasi_version(&module, true).unwrap_or(wasmer_wasi::WasiVersion::Latest);
 
-    let sandbox = Sandbox::new();
+    let sandbox = Arc::new(Sandbox::new());
+    let sandbox2 = Arc::clone(&sandbox);
 
     info!(
         logger,
@@ -267,11 +322,17 @@ fn execute_function(
     let res = Arc::clone(&results);
     let res2 = Arc::clone(&results);
     let start_process_logger = logger.new(o!("scope" => "start_process"));
+    let run_process_logger = logger.new(o!("scope" => "run_process"));
     let gbk_imports = imports! {
         "gbk" => {
             "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
                 start_process(&start_process_logger, &sandbox, ctx.memory(0), s, len, pid_out).to_error_code()
             }),
+
+            "run_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, exit_code_out: WasmPtr<i32, Item>| {
+                run_process(&run_process_logger, &sandbox2, ctx.memory(0), s, len, exit_code_out).to_error_code()
+            }),
+
             "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u64, Item>| {
                 get_input_len(ctx.memory(0), key, keylen, value, &a).to_error_code()
             }),

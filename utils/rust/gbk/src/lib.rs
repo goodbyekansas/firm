@@ -13,6 +13,7 @@ mod raw {
     #[link(wasm_import_module = "gbk")]
     extern "C" {
         pub fn start_host_process(request_ptr: *const u8, len: usize, pid: *mut u64) -> u32;
+        pub fn run_host_process(request_ptr: *const u8, len: usize, exit_code: *mut i32) -> u32;
         pub fn get_input_len(key_ptr: *const u8, len: usize, value: *mut u64) -> u32;
         pub fn get_input(
             key_ptr: *const u8,
@@ -80,6 +81,29 @@ pub fn start_host_process<S: AsRef<str>>(
         &mut pid as *mut u64
     ))
     .map(|_| pid)
+}
+
+pub fn run_host_process<S: AsRef<str>>(
+    name: &str,
+    args: &[S],
+    environment: &HashMap<String, String, RandomState>,
+) -> Result<i32, Error> {
+    let request = StartProcessRequest {
+        command: name.to_owned(),
+        args: args.iter().map(|s| s.as_ref().to_owned()).collect(),
+        environment_variables: environment.clone(),
+    };
+
+    let mut value = Vec::with_capacity(request.encoded_len());
+    request.encode(&mut value)?;
+
+    let mut exit_code: i32 = 0;
+    host_call!(raw::run_host_process(
+        value.as_ptr(),
+        value.len(),
+        &mut exit_code as *mut i32
+    ))
+    .map(|_| exit_code)
 }
 
 pub trait FromFunctionArgument: Sized {
