@@ -2,6 +2,7 @@ mod sandbox;
 
 use std::{
     cell::Cell,
+    fs::OpenOptions,
     io,
     process::Command,
     str,
@@ -13,7 +14,10 @@ use regex::Regex;
 use slog::{info, o, Logger};
 use thiserror::Error;
 use wasmer_runtime::{compile, func, imports, memory::Memory, Array, Ctx, Func, Item, WasmPtr};
-use wasmer_wasi::{generate_import_object_from_state, get_wasi_version, state::WasiState};
+use wasmer_wasi::{
+    generate_import_object_from_state, get_wasi_version,
+    state::{HostFile, WasiState},
+};
 
 use crate::executor::FunctionExecutor;
 use crate::proto::{
@@ -181,14 +185,14 @@ fn run_process(
 
     info!(
         logger,
-        "Launching host process {}, args: {:#?}", request.command, &args
+        "Running host process {} (and waiting for exit), args: {:#?}", request.command, &args
     );
 
     Command::new(request.command)
         .args(args)
         .status()
         .map_err(|e| {
-            println!("Failed to launch host process: {}", e);
+            println!("Failed to run host process: {}", e);
             WasmError::FailedToStartProcess(e)
         })
         .and_then(|c| unsafe {
@@ -300,7 +304,36 @@ fn execute_function(
         sandbox.path().display()
     );
 
+    // create stdout and stderr
+    let stdout = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(sandbox.path().join("stdout"))
+        .map_err(|e| format!("failed to open stdout file: {}", e))?;
+
+    let stderr = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(sandbox.path().join("stderr"))
+        .map_err(|e| format!("failed to open stderr file: {}", e))?;
+
     let wasi_state = WasiState::new(&format!("wasi-{}", function_name))
+        .stdout(Box::new(HostFile::new(
+            stdout,
+            sandbox.path().join("stdout"),
+            true,
+            true,
+            true,
+        )))
+        .stderr(Box::new(HostFile::new(
+            stderr,
+            sandbox.path().join("stderr"),
+            true,
+            true,
+            true,
+        )))
         .preopen(|p| {
             p.directory(sandbox.path())
                 .alias("sandbox")
@@ -482,7 +515,7 @@ mod tests {
 
         assert!(res.is_err());
         assert!(matches!(
-            dbg!(res).unwrap_err(),
+            res.unwrap_err(),
             WasmError::FailedToReadStringPointer(..)
         ));
 
