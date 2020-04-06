@@ -9,6 +9,7 @@ use std::{
 };
 
 use prost::Message;
+use regex::Regex;
 use slog::{info, o, Logger};
 use thiserror::Error;
 use wasmer_runtime::{compile, func, imports, memory::Memory, Array, Ctx, Func, Item, WasmPtr};
@@ -92,6 +93,16 @@ impl From<WasmError> for u32 {
     }
 }
 
+fn map_sandbox_dir(sandbox: &Sandbox, arg: &str) -> String {
+    let regex = Regex::new(r"(^|[=\s;:])/sandbox").unwrap();
+
+    regex
+        .replace_all(arg, |caps: &regex::Captures| {
+            format!("{}{}", &caps[1], &sandbox.path().to_string_lossy())
+        })
+        .into_owned()
+}
+
 fn start_process(
     logger: &Logger,
     sandbox: &Sandbox,
@@ -117,13 +128,7 @@ fn start_process(
     let args: Vec<String> = request
         .args
         .iter()
-        .map(|arg| {
-            if arg.starts_with("/sandbox") {
-                arg.replace("/sandbox", &sandbox.path().to_string_lossy())
-            } else {
-                arg.clone()
-            }
-        })
+        .map(|arg| map_sandbox_dir(sandbox, arg))
         .collect();
 
     info!(
@@ -171,13 +176,7 @@ fn run_process(
     let args: Vec<String> = request
         .args
         .iter()
-        .map(|arg| {
-            if arg.starts_with("/sandbox") {
-                arg.replace("/sandbox", &sandbox.path().to_string_lossy())
-            } else {
-                arg.clone()
-            }
-        })
+        .map(|arg| map_sandbox_dir(sandbox, arg))
         .collect();
 
     info!(
@@ -413,6 +412,7 @@ impl FunctionExecutor for WasmExecutor {
 mod tests {
     use super::*;
     use crate::proto::ArgumentType;
+    use std::path::Path;
     use wasmer_runtime::{types::MemoryDescriptor, units::Pages};
 
     macro_rules! null_logger {
@@ -732,5 +732,39 @@ mod tests {
 
         assert!(res.is_ok());
         assert_eq!(return_value, res.unwrap());
+    }
+
+    #[test]
+    fn test_map_sandbox_dir() {
+        let sandbox = Sandbox::new();
+        assert_eq!(
+            sandbox.path().join("some").join("dir"),
+            Path::new(&map_sandbox_dir(&sandbox, "/sandbox/some/dir"))
+        );
+
+        assert_eq!(
+            format!("--some-arg={}", sandbox.path().display()),
+            map_sandbox_dir(&sandbox, "--some-arg=/sandbox")
+        );
+
+        assert_eq!(
+            format!("{0};{0}", sandbox.path().display()),
+            map_sandbox_dir(&sandbox, "/sandbox;/sandbox")
+        );
+
+        assert_eq!(
+            format!("{0}:{0}", sandbox.path().display()),
+            map_sandbox_dir(&sandbox, "/sandbox:/sandbox")
+        );
+
+        assert_eq!(
+            "/some/dir/sandbox/something/else",
+            &map_sandbox_dir(&sandbox, "/some/dir/sandbox/something/else")
+        );
+
+        assert_eq!(
+            format!("{};/kallekula/sandbox", sandbox.path().display()),
+            map_sandbox_dir(&sandbox, "/sandbox;/kallekula/sandbox")
+        );
     }
 }
