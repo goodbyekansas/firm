@@ -9,7 +9,7 @@ use avery::{
         functions_registry_server::FunctionsRegistry,
         functions_server::Functions as FunctionsTrait, ArgumentType, ExecuteRequest,
         ExecutionEnvironment, FunctionArgument, FunctionId, FunctionInput, FunctionOutput,
-        ListRequest, RegisterRequest,
+        ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
     },
     registry::FunctionsRegistryService,
     FunctionsService,
@@ -109,6 +109,10 @@ macro_rules! first_function {
             tags_filter: HashMap::new(),
             offset: 0,
             limit: 100,
+            exact_name_match: false,
+            version_requirement: None,
+            order_direction: OrderingDirection::Descending as i32,
+            order_by: OrderingKey::Name as i32,
         })))
         .unwrap()
         .into_inner()
@@ -127,6 +131,10 @@ fn test_list() {
         tags_filter: HashMap::new(),
         offset: 0,
         limit: 100,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
     })));
 
     assert!(r.is_ok());
@@ -139,6 +147,10 @@ fn test_list() {
         tags_filter: HashMap::new(),
         offset: 0,
         limit: 100,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
     })));
     assert!(r.is_ok());
     let fns = r.unwrap().into_inner();

@@ -24,7 +24,7 @@ use tonic::Request;
 use proto::functions_registry_client::FunctionsRegistryClient;
 use proto::{
     ArgumentType, ExecutionEnvironment, Function, FunctionDescriptor, FunctionId, FunctionInput,
-    FunctionOutput, ListRequest, RegisterRequest,
+    FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
 };
 
 // arguments
@@ -261,8 +261,12 @@ fn main() -> Result<(), u32> {
             let list_request = ListRequest {
                 name_filter: String::new(),
                 tags_filter: HashMap::new(),
-                limit: 0,
+                limit: 25,
                 offset: 0,
+                exact_name_match: false,
+                order_direction: OrderingDirection::Ascending as i32,
+                order_by: OrderingKey::Name as i32,
+                version_requirement: None,
             };
 
             let list_response = basic_rt

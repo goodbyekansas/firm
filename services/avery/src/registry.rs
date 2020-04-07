@@ -14,8 +14,8 @@ use uuid::Uuid;
 use crate::proto::functions_registry_server::FunctionsRegistry;
 use crate::proto::{
     ExecutionEnvironment, Function as ProtoFunction, FunctionDescriptor, FunctionId, FunctionInput,
-    FunctionOutput, GetLatestVersionRequest, ListRequest, ListVersionsRequest,
-    Ordering as ProtoOrdering, RegisterRequest, RegistryListResponse,
+    FunctionOutput, GetLatestVersionRequest, ListRequest, OrderingDirection, OrderingKey,
+    RegisterRequest, RegistryListResponse, VersionRequirement,
 };
 
 #[derive(Debug, Default)]
@@ -62,37 +62,11 @@ impl From<&Function> for FunctionDescriptor {
     }
 }
 
-impl FunctionsRegistryService {
-    fn get_function_versions(
-        &self,
-        name: &str,
-        version_requirement: &VersionReq,
-        sort_order: ProtoOrdering,
-    ) -> Result<Vec<FunctionDescriptor>, String> {
-        let functions = self
-            .functions
-            .read()
-            .map_err(|e| format!("Failed to get read lock for functions: {}", e))?;
-
-        let mut filtered_functions: Vec<_> = functions
-            .values()
-            .filter(|f| f.name == name && version_requirement.matches(&f.version))
-            .collect();
-
-        filtered_functions.sort_unstable_by(|a, b| match sort_order {
-            ProtoOrdering::Ascending => b.version.cmp(&a.version),
-            _ => a.version.cmp(&b.version),
-        });
-
-        Ok(filtered_functions.iter().map(|f| (*f).into()).collect())
-    }
-}
-
 #[tonic::async_trait]
 impl FunctionsRegistry for FunctionsRegistryService {
     async fn list(
         &self,
-        _list_request: tonic::Request<ListRequest>,
+        list_request: tonic::Request<ListRequest>,
     ) -> Result<tonic::Response<RegistryListResponse>, tonic::Status> {
         let reader = self.functions.read().map_err(|e| {
             tonic::Status::new(
@@ -101,8 +75,69 @@ impl FunctionsRegistry for FunctionsRegistryService {
             )
         })?;
 
+        let payload = list_request.into_inner();
+        let required_tags = if payload.tags_filter.is_empty() {
+            None
+        } else {
+            Some(payload.tags_filter.clone())
+        };
+        let offset: usize = payload.offset as usize;
+        let limit: usize = payload.limit as usize;
+        let version_req = payload
+            .version_requirement
+            .clone()
+            .map(|vr| {
+                VersionReq::parse(&vr.expression).map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::InvalidArgument,
+                        format!("Supplied version requirement is invalid: {}", e),
+                    )
+                })
+            })
+            .map_or(Ok(None), |v| v.map(Some))?;
+        let mut filtered_functions = reader
+            .values()
+            .filter(|func| {
+                func.name.contains(&payload.name_filter)
+                    && version_req
+                        .as_ref()
+                        .map_or(true, |ver_req| ver_req.matches(&func.version))
+                    && required_tags.as_ref().map_or(true, |filters| {
+                        filters.iter().all(|filter| {
+                            func.tags
+                                .iter()
+                                .any(|(k, v)| filter.0 == k && filter.1 == v)
+                        })
+                    })
+            })
+            .collect::<Vec<&Function>>();
+        filtered_functions.sort_unstable_by(|a, b| {
+            match (
+                OrderingKey::from_i32(payload.order_by),
+                OrderingDirection::from_i32(payload.order_direction),
+            ) {
+                (Some(OrderingKey::Name), Some(OrderingDirection::Ascending))
+                | (Some(OrderingKey::Name), None)
+                | (None, None)
+                | (None, Some(OrderingDirection::Ascending)) => match a.name.cmp(&b.name) {
+                    std::cmp::Ordering::Equal => b.version.cmp(&a.version),
+                    o => o,
+                },
+                (Some(OrderingKey::Name), Some(OrderingDirection::Descending))
+                | (None, Some(OrderingDirection::Descending)) => match b.name.cmp(&a.name) {
+                    std::cmp::Ordering::Equal => b.version.cmp(&a.version),
+                    o => o,
+                },
+            }
+        });
+
         Ok(tonic::Response::new(RegistryListResponse {
-            functions: reader.values().map(|f| f.into()).collect(),
+            functions: filtered_functions
+                .iter()
+                .skip(offset)
+                .take(limit)
+                .map(|f| (*f).into())
+                .collect(),
         }))
     }
 
@@ -142,49 +177,27 @@ impl FunctionsRegistry for FunctionsRegistryService {
         request: tonic::Request<GetLatestVersionRequest>,
     ) -> Result<tonic::Response<FunctionDescriptor>, tonic::Status> {
         let payload = request.into_inner();
-        let version_req = VersionReq::parse(&payload.version_requirement).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("Supplied version requirement is invalid: {}", e),
-            )
-        })?;
-
         let filtered_functions = self
-            .get_function_versions(&payload.name, &version_req, ProtoOrdering::Descending)
-            .map_err(|e| tonic::Status::new(tonic::Code::Internal, e))?;
-
+            .list(tonic::Request::new(ListRequest {
+                name_filter: payload.name.clone(),
+                version_requirement: payload.version_requirement.clone(),
+                order_direction: OrderingDirection::Descending as i32,
+                order_by: OrderingKey::Name as i32,
+                exact_name_match: true,
+                offset: 0,
+                limit: 1,
+                tags_filter: HashMap::new(),
+            }))
+            .await?
+            .into_inner()
+            .functions;
+        let version_requirement = payload.version_requirement.clone();
         filtered_functions.first().map(|f| tonic::Response::new(f.clone())).ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::NotFound,
-                format!("Found no function with name \"{}\", matching the version requirements \"{}\"", payload.name, payload.version_requirement)
+                format!("Found no function with name \"{}\", matching the version requirements \"{}\"", payload.name, version_requirement.unwrap_or_else(|| VersionRequirement{expression: "".to_owned()}).expression)
                 )
         })
-    }
-
-    async fn list_versions(
-        &self,
-        request: tonic::Request<ListVersionsRequest>,
-    ) -> Result<tonic::Response<RegistryListResponse>, tonic::Status> {
-        let payload = request.into_inner();
-        let version_req = VersionReq::parse(&payload.version_requirement).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("Supplied version requirement is invalid: {}", e),
-            )
-        })?;
-
-        let ordering = match ProtoOrdering::from_i32(payload.ordering) {
-            Some(ProtoOrdering::Ascending) => ProtoOrdering::Ascending,
-            _ => ProtoOrdering::Descending,
-        };
-
-        let filtered_functions = self
-            .get_function_versions(&payload.name, &version_req, ordering)
-            .map_err(|e| tonic::Status::new(tonic::Code::Internal, e))?;
-
-        Ok(tonic::Response::new(RegistryListResponse {
-            functions: filtered_functions,
-        }))
     }
 
     async fn register(
@@ -317,13 +330,6 @@ impl FunctionsRegistry for Arc<FunctionsRegistryService> {
         request: tonic::Request<GetLatestVersionRequest>,
     ) -> Result<tonic::Response<FunctionDescriptor>, tonic::Status> {
         (**self).get_latest_version(request).await
-    }
-
-    async fn list_versions(
-        &self,
-        request: tonic::Request<ListVersionsRequest>,
-    ) -> Result<tonic::Response<RegistryListResponse>, tonic::Status> {
-        (**self).list_versions(request).await
     }
 
     async fn register(

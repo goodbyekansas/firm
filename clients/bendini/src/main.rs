@@ -1,4 +1,5 @@
 #![deny(warnings)]
+//#![allow(warnings)]
 
 // module declarations
 pub mod proto {
@@ -23,7 +24,8 @@ use uuid::Uuid;
 use proto::functions_client::FunctionsClient;
 use proto::{
     ArgumentType, ExecuteRequest, ExecuteResponse, Function, FunctionArgument, FunctionId,
-    FunctionInput, FunctionOutput, GetLatestVersionRequest, ListRequest,
+    FunctionInput, FunctionOutput, GetLatestVersionRequest, ListRequest, OrderingDirection,
+    OrderingKey, VersionRequirement,
 };
 
 /// Bendini is a command line client to Avery, the function executor service of the GBK pipeline
@@ -204,8 +206,12 @@ fn main() -> Result<(), u32> {
                 let list_request = ListRequest {
                     name_filter: String::new(),
                     tags_filter: HashMap::new(),
-                    limit: 0,
+                    exact_name_match: false,
+                    order_by: OrderingKey::Name as i32,
+                    order_direction: OrderingDirection::Ascending as i32,
+                    version_requirement: None,
                     offset: 0,
+                    limit: 25,
                 };
 
                 let list_response = basic_rt
@@ -234,7 +240,11 @@ fn main() -> Result<(), u32> {
                 let list_request = ListRequest {
                     name_filter: String::new(),
                     tags_filter: HashMap::new(),
-                    limit: 0,
+                    exact_name_match: false,
+                    order_by: OrderingKey::Name as i32,
+                    order_direction: OrderingDirection::Ascending as i32,
+                    version_requirement: None,
+                    limit: 25,
                     offset: 0,
                 };
 
@@ -273,8 +283,9 @@ fn main() -> Result<(), u32> {
                         .block_on(client.get_latest_version(Request::new(
                             GetLatestVersionRequest {
                                 name: function_name.to_owned(),
-                                version_requirement:
-                                    function_version.unwrap_or_else(|| "*").to_owned(),
+                                version_requirement: Some(VersionRequirement {
+                                    expression: function_version.unwrap_or_else(|| "*").to_owned(),
+                                }),
                             },
                         )))
                         .map_err(|e| {

@@ -4,8 +4,8 @@ use futures;
 
 use avery::proto::{
     functions_registry_server::FunctionsRegistry, ArgumentType, ExecutionEnvironment, FunctionId,
-    FunctionInput, FunctionOutput, GetLatestVersionRequest, ListRequest, ListVersionsRequest,
-    Ordering, RegisterRequest,
+    FunctionInput, FunctionOutput, GetLatestVersionRequest, ListRequest, OrderingDirection,
+    OrderingKey, RegisterRequest, VersionRequirement,
 };
 use avery::registry::FunctionsRegistryService;
 
@@ -80,6 +80,45 @@ macro_rules! register_request_with_version {
     }};
 }
 
+macro_rules! register_request_with_tags {
+    ($name: expr, $($key:expr => $value:expr),+) => {{
+
+        let mut m = ::std::collections::HashMap::new();
+            $(
+                m.insert($key.to_owned(), $value.to_owned());
+            )+
+
+        tonic::Request::new(RegisterRequest {
+            name: $name.to_owned(),
+            version: "0.1.0".to_owned(),
+            tags: m,
+            inputs: vec![
+                FunctionInput {
+                    name: "say".to_string(),
+                    required: true,
+                    r#type: ArgumentType::String as i32,
+                    default_value: String::new(),
+                },
+                FunctionInput {
+                    name: "count".to_string(),
+                    required: false,
+                    r#type: ArgumentType::Int as i32,
+                    default_value: 1.to_string(),
+                },
+            ],
+            outputs: vec![FunctionOutput {
+                name: "output_string".to_string(),
+                r#type: ArgumentType::String as i32,
+            }],
+            code: vec![],
+            entrypoint: "kanske".to_owned(),
+            execution_environment: Some(ExecutionEnvironment {
+                name: "wasm".to_owned(),
+            }),
+        })
+    }};
+}
+
 #[test]
 fn test_list_functions() {
     let fr = registry!();
@@ -90,27 +129,296 @@ fn test_list_functions() {
         tags_filter: HashMap::new(),
         offset: 0,
         limit: 100,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
     })));
 
     assert!(list_request.is_ok());
     assert_eq!(0, list_request.unwrap().into_inner().functions.len());
 
     // Test with 3
-    futures::executor::block_on(fr.register(register_request!("test-1"))).unwrap();
-    futures::executor::block_on(fr.register(register_request!("test-2"))).unwrap();
-    futures::executor::block_on(fr.register(register_request!("test-3"))).unwrap();
+    futures::executor::block_on(fr.register(register_request!("random-1"))).unwrap();
+    futures::executor::block_on(fr.register(register_request!("function-1"))).unwrap();
+    futures::executor::block_on(fr.register(register_request!("function-dev-1"))).unwrap();
+    futures::executor::block_on(fr.register(register_request!("function-dev-2"))).unwrap();
 
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
         name_filter: "".to_owned(),
         tags_filter: HashMap::new(),
         offset: 0,
         limit: 100,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    assert_eq!(4, list_request.unwrap().into_inner().functions.len());
+
+    // Test filtering by name
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "function".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: 100,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
     })));
 
     assert!(list_request.is_ok());
     assert_eq!(3, list_request.unwrap().into_inner().functions.len());
 
-    // TODO: Test filtering
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "dev".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: 100,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    assert_eq!(2, list_request.unwrap().into_inner().functions.len());
+
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "dev-2".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: 100,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+    assert!(list_request.is_ok());
+    assert_eq!(1, list_request.unwrap().into_inner().functions.len());
+}
+
+#[test]
+fn test_list_tag_filtering() {
+    let fr = registry!();
+
+    futures::executor::block_on(fr.register(register_request!("random-1"))).unwrap();
+    futures::executor::block_on(fr.register(register_request_with_tags!(
+        "matrix-1",
+        "a" => "neo",
+        "b" => "smith"
+    )))
+    .unwrap();
+
+    // Test filtering without filtering
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: 100,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    assert_eq!(2, list_request.unwrap().into_inner().functions.len());
+
+    // Test filtering with tags
+    let mut tags_dict = HashMap::new();
+    tags_dict.insert("a".to_owned(), "neo".to_owned());
+    tags_dict.insert("b".to_owned(), "smith".to_owned());
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "".to_owned(),
+        tags_filter: tags_dict,
+        offset: 0,
+        limit: 100,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(1, functions.len());
+    assert_eq!(
+        "matrix-1",
+        functions.first().unwrap().function.as_ref().unwrap().name
+    );
+}
+
+#[test]
+fn test_offset_and_limit() {
+    let fr = registry!();
+    let count: usize = 10;
+
+    for i in 0..count {
+        futures::executor::block_on(fr.register(register_request!(&format!("fn-{}", i)))).unwrap();
+    }
+
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: (count * 2) as u32, // Limit above max
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    assert_eq!(count, list_request.unwrap().into_inner().functions.len());
+
+    // do not take everything
+    let limit: usize = 5;
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: limit as u32,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    assert_eq!(limit, list_request.unwrap().into_inner().functions.len());
+
+    // Take last one
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: (count - 1) as u32,
+        limit: count as u32,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    assert_eq!(1, list_request.unwrap().into_inner().functions.len());
+}
+
+#[test]
+fn test_sorting() {
+    // yer a wizard harry
+    let fr = registry!();
+
+    futures::executor::block_on(fr.register(register_request_with_version!("my-name-a", "1.0.0")))
+        .unwrap();
+    futures::executor::block_on(fr.register(register_request_with_version!("my-name-a", "1.0.1")))
+        .unwrap();
+    futures::executor::block_on(fr.register(register_request_with_version!("my-name-b", "1.0.2")))
+        .unwrap();
+    futures::executor::block_on(fr.register(register_request_with_version!("my-name-c", "1.1.0")))
+        .unwrap();
+
+    // No filter specified
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: 10,
+        exact_name_match: true,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(4, functions.len());
+    assert_eq!(
+        "my-name-c",
+        functions.first().unwrap().function.as_ref().unwrap().name
+    );
+
+    // Descending
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "my-name-a".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: 10,
+        exact_name_match: true,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(2, functions.len());
+    assert_eq!(
+        "1.0.1-dev",
+        functions
+            .first()
+            .unwrap()
+            .function
+            .as_ref()
+            .unwrap()
+            .version
+    );
+
+    // Ascending
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "my-name-a".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: 10,
+        exact_name_match: true,
+        version_requirement: None,
+        order_direction: OrderingDirection::Ascending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(2, functions.len());
+    assert_eq!(
+        "1.0.1-dev",
+        functions
+            .first()
+            .unwrap()
+            .function
+            .as_ref()
+            .unwrap()
+            .version
+    );
+
+    // testing swedish idioms
+    let fr = registry!();
+    futures::executor::block_on(fr.register(register_request_with_version!("sune-a", "1.0.0")))
+        .unwrap();
+    futures::executor::block_on(fr.register(register_request_with_version!("sune-a", "2.1.0")))
+        .unwrap();
+    futures::executor::block_on(fr.register(register_request_with_version!("sune-b", "2.0.0")))
+        .unwrap();
+    futures::executor::block_on(fr.register(register_request_with_version!("sune-b", "1.1.0")))
+        .unwrap();
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
+        name_filter: "sune".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: 10,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(4, functions.len());
+    let first_function = functions.first().unwrap().function.as_ref().unwrap();
+    assert_eq!("sune-b", first_function.name);
+    assert_eq!("2.0.0-dev", first_function.version);
 }
 
 #[test]
@@ -198,52 +506,12 @@ fn test_list_versions() {
         .unwrap();
 
     // since these are prereleases, they will only match exact version requirements
-    let list_result =
-        futures::executor::block_on(fr.list_versions(tonic::Request::new(ListVersionsRequest {
-            name: "my-name".to_owned(),
-            version_requirement: "1.2.3-dev".to_owned(),
-            limit: 100,
-            offset: 0,
-            ordering: Ordering::Descending as i32,
-        })));
-
-    assert!(list_result.is_ok());
-
-    let functions = list_result.unwrap().into_inner().functions;
-    assert_eq!(1, functions.len());
-
-    let list_result =
-        futures::executor::block_on(fr.list_versions(tonic::Request::new(ListVersionsRequest {
-            name: "my-name".to_owned(),
-            version_requirement: "2.0.3-dev".to_owned(),
-            limit: 100,
-            offset: 0,
-            ordering: Ordering::Descending as i32,
-        })));
-
-    assert!(list_result.is_ok());
-
-    let functions = list_result.unwrap().into_inner().functions;
-    assert_eq!(1, functions.len());
-
-    let list_result =
-        futures::executor::block_on(fr.list_versions(tonic::Request::new(ListVersionsRequest {
-            name: "my-name".to_owned(),
-            version_requirement: "8.1.4-dev".to_owned(),
-            limit: 100,
-            offset: 0,
-            ordering: Ordering::Descending as i32,
-        })));
-
-    assert!(list_result.is_ok());
-
-    let functions = list_result.unwrap().into_inner().functions;
-    assert_eq!(1, functions.len());
-
     let latest_result = futures::executor::block_on(fr.get_latest_version(tonic::Request::new(
         GetLatestVersionRequest {
             name: "my-name".to_owned(),
-            version_requirement: "2.0.3-dev".to_owned(),
+            version_requirement: Some(VersionRequirement {
+                expression: "2.0.3-dev".to_owned(),
+            }),
         },
     )));
 
@@ -252,7 +520,9 @@ fn test_list_versions() {
     let latest_result = futures::executor::block_on(fr.get_latest_version(tonic::Request::new(
         GetLatestVersionRequest {
             name: "my-name".to_owned(),
-            version_requirement: "2.0.3".to_owned(),
+            version_requirement: Some(VersionRequirement {
+                expression: "2.0.3".to_owned(),
+            }),
         },
     )));
 
