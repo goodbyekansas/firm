@@ -98,11 +98,16 @@ impl From<WasmError> for u32 {
 }
 
 fn map_sandbox_dir(sandbox: &Sandbox, arg: &str) -> String {
-    let regex = Regex::new(r"(^|[=\s;:])sandbox").unwrap();
+    let regex = Regex::new(r"(^|[=\s;:])sandbox(\b)").unwrap();
 
     regex
         .replace_all(arg, |caps: &regex::Captures| {
-            format!("{}{}", &caps[1], &sandbox.path().to_string_lossy())
+            format!(
+                "{}{}{}",
+                &caps[1],
+                &sandbox.path().to_string_lossy(),
+                &caps[2]
+            )
         })
         .into_owned()
 }
@@ -798,6 +803,11 @@ mod tests {
         assert_eq!(
             format!("{};kallekula/sandbox", sandbox.path().display()),
             map_sandbox_dir(&sandbox, "sandbox;kallekula/sandbox")
+        );
+
+        assert_eq!(
+            format!("sandboxno;{}/yes", sandbox.path().display()),
+            map_sandbox_dir(&sandbox, "sandboxno;sandbox/yes")
         );
     }
 }
