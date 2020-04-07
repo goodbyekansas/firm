@@ -8,9 +8,6 @@ service FunctionsRegistry {
   rpc List (ListRequest) returns (RegistryListResponse);
   rpc Get (FunctionId) returns (FunctionDescriptor);
   rpc GetLatestVersion (GetLatestVersionRequest) returns (FunctionDescriptor);
-
-  // TODO: ListVersions must be removed and combined with List instead.
-  rpc ListVersions (ListVersionsRequest) returns (RegistryListResponse);
   rpc Register (RegisterRequest) returns (FunctionId);
 }
 
@@ -21,26 +18,27 @@ service Functions {
   rpc Execute (ExecuteRequest) returns (ExecuteResponse);
 }
 
+message VersionRequirement {
+  string expression = 1;
+}
+
+enum OrderingDirection { ASCENDING = 0; DESCENDING = 1; }
+enum OrderingKey { NAME = 0; }
+
 message ListRequest {
   string name_filter = 1;
   map<string, string> tags_filter = 2;
   uint32 offset = 3;
   uint32 limit = 4;
-}
-
-enum Ordering { ASCENDING = 0; DESCENDING = 1; }
-
-message ListVersionsRequest {
-  string name = 1;
-  string version_requirement = 2;
-  uint32 offset = 3;
-  uint32 limit = 4;
-  Ordering ordering = 5;
+  bool exact_name_match = 5;
+  VersionRequirement version_requirement = 6;
+  OrderingDirection order_direction = 7;
+  OrderingKey order_by = 8;
 }
 
 message GetLatestVersionRequest {
   string name = 1;
-  string version_requirement = 2;
+  VersionRequirement version_requirement = 2;
 }
 
 message ListResponse {
