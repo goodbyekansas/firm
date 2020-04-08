@@ -35,9 +35,9 @@ pub fn lookup_executor(
     }
 }
 
-/// Donwload function code from the given URL
+/// Download function code from the given URL
 ///
-/// This is a huge security hole and needs to be managed properly (gpg sign things?)
+/// TODO: This is a huge security hole and needs to be managed properly (gpg sign things?)
 pub fn download_code(url: &str) -> Result<Vec<u8>, ExecutorError> {
     let url = Url::parse(url).map_err(|e| ExecutorError::InvalidCodeUrl(e.to_string()))?;
     match url.scheme() {
