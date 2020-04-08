@@ -8,7 +8,7 @@ pub mod proto {
 mod executor;
 pub mod registry;
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use slog::{o, Logger};
 
@@ -18,7 +18,7 @@ use proto::functions_registry_server::FunctionsRegistry;
 use proto::functions_server::Functions as FunctionsServiceTrait;
 use proto::{
     execute_response::Result as ProtoResult, ExecuteRequest, ExecuteResponse, Function, FunctionId,
-    GetLatestVersionRequest, ListRequest, ListResponse,
+    GetLatestVersionRequest, ListRequest, ListResponse, OrderingDirection, OrderingKey,
 };
 
 // define the FunctionsService struct
@@ -146,63 +146,97 @@ impl FunctionsServiceTrait for FunctionsService {
             })?;
 
         // lookup executor and run
-        lookup_executor(self.log.new(o!()), &execution_environment.name)
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to lookup function executor: {}", e),
-                )
-            })
-            .and_then(|executor| {
-                // not having any code for the function is a valid case used for example to execute
-                // external functions (gcp, aws lambdas, etc)
-                let code = if function_descriptor.code_url.is_empty() {
-                    Ok(vec![])
-                } else {
-                    download_code(&function_descriptor.code_url).map_err(|e| {
+        let mut tags = HashMap::new();
+        tags.insert("type".to_owned(), "execution_environment".to_owned());
+        // TODO: this needs to be done on demand which is slightly more complicated
+        // but prob has nice perf benefits
+        let available_executor_functions = self
+            .functions_register
+            .list(tonic::Request::new(ListRequest {
+                name_filter: "".to_owned(),
+                tags_filter: tags,
+                offset: 0,
+                limit: 100,
+                exact_name_match: false,
+                version_requirement: None,
+                order_direction: OrderingDirection::Ascending as i32,
+                order_by: OrderingKey::Name as i32,
+            }))
+            .await?;
+
+        lookup_executor(
+            self.log.new(o!()),
+            &execution_environment.name,
+            available_executor_functions
+                .into_inner()
+                .functions
+                .as_slice(),
+        )
+        .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("Failed to lookup function executor: {}", e),
+            )
+        })
+        .and_then(|executor| {
+            // not having any code for the function is a valid case used for example to execute
+            // external functions (gcp, aws lambdas, etc)
+            let code = if function_descriptor.code_url.is_empty() {
+                Ok(vec![])
+            } else {
+                download_code(&function_descriptor.code_url).map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Internal,
+                        format!(
+                            "Failed to download code 🖨️ for function \"{}\" from {}: {}",
+                            function.name.clone(),
+                            &function_descriptor.code_url,
+                            e
+                        ),
+                    )
+                })
+            }?;
+            let res = executor.execute(
+                &function.name,
+                &function_descriptor.entrypoint,
+                &code,
+                &args,
+            );
+            match res {
+                Ok(ProtoResult::Ok(r)) => validate_results(function.outputs.iter(), &r)
+                    .map(|_| {
+                        tonic::Response::new(ExecuteResponse {
+                            function: function.id.clone(),
+                            result: Some(ProtoResult::Ok(r)),
+                        })
+                    })
+                    .map_err(|e| {
                         tonic::Status::new(
-                            tonic::Code::Internal,
+                            tonic::Code::InvalidArgument,
                             format!(
-                                "Failed to download code 🖨️ for function \"{}\" from {}: {}",
+                                "Function \"{}\" generated invalid result: {}",
                                 function.name.clone(),
-                                &function_descriptor.code_url,
-                                e
+                                e.iter()
+                                    .map(|ae| format!("{}", ae))
+                                    .collect::<Vec<String>>()
+                                    .join(", ")
                             ),
                         )
-                    })
-                }?;
-                let res = executor.execute(
-                    &function.name,
-                    &function_descriptor.entrypoint,
-                    &code,
-                    &args,
-                );
-                match res {
-                    ProtoResult::Ok(r) => validate_results(function.outputs.iter(), &r)
-                        .map(|_| {
-                            tonic::Response::new(ExecuteResponse {
-                                function: function.id.clone(),
-                                result: Some(ProtoResult::Ok(r)),
-                            })
-                        })
-                        .map_err(|e| {
-                            tonic::Status::new(
-                                tonic::Code::InvalidArgument,
-                                format!(
-                                    "Function \"{}\" generated invalid result: {}",
-                                    function.name.clone(),
-                                    e.iter()
-                                        .map(|ae| format!("{}", ae))
-                                        .collect::<Vec<String>>()
-                                        .join(", ")
-                                ),
-                            )
-                        }),
-                    ProtoResult::Error(e) => Ok(tonic::Response::new(ExecuteResponse {
-                        function: function.id.clone(),
-                        result: Some(ProtoResult::Error(e)),
-                    })),
-                }
-            })
+                    }),
+                Ok(ProtoResult::Error(e)) => Ok(tonic::Response::new(ExecuteResponse {
+                    function: function.id.clone(),
+                    result: Some(ProtoResult::Error(e)),
+                })),
+
+                Err(e) => Err(tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!(
+                        "Failed to execute function {}: {}",
+                        function.name.clone(),
+                        e
+                    ),
+                )),
+            }
+        })
     }
 }

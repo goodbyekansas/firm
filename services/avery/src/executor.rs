@@ -1,6 +1,9 @@
 mod wasm;
 
-use std::{fmt, fs, str};
+use std::{
+    fmt::{self, Debug},
+    fs, str,
+};
 
 use slog::{o, Logger};
 use thiserror::Error;
@@ -8,16 +11,65 @@ use url::Url;
 
 use crate::executor::wasm::WasmExecutor;
 use crate::proto::execute_response::Result as ProtoResult;
-use crate::proto::{ArgumentType, FunctionArgument, FunctionInput, FunctionOutput, FunctionResult};
+use crate::proto::{
+    ArgumentType, FunctionArgument, FunctionDescriptor, FunctionInput, FunctionOutput,
+    FunctionResult,
+};
 
-pub trait FunctionExecutor {
+pub trait FunctionExecutor: Debug {
     fn execute(
         &self,
         function_name: &str,
         entrypoint: &str,
         code: &[u8],
         arguments: &[FunctionArgument],
-    ) -> ProtoResult;
+    ) -> Result<ProtoResult, ExecutorError>;
+}
+
+#[derive(Debug)]
+pub struct NestedExecutor {
+    inner: Box<dyn FunctionExecutor>,
+    code_url: String,
+}
+
+/// Adapter for functions to act as executors
+impl NestedExecutor {
+    pub fn new<S: AsRef<str>>(inner: Box<dyn FunctionExecutor>, code_url: S) -> Self {
+        Self {
+            inner,
+            code_url: code_url.as_ref().to_owned(),
+        }
+    }
+}
+
+impl FunctionExecutor for NestedExecutor {
+    fn execute(
+        &self,
+        function_name: &str,
+        entrypoint: &str,
+        code: &[u8],
+        arguments: &[FunctionArgument],
+    ) -> Result<ProtoResult, ExecutorError> {
+        let mut nest_arguments = arguments.to_vec();
+
+        // inject executor arguments to function
+        nest_arguments.push(FunctionArgument {
+            name: "code".to_owned(),
+            r#type: ArgumentType::Bytes as i32,
+            value: code.to_vec(),
+        });
+
+        nest_arguments.push(FunctionArgument {
+            name: "entrypoint".to_owned(),
+            r#type: ArgumentType::String as i32,
+            value: entrypoint.as_bytes().to_vec(),
+        });
+
+        let inner_code = download_code(&self.code_url)?;
+
+        self.inner
+            .execute(function_name, entrypoint, &inner_code, &nest_arguments)
+    }
 }
 
 /// Lookup an executor for the given `name`
@@ -26,12 +78,51 @@ pub trait FunctionExecutor {
 pub fn lookup_executor(
     logger: Logger,
     name: &str,
+    available_executor_functions: &[FunctionDescriptor],
 ) -> Result<Box<dyn FunctionExecutor>, ExecutorError> {
     match name {
         "wasm" => Ok(Box::new(WasmExecutor::new(
             logger.new(o!("executor" => "wasm")),
         ))),
-        ee => Err(ExecutorError::ExecutorNotFound(ee.to_owned())),
+        ee => {
+            let matching_functions: Vec<&FunctionDescriptor> = available_executor_functions
+                .iter()
+                .filter(|e| {
+                    e.function.as_ref().map_or(false, |f| {
+                        f.tags
+                            .iter()
+                            .any(|(k, v)| k.as_str() == "execution_environment" && v.as_str() == ee)
+                    })
+                })
+                .collect();
+
+            let function = matching_functions
+                .first()
+                .ok_or_else(|| ExecutorError::ExecutorNotFound(ee.to_owned()))?;
+
+            let exe_env_name = function
+                .execution_environment
+                .clone()
+                .ok_or_else(|| {
+                    ExecutorError::MissingExecutionEnvironment(
+                        function
+                            .function
+                            .as_ref()
+                            .map(|f| f.name.clone())
+                            .unwrap_or_else(|| "Unknown".to_owned()),
+                    )
+                })?
+                .name;
+
+            Ok(Box::new(NestedExecutor::new(
+                lookup_executor(
+                    logger.new(o!("executor" => exe_env_name.clone())),
+                    &exe_env_name,
+                    available_executor_functions,
+                )?,
+                function.code_url.clone(),
+            )))
+        }
     }
 }
 
@@ -226,6 +317,9 @@ pub enum ExecutorError {
     #[error("Failed to find executor for execution environment \"{0}\"")]
     ExecutorNotFound(String),
 
+    #[error("Function \"{0}\" did not have an execution environment.")]
+    MissingExecutionEnvironment(String),
+
     #[error("Out of range argument type found: {0}. Protobuf definitions out of date?")]
     OutOfRangeArgumentType(i32),
 
@@ -273,9 +367,15 @@ pub enum ExecutorError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::ReturnValue;
-    use std::io::Write;
+    use crate::proto::{ExecutionEnvironment, Function, FunctionId, ReturnValue};
+    use std::{collections::HashMap, io::Write};
     use tempfile::NamedTempFile;
+
+    macro_rules! null_logger {
+        () => {{
+            slog::Logger::root(slog::Discard, o!())
+        }};
+    }
 
     #[test]
     fn parse_required() {
@@ -503,5 +603,152 @@ mod tests {
         let r = download_code(&format!("file://{}", tf.path().display()));
         assert!(r.is_ok());
         assert_eq!(s.as_bytes(), r.unwrap().as_slice());
+    }
+
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[derive(Default, Debug)]
+    pub struct FakeExecutor {
+        function_name: RefCell<String>,
+        entrypoint: RefCell<String>,
+        code: RefCell<Vec<u8>>,
+        arguments: RefCell<Vec<FunctionArgument>>,
+    }
+
+    impl FunctionExecutor for Rc<FakeExecutor> {
+        fn execute(
+            &self,
+            function_name: &str,
+            entrypoint: &str,
+            code: &[u8],
+            arguments: &[FunctionArgument],
+        ) -> Result<ProtoResult, ExecutorError> {
+            *self.function_name.borrow_mut() = function_name.to_owned();
+            *self.entrypoint.borrow_mut() = entrypoint.to_owned();
+            *self.code.borrow_mut() = code.to_vec();
+            *self.arguments.borrow_mut() = arguments.to_vec();
+            Ok(ProtoResult::Ok(FunctionResult { values: Vec::new() }))
+        }
+    }
+
+    #[test]
+    fn test_nested_executor() {
+        let mut tf = NamedTempFile::new().unwrap();
+        let s = "some data 🖥️";
+        write!(tf, "{}", s).unwrap();
+        let code_url = format!("file://{}", tf.path().display());
+        let fake = Rc::new(FakeExecutor::default());
+        let nested = NestedExecutor::new(Box::new(fake.clone()), code_url);
+        let result = nested.execute("test", "entry", "vec".as_bytes(), &[]);
+        assert!(result.is_ok());
+        assert_eq!(s.as_bytes(), fake.code.clone().into_inner().as_slice());
+    }
+
+    #[test]
+    fn test_lookup_executor() {
+        // get wasm executor
+        let res = lookup_executor(null_logger!(), "wasm", &[]);
+        assert!(res.is_ok());
+
+        // get non existing executor
+        let res = lookup_executor(null_logger!(), "ur-sula!", &[]);
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            ExecutorError::ExecutorNotFound(..)
+        ));
+
+        // get function executor
+        let mut wasm_executor_tags = HashMap::new();
+        wasm_executor_tags.insert("type".to_owned(), "execution_environment".to_owned());
+        wasm_executor_tags.insert(
+            "execution_environment".to_owned(),
+            "oran-malifant".to_owned(),
+        );
+
+        let mut nested_executor_tags = HashMap::new();
+        nested_executor_tags.insert("type".to_owned(), "execution_environment".to_owned());
+        nested_executor_tags.insert(
+            "execution_environment".to_owned(),
+            "precious-granag".to_owned(),
+        );
+
+        let mut broken_executor_tags = HashMap::new();
+        broken_executor_tags.insert("type".to_owned(), "execution_environment".to_owned());
+        broken_executor_tags.insert(
+            "execution_environment".to_owned(),
+            "broken-chain-executor".to_owned(),
+        );
+
+        let function_executors = vec![
+            FunctionDescriptor {
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "wasm".to_owned(),
+                }),
+                entrypoint: "wasm.kexe".to_owned(),
+                code_url: "No real url".to_owned(),
+                function: Some(Function {
+                    id: Some(FunctionId {
+                        value: "".to_owned(),
+                    }),
+                    name: "oran-func".to_owned(),
+                    version: "malifant".to_owned(),
+                    tags: wasm_executor_tags,
+                    inputs: Vec::new(),
+                    outputs: Vec::new(),
+                }),
+            },
+            FunctionDescriptor {
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "oran-malifant".to_owned(),
+                }),
+                entrypoint: "oran hehurr".to_owned(),
+                code_url: "Nah".to_owned(),
+                function: Some(Function {
+                    id: Some(FunctionId {
+                        value: "nah".to_owned(),
+                    }),
+                    name: "precious-granag".to_owned(),
+                    version: "granag".to_owned(),
+                    tags: nested_executor_tags,
+                    inputs: Vec::new(),
+                    outputs: Vec::new(),
+                }),
+            },
+            FunctionDescriptor {
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "oran-elefant".to_owned(),
+                }),
+                entrypoint: "oran hehurr".to_owned(),
+                code_url: "Nah".to_owned(),
+                function: Some(Function {
+                    id: Some(FunctionId {
+                        value: "nah".to_owned(),
+                    }),
+                    name: "precious-granag".to_owned(),
+                    version: "granag".to_owned(),
+                    tags: broken_executor_tags,
+                    inputs: Vec::new(),
+                    outputs: Vec::new(),
+                }),
+            },
+        ];
+
+        let res = lookup_executor(null_logger!(), "oran-malifant", &function_executors);
+        assert!(res.is_ok());
+
+        // Get two stage executor
+        let res = lookup_executor(null_logger!(), "precious-granag", &function_executors);
+        assert!(res.is_ok());
+
+        // get function executor missing link
+        let res = lookup_executor(null_logger!(), "broken-chain-executor", &function_executors);
+        assert!(res.is_err());
+
+        assert!(matches!(
+            res.unwrap_err(),
+            ExecutorError::ExecutorNotFound(..)
+        ));
     }
 }

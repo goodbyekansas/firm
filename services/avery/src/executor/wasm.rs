@@ -20,7 +20,7 @@ use wasmer_wasi::{
     state::{HostFile, WasiState},
 };
 
-use crate::executor::FunctionExecutor;
+use crate::executor::{ExecutorError, FunctionExecutor};
 use crate::proto::{
     execute_response::Result as ProtoResult, ExecutionError, FunctionArgument, FunctionResult,
     ReturnValue, StartProcessRequest,
@@ -413,7 +413,6 @@ fn execute_function(
         .func(ENTRY)
         .map_err(|e| format!("Failed to resolve entrypoint {}: {}", ENTRY, e))?;
 
-    // TODO: capture STDOUT and store/log
     entry_function
         .call()
         .map_err(|e| format!("Failed to call entrypoint function {}: {}", ENTRY, e))
@@ -425,6 +424,7 @@ fn execute_function(
         .and_then(|reader| reader.iter().cloned().collect())
 }
 
+#[derive(Debug)]
 pub struct WasmExecutor {
     logger: Logger,
 }
@@ -442,8 +442,9 @@ impl FunctionExecutor for WasmExecutor {
         entrypoint: &str,
         code: &[u8],
         arguments: &[FunctionArgument],
-    ) -> ProtoResult {
-        execute_function(
+    ) -> std::result::Result<ProtoResult, ExecutorError> {
+        // TODO: separate host and guest errors
+        Ok(execute_function(
             self.logger.new(o!("function" => function_name.to_owned())),
             function_name,
             entrypoint,
@@ -453,7 +454,7 @@ impl FunctionExecutor for WasmExecutor {
         .map_or_else(
             |e| ProtoResult::Error(ExecutionError { msg: e }),
             |v| ProtoResult::Ok(FunctionResult { values: v }),
-        )
+        ))
     }
 }
 
@@ -500,6 +501,7 @@ mod tests {
         );
 
         assert!(res.is_ok());
+        assert!(res.unwrap().is_ok());
     }
 
     macro_rules! create_mem {
