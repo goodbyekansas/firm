@@ -2,6 +2,7 @@ mod sandbox;
 
 use std::{
     cell::Cell,
+    collections::HashMap,
     fs::OpenOptions,
     io,
     process::Command,
@@ -112,6 +113,24 @@ fn map_sandbox_dir(sandbox: &Sandbox, arg: &str) -> String {
         .into_owned()
 }
 
+fn get_args_and_envs(
+    request: &StartProcessRequest,
+    sandbox: &Sandbox,
+) -> (Vec<String>, HashMap<String, String>) {
+    (
+        request
+            .args
+            .iter()
+            .map(|arg| map_sandbox_dir(sandbox, arg))
+            .collect(),
+        request
+            .environment_variables
+            .iter()
+            .map(|(k, v)| (k.clone(), map_sandbox_dir(sandbox, v)))
+            .collect(),
+    )
+}
+
 fn start_process(
     logger: &Logger,
     sandbox: &Sandbox,
@@ -134,12 +153,7 @@ fn start_process(
             .map_err(WasmError::FailedToDecodeProtobuf)
         })?;
 
-    let args: Vec<String> = request
-        .args
-        .iter()
-        .map(|arg| map_sandbox_dir(sandbox, arg))
-        .collect();
-
+    let (args, env) = get_args_and_envs(&request, sandbox);
     info!(
         logger,
         "Launching host process {}, args: {:#?}", request.command, &args
@@ -147,6 +161,7 @@ fn start_process(
 
     Command::new(request.command)
         .args(args)
+        .envs(&env)
         .spawn()
         .map_err(|e| {
             println!("Failed to launch host process: {}", e);
@@ -182,12 +197,7 @@ fn run_process(
             .map_err(WasmError::FailedToDecodeProtobuf)
         })?;
 
-    let args: Vec<String> = request
-        .args
-        .iter()
-        .map(|arg| map_sandbox_dir(sandbox, arg))
-        .collect();
-
+    let (args, env) = get_args_and_envs(&request, sandbox);
     info!(
         logger,
         "Running host process {} (and waiting for exit), args: {:#?}", request.command, &args
@@ -195,6 +205,7 @@ fn run_process(
 
     Command::new(request.command)
         .args(args)
+        .envs(&env)
         .status()
         .map_err(|e| {
             println!("Failed to run host process: {}", e);
