@@ -172,6 +172,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
             .map(|f| tonic::Response::new(f.into()))
     }
 
+    // TODO : Murder this function pls
     async fn get_latest_version(
         &self,
         request: tonic::Request<GetLatestVersionRequest>,

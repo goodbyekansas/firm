@@ -111,7 +111,8 @@ message FunctionInput {
   string name = 1;
   bool required = 2;
   ArgumentType type = 3;
-  string defaultValue = 4;
+  string default_value = 4;
+  bool from_execution_environment = 5;
 }
 
 message FunctionOutput {

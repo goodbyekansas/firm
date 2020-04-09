@@ -53,12 +53,14 @@ macro_rules! functions_service_with_functions {
                         required: true,
                         r#type: ArgumentType::String as i32,
                         default_value: String::new(),
+                        from_execution_environment: false,
                     },
                     FunctionInput {
                         name: "count".to_string(),
                         required: false,
                         r#type: ArgumentType::Int as i32,
                         default_value: 1.to_string(),
+                        from_execution_environment: false,
                     },
                 ],
                 outputs: vec![FunctionOutput {
@@ -184,12 +186,14 @@ fn test_execute() {
                 required: true,
                 r#type: ArgumentType::String as i32,
                 default_value: String::new(),
+                from_execution_environment: false,
             },
             FunctionInput {
                 name: "count".to_string(),
                 required: false,
                 r#type: ArgumentType::Int as i32,
                 default_value: 1.to_string(),
+                from_execution_environment: false,
             },
         ],
         outputs: vec![FunctionOutput {
@@ -239,4 +243,102 @@ fn test_execute() {
         arguments: incorrect_args,
     })));
     assert!(r.is_err());
+}
+
+#[test]
+fn test_execution_environment_inputs() {
+    let mut tags = HashMap::new();
+    tags.insert("type".to_owned(), "execution-environment".to_owned());
+    tags.insert("execution-environment".to_owned(), "kalle-bula".to_owned());
+    let svc = functions_service_with_specified_functions!(vec![
+        RegisterRequest {
+            name: "kalle-bula-execution-environment".to_owned(),
+            version: "0.1.0".to_owned(),
+            tags,
+            inputs: vec![
+                FunctionInput {
+                    name: "say".to_string(),
+                    required: true,
+                    r#type: ArgumentType::String as i32,
+                    default_value: String::new(),
+                    from_execution_environment: false,
+                },
+                FunctionInput {
+                    name: "count".to_string(),
+                    required: false,
+                    r#type: ArgumentType::Int as i32,
+                    default_value: 1.to_string(),
+                    from_execution_environment: false,
+                },
+            ],
+            outputs: vec![FunctionOutput {
+                name: "feff".to_string(),
+                r#type: ArgumentType::String as i32,
+            }],
+            code: vec![],
+            entrypoint: "kanske".to_owned(),
+            execution_environment: Some(ExecutionEnvironment {
+                name: "wasm".to_owned(),
+            }),
+        },
+        RegisterRequest {
+            name: "jockes-dank-method".to_owned(),
+            version: "0.1.0".to_owned(),
+            tags: HashMap::new(),
+            inputs: vec![FunctionInput {
+                name: "jockes-arg".to_string(),
+                required: true,
+                r#type: ArgumentType::String as i32,
+                default_value: String::new(),
+                from_execution_environment: false,
+            },],
+            outputs: vec![FunctionOutput {
+                name: "hass_string".to_string(),
+                r#type: ArgumentType::String as i32,
+            }],
+            code: vec![],
+            entrypoint: "kanske".to_owned(),
+            execution_environment: Some(ExecutionEnvironment {
+                name: "kalle-bula".to_owned(),
+            }),
+        }
+    ]);
+
+    let list_request = futures::executor::block_on(svc.list(tonic::Request::new(ListRequest {
+        name_filter: "jockes-dank-method".to_owned(),
+        tags_filter: HashMap::new(),
+        offset: 0,
+        limit: 1,
+        exact_name_match: false,
+        version_requirement: None,
+        order_direction: OrderingDirection::Descending as i32,
+        order_by: OrderingKey::Name as i32,
+    })));
+
+    assert!(list_request.is_ok());
+    let res = list_request.unwrap().into_inner();
+    let function = res.functions.first().unwrap();
+    assert_eq!(1, function.outputs.len());
+    assert_eq!("hass_string", &function.outputs.first().unwrap().name);
+    assert_eq!(3, function.inputs.len());
+    assert_eq!(
+        1,
+        function
+            .inputs
+            .iter()
+            .filter(|i| !i.from_execution_environment)
+            .collect::<Vec<_>>()
+            .len()
+    );
+    assert_eq!(
+        2,
+        function
+            .inputs
+            .iter()
+            .filter(|i| i.from_execution_environment)
+            .collect::<Vec<_>>()
+            .len()
+    );
+
+    // TODO: Add test for get instead of list
 }
