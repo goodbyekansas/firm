@@ -147,7 +147,7 @@ impl FunctionsServiceTrait for FunctionsService {
 
         // lookup executor and run
         let mut tags = HashMap::new();
-        tags.insert("type".to_owned(), "execution_environment".to_owned());
+        tags.insert("type".to_owned(), "execution-environment".to_owned());
         // TODO: this needs to be done on demand which is slightly more complicated
         // but prob has nice perf benefits
         let available_executor_functions = self

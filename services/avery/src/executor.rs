@@ -91,7 +91,7 @@ pub fn lookup_executor(
                     e.function.as_ref().map_or(false, |f| {
                         f.tags
                             .iter()
-                            .any(|(k, v)| k.as_str() == "execution_environment" && v.as_str() == ee)
+                            .any(|(k, v)| k.as_str() == "execution-environment" && v.as_str() == ee)
                     })
                 })
                 .collect();
