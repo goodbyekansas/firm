@@ -9,11 +9,11 @@ let
       builder = builtins.toFile "builder.sh" ''
         source $stdenv/setup
         mkdir -p $out
-        $lomax/bin/lomax --address ${endpoint} --port ${builtins.toString port} register $inputPackage/bin/${package.name}.wasm $inputPackage/manifest.toml 2>&1 | tee $out/command-output
+        $lomax/bin/lomax --address ${endpoint} --port ${builtins.toString port} register $inputPackage/${package.code} $inputPackage/manifest.toml 2>&1 | tee $out/command-output
       '';
     };
   };
-  mkFunction = { name, package, manifest }:
+  mkFunction = { name, package, manifest, code }:
     let
       packageWithManifest = package.overrideAttrs (
         oldAttrs: {
@@ -21,6 +21,7 @@ let
             ${oldAttrs.installPhase}
             cp ${manifest } $out/manifest.toml
           '';
+          inherit code;
         }
       );
     in
@@ -61,7 +62,7 @@ base.extend.mkExtension {
             }
           );
         in
-          mkFunction { inherit manifest name; package = newPackage; };
+          mkFunction { inherit manifest name; package = newPackage; code = "bin/${newPackage.name}.wasm"; };
     };
   };
 }
