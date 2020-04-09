@@ -661,23 +661,23 @@ mod tests {
 
         // get function executor
         let mut wasm_executor_tags = HashMap::new();
-        wasm_executor_tags.insert("type".to_owned(), "execution_environment".to_owned());
+        wasm_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
         wasm_executor_tags.insert(
-            "execution_environment".to_owned(),
+            "execution-environment".to_owned(),
             "oran-malifant".to_owned(),
         );
 
         let mut nested_executor_tags = HashMap::new();
-        nested_executor_tags.insert("type".to_owned(), "execution_environment".to_owned());
+        nested_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
         nested_executor_tags.insert(
-            "execution_environment".to_owned(),
+            "execution-environment".to_owned(),
             "precious-granag".to_owned(),
         );
 
         let mut broken_executor_tags = HashMap::new();
-        broken_executor_tags.insert("type".to_owned(), "execution_environment".to_owned());
+        broken_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
         broken_executor_tags.insert(
-            "execution_environment".to_owned(),
+            "execution-environment".to_owned(),
             "broken-chain-executor".to_owned(),
         );
 
