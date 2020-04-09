@@ -27,12 +27,14 @@ macro_rules! register_request {
                     required: true,
                     r#type: ArgumentType::String as i32,
                     default_value: String::new(),
+                    from_execution_environment: false,
                 },
                 FunctionInput {
                     name: "count".to_string(),
                     required: false,
                     r#type: ArgumentType::Int as i32,
                     default_value: 1.to_string(),
+                    from_execution_environment: false,
                 },
             ],
             outputs: vec![FunctionOutput {
@@ -98,12 +100,14 @@ macro_rules! register_request_with_tags {
                     required: true,
                     r#type: ArgumentType::String as i32,
                     default_value: String::new(),
+                    from_execution_environment: false,
                 },
                 FunctionInput {
                     name: "count".to_string(),
                     required: false,
                     r#type: ArgumentType::Int as i32,
                     default_value: 1.to_string(),
+                    from_execution_environment: false,
                 },
             ],
             outputs: vec![FunctionOutput {

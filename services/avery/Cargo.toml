@@ -24,9 +24,8 @@ url = "2"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 wasmer-runtime = "0.16"
 wasmer-wasi = "0.16"
+futures = "0.3"
 
 [build-dependencies]
 tonic-build = "0.1"
 
-[dev-dependencies]
-futures = "0.3" # used in tests

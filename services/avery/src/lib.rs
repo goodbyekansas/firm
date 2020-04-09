@@ -10,15 +10,18 @@ pub mod registry;
 
 use std::{collections::HashMap, sync::Arc};
 
+use futures::future::join_all;
 use slog::{o, Logger};
 
 // crate / internal includes
-use executor::{download_code, lookup_executor, validate_args, validate_results};
+use executor::{
+    download_code, get_execution_env_inputs, lookup_executor, validate_args, validate_results,
+};
 use proto::functions_registry_server::FunctionsRegistry;
 use proto::functions_server::Functions as FunctionsServiceTrait;
 use proto::{
     execute_response::Result as ProtoResult, ExecuteRequest, ExecuteResponse, Function, FunctionId,
-    GetLatestVersionRequest, ListRequest, ListResponse, OrderingDirection, OrderingKey,
+    GetLatestVersionRequest, ListRequest, ListResponse,
 };
 
 // define the FunctionsService struct
@@ -45,18 +48,39 @@ impl FunctionsServiceTrait for FunctionsService {
         &self,
         request: tonic::Request<ListRequest>,
     ) -> Result<tonic::Response<ListResponse>, tonic::Status> {
-        let payload = self
-            .functions_register
-            .list(tonic::Request::new(request.into_inner()))
-            .await?
-            .into_inner();
-        Ok(tonic::Response::new(ListResponse {
-            functions: payload
+        let functions = join_all(
+            self.functions_register
+                .list(tonic::Request::new(request.into_inner()))
+                .await?
+                .into_inner()
                 .functions
                 .iter()
-                .filter_map(|fd| fd.function.clone())
-                .collect(),
-        }))
+                .filter_map(|fd| {
+                    let ee = fd.execution_environment.clone();
+                    fd.function.clone().map(|mut f| async {
+                        if let Ok(mut additional_inputs) = get_execution_env_inputs(
+                            &self.functions_register,
+                            &ee.map(|ee| ee.name.clone()).unwrap_or_default(),
+                        )
+                        .await
+                        .map_err(|e| {
+                            tonic::Status::new(
+                                tonic::Code::Internal,
+                                format!(
+                                    "Failed to resolve inputs for execution environment: {}",
+                                    e
+                                ),
+                            )
+                        }) {
+                            f.inputs.append(&mut additional_inputs);
+                        }
+                        f
+                    })
+                }),
+        )
+        .await;
+
+        Ok(tonic::Response::new(ListResponse { functions }))
     }
 
     async fn get(
@@ -148,30 +172,12 @@ impl FunctionsServiceTrait for FunctionsService {
         // lookup executor and run
         let mut tags = HashMap::new();
         tags.insert("type".to_owned(), "execution-environment".to_owned());
-        // TODO: this needs to be done on demand which is slightly more complicated
-        // but prob has nice perf benefits
-        let available_executor_functions = self
-            .functions_register
-            .list(tonic::Request::new(ListRequest {
-                name_filter: "".to_owned(),
-                tags_filter: tags,
-                offset: 0,
-                limit: 100,
-                exact_name_match: false,
-                version_requirement: None,
-                order_direction: OrderingDirection::Ascending as i32,
-                order_by: OrderingKey::Name as i32,
-            }))
-            .await?;
-
         lookup_executor(
             self.log.new(o!()),
             &execution_environment.name,
-            available_executor_functions
-                .into_inner()
-                .functions
-                .as_slice(),
+            &self.functions_register,
         )
+        .await
         .map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
