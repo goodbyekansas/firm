@@ -60,7 +60,7 @@ impl FunctionsServiceTrait for FunctionsService {
                     fd.function.clone().map(|mut f| async {
                         if let Ok(mut additional_inputs) = get_execution_env_inputs(
                             &self.functions_register,
-                            &ee.map(|ee| ee.name.clone()).unwrap_or_default(),
+                            &ee.map(|ee| ee.name).unwrap_or_default(),
                         )
                         .await
                         .map_err(|e| {

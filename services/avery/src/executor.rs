@@ -1,8 +1,8 @@
 mod wasm;
 
 use std::{
-    collections::HashMap,
-    fmt::{self, Debug},
+    collections::{HashMap, HashSet},
+    fmt::{self, Debug, Display},
     fs, str,
 };
 
@@ -31,22 +31,28 @@ pub trait FunctionExecutor: Debug {
 }
 
 #[derive(Debug)]
-pub struct NestedExecutor {
-    inner: Box<dyn FunctionExecutor>,
-    code_url: String,
+pub struct FunctionAdapter {
+    executor: Box<dyn FunctionExecutor>,
+    function_descriptor: FunctionDescriptor,
+    logger: Logger,
 }
 
 /// Adapter for functions to act as executors
-impl NestedExecutor {
-    pub fn new<S: AsRef<str>>(inner: Box<dyn FunctionExecutor>, code_url: S) -> Self {
+impl FunctionAdapter {
+    pub fn new(
+        executor: Box<dyn FunctionExecutor>,
+        function_descriptor: FunctionDescriptor,
+        logger: Logger,
+    ) -> Self {
         Self {
-            inner,
-            code_url: code_url.as_ref().to_owned(),
+            executor,
+            function_descriptor,
+            logger,
         }
     }
 }
 
-impl FunctionExecutor for NestedExecutor {
+impl FunctionExecutor for FunctionAdapter {
     fn execute(
         &self,
         function_name: &str,
@@ -69,9 +75,9 @@ impl FunctionExecutor for NestedExecutor {
             value: entrypoint.as_bytes().to_vec(),
         });
 
-        let inner_code = download_code(&self.code_url)?;
+        let inner_code = download_code(&self.function_descriptor.code_url)?;
 
-        self.inner
+        self.executor
             .execute(function_name, entrypoint, &inner_code, &nest_arguments)
     }
 }
@@ -152,42 +158,85 @@ pub fn get_execution_env_inputs<'a>(
 /// Lookup an executor for the given `name`
 ///
 /// If an executor is not supported, an error is returned
-pub fn lookup_executor<'a>(
+pub async fn lookup_executor<'a>(
     logger: Logger,
     name: &'a str,
     registry: &'a dyn FunctionsRegistry,
-) -> BoxFuture<'a, Result<Box<dyn FunctionExecutor>, ExecutorError>> {
-    async move {
-        let executor: Result<Box<dyn FunctionExecutor>, ExecutorError> = match name {
-            "wasm" => Ok(Box::new(WasmExecutor::new(
-                logger.new(o!("executor" => "wasm")),
-            ))),
+) -> Result<Box<dyn FunctionExecutor>, ExecutorError> {
+    let mut exec_env = name.to_owned();
+    let mut function_descriptors = vec![];
+    let mut ids = HashSet::new();
+
+    loop {
+        match exec_env.as_str() {
+            "wasm" => break,
             ee => {
                 let function_descriptor =
                     get_function_with_execution_environment(registry, ee, None)
                         .await
                         .ok_or_else(|| ExecutorError::ExecutorNotFound(ee.to_owned()))?;
 
-                let execution_environment = function_descriptor
+                exec_env = function_descriptor
                     .execution_environment
                     .as_ref()
-                    .ok_or_else(|| ExecutorError::MissingExecutionEnvironment("".to_owned()))?;
+                    .ok_or_else(|| ExecutorError::MissingExecutionEnvironment("".to_owned()))?
+                    .name
+                    .clone();
 
-                Ok(Box::new(NestedExecutor::new(
-                    lookup_executor(
-                        logger.new(o!("executor" => ee.to_owned())),
-                        &execution_environment.name,
-                        registry,
-                    )
-                    .await?,
-                    function_descriptor.code_url.clone(),
-                )))
+                function_descriptors.push((
+                    function_descriptor.clone(),
+                    function_descriptors
+                        .last()
+                        .map(|(_fd, logger)| logger)
+                        .unwrap_or(&logger)
+                        .new(o!("executor" => exec_env.clone())),
+                ));
+
+                if !ids.insert(
+                    function_descriptor
+                        .function
+                        .and_then(|f| f.id)
+                        .map(|id| id.value)
+                        .unwrap_or_else(|| "invalid-function-id".to_owned()), // This should never happen lol
+                ) {
+                    return Err(ExecutorError::ExecutorDependencyCycle(DependencyCycle {
+                        dependencies: function_descriptors
+                            .iter()
+                            .map(|(fd, _log)| {
+                                (
+                                    fd.function
+                                        .as_ref()
+                                        .map(|f| f.name.clone())
+                                        .unwrap_or_else(|| "invalid function".to_owned()),
+                                    fd.execution_environment
+                                        .as_ref()
+                                        .map(|ee| ee.name.clone())
+                                        .unwrap_or_else(|| {
+                                            "invalid execution environment".to_owned()
+                                        }),
+                                )
+                            })
+                            .collect(),
+                    }));
+                }
             }
-        };
-
-        executor
+        }
     }
-    .boxed()
+
+    function_descriptors.reverse();
+    let executor = Box::new(WasmExecutor::new(
+        function_descriptors
+            .last()
+            .map(|(_fd, logger)| logger)
+            .unwrap_or(&logger)
+            .new(o!("executor" => "wasm")),
+    ));
+
+    Ok(function_descriptors
+        .into_iter()
+        .fold(executor, |prev_executor, (fd, fd_logger)| {
+            Box::new(FunctionAdapter::new(prev_executor, fd, fd_logger))
+        }))
 }
 
 /// Download function code from the given URL
@@ -367,10 +416,28 @@ impl fmt::Display for ArgumentType {
     }
 }
 
+#[derive(Debug)]
+pub struct DependencyCycle {
+    dependencies: Vec<(String, String)>,
+}
+
+impl Display for DependencyCycle {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.dependencies
+            .iter()
+            .map(|(fn_name, ee)| write!(f, "{} ({}) ➡️ ", fn_name, ee))
+            .collect::<fmt::Result>()?;
+        write!(f, "💥")
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum ExecutorError {
     #[error("Unsupported code transport mechanism: \"{0}\"")]
     UnsupportedTransport(String),
+
+    #[error("Cyclic depencency detected for execution environments: \"{0}\"")]
+    ExecutorDependencyCycle(DependencyCycle),
 
     #[error("Invalid code url: {0}")]
     InvalidCodeUrl(String),
@@ -722,9 +789,15 @@ mod tests {
         let s = "some data 🖥️";
         write!(tf, "{}", s).unwrap();
         let fake = Rc::new(FakeExecutor::default());
-        let nested = NestedExecutor::new(
+        let nested = FunctionAdapter::new(
             Box::new(fake.clone()),
-            format!("file://{}", tf.path().display()),
+            FunctionDescriptor {
+                execution_environment: None,
+                entrypoint: "some entry".to_owned(),
+                code_url: format!("file://{}", tf.path().display()),
+                function: None,
+            },
+            null_logger!(),
         );
         let args = vec![FunctionArgument {
             name: "test-arg".to_owned(),
@@ -843,6 +916,85 @@ mod tests {
         assert!(matches!(
             res.unwrap_err(),
             ExecutorError::ExecutorNotFound(..)
+        ));
+    }
+
+    #[test]
+    fn test_cyclic_dependency_check() {
+        let fr = registry!();
+        let res = futures::executor::block_on(lookup_executor(null_logger!(), "wasm", &fr));
+        assert!(res.is_ok());
+
+        // get non existing executor
+        let res = futures::executor::block_on(lookup_executor(null_logger!(), "ur-sula!", &fr));
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            ExecutorError::ExecutorNotFound(..)
+        ));
+
+        // get function executor
+        let mut wasm_executor_tags = HashMap::new();
+        wasm_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
+        wasm_executor_tags.insert("execution-environment".to_owned(), "aa-exec".to_owned());
+
+        let mut nested_executor_tags = HashMap::new();
+        nested_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
+        nested_executor_tags.insert("execution-environment".to_owned(), "bb-exec".to_owned());
+
+        let mut broken_executor_tags = HashMap::new();
+        broken_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
+        broken_executor_tags.insert("execution-environment".to_owned(), "cc-exec".to_owned());
+
+        vec![
+            RegisterRequest {
+                name: "aa-func".to_owned(),
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "bb-exec".to_owned(),
+                }),
+                entrypoint: "wasm.kexe".to_owned(),
+                code: vec![],
+                version: "0.1.1".to_owned(),
+                tags: wasm_executor_tags,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+            },
+            RegisterRequest {
+                name: "bb-func".to_owned(),
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "cc-exec".to_owned(),
+                }),
+                entrypoint: "oran hehurr".to_owned(),
+                code: vec![],
+                version: "8.1.5".to_owned(),
+                tags: nested_executor_tags,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+            },
+            RegisterRequest {
+                name: "cc-func".to_owned(),
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "aa-exec".to_owned(),
+                }),
+                entrypoint: "an hehurr".to_owned(),
+                code: vec![],
+                version: "3.2.2".to_owned(),
+                tags: broken_executor_tags,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+            },
+        ]
+        .into_iter()
+        .for_each(|rr| {
+            futures::executor::block_on(fr.register(tonic::Request::new(rr)))
+                .map_or_else(|e| panic!(e.to_string()), |_| ())
+        });
+
+        let res = futures::executor::block_on(lookup_executor(null_logger!(), "aa-exec", &fr));
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            ExecutorError::ExecutorDependencyCycle(..)
         ));
     }
 }

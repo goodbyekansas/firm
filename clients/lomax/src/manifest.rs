@@ -110,6 +110,7 @@ impl From<&FunctionManifest> for RegisterRequest {
                     required: input.required,
                     r#type: ArgumentType::from(&input.r#type) as i32,
                     default_value: input.default_value.clone(),
+                    from_execution_environment: false, // This is weird. This should only be set from avery
                 })
                 .collect(),
             outputs: fm
