@@ -10,7 +10,7 @@ pub mod registry;
 
 use std::{collections::HashMap, sync::Arc};
 
-use futures::future::join_all;
+use futures::future::{join_all, OptionFuture};
 use slog::{o, Logger};
 
 // crate / internal includes
@@ -59,6 +59,7 @@ impl FunctionsServiceTrait for FunctionsService {
                     let ee = fd.execution_environment.clone();
                     fd.function.clone().map(|mut f| async {
                         if let Ok(mut additional_inputs) = get_execution_env_inputs(
+                            self.log.new(o!()),
                             &self.functions_register,
                             &ee.map(|ee| ee.name).unwrap_or_default(),
                         )
@@ -92,15 +93,31 @@ impl FunctionsServiceTrait for FunctionsService {
             .get(tonic::Request::new(request.into_inner()))
             .await?
             .into_inner();
-        function_descriptor
-            .function
-            .map(tonic::Response::new)
-            .ok_or_else(|| {
+        let ee = function_descriptor.execution_environment.clone();
+        OptionFuture::from(function_descriptor.function.map(|mut f| async {
+            if let Ok(mut additional_inputs) = get_execution_env_inputs(
+                self.log.new(o!()),
+                &self.functions_register,
+                &ee.map(|ee| ee.name).unwrap_or_default(),
+            )
+            .await
+            .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Internal,
-                    "Function descriptor did not contain any function.",
+                    format!("Failed to resolve inputs for execution environment: {}", e),
                 )
-            })
+            }) {
+                f.inputs.append(&mut additional_inputs);
+            }
+            tonic::Response::new(f)
+        }))
+        .await
+        .ok_or_else(|| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                "Function descriptor did not contain any function.",
+            )
+        })
     }
 
     async fn get_latest_version(
