@@ -27,8 +27,7 @@ use proto::functions_client::FunctionsClient;
 use proto::{
     execute_response::Result as ProtoResult, ArgumentType, ExecuteRequest, ExecuteResponse,
     Function, FunctionArgument, FunctionId, FunctionInput, FunctionOutput, FunctionResult,
-    GetLatestVersionRequest, ListRequest, OrderingDirection, OrderingKey, ReturnValue,
-    VersionRequirement,
+    ListRequest, OrderingDirection, OrderingKey, ReturnValue, VersionRequirement,
 };
 
 /// Bendini is a command line client to Avery, the function executor service of the GBK pipeline
@@ -409,9 +408,9 @@ fn run() -> Result<(), BendiniError> {
                 Err(_) => {
                     let split = function_id.splitn(2, ':').collect::<Vec<&str>>();
                     // Not UUID assuming it's a name:version
-                    let (function_name, function_version): (&str, Option<&str>) = match &split[..] {
-                        [name, version] => Ok((*name, Some(*version))),
-                        [name] => Ok((*name, None)),
+                    let (function_name, function_version): (&str, &str) = match &split[..] {
+                        [name, version] => Ok((*name, *version)),
+                        [name] => Ok((*name, "*")),
                         _ => {
                             println!("Invalid function name and/or version specifier.");
                             Err(4)
@@ -419,19 +418,33 @@ fn run() -> Result<(), BendiniError> {
                     }?;
 
                     Ok(basic_rt
-                        .block_on(client.get_latest_version(Request::new(
-                            GetLatestVersionRequest {
-                                name: function_name.to_owned(),
-                                version_requirement: Some(VersionRequirement {
-                                    expression: function_version.unwrap_or_else(|| "*").to_owned(),
-                                }),
-                            },
-                        )))
+                        .block_on(client.list(Request::new(ListRequest {
+                            name_filter: function_name.to_owned(),
+                            tags_filter: HashMap::new(),
+                            offset: 0,
+                            limit: 1,
+                            exact_name_match: true,
+                            version_requirement: Some(VersionRequirement {
+                                expression: function_version.to_owned(),
+                            }),
+                            order_direction: OrderingDirection::Ascending as i32,
+                            order_by: OrderingKey::Name as i32,
+                        })))
                         .map_err(|e| {
                             println!("{}", e);
                             4
                         })?
-                        .into_inner())
+                        .into_inner()
+                        .functions
+                        .first()
+                        .ok_or_else(|| {
+                            println!(
+                                "Could not find a function with name: \"{}\" and version: \"{}\"",
+                                function_name, function_version
+                            );
+                            4
+                        })?
+                        .clone())
                 }
                 Ok(func_id) => Ok(basic_rt
                     .block_on(client.get(Request::new(FunctionId {

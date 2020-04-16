@@ -14,8 +14,8 @@ use uuid::Uuid;
 use crate::proto::functions_registry_server::FunctionsRegistry;
 use crate::proto::{
     ExecutionEnvironment, Function as ProtoFunction, FunctionDescriptor, FunctionId, FunctionInput,
-    FunctionOutput, GetLatestVersionRequest, ListRequest, OrderingDirection, OrderingKey,
-    RegisterRequest, RegistryListResponse, VersionRequirement,
+    FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
+    RegistryListResponse,
 };
 
 #[derive(Debug, Default)]
@@ -172,35 +172,6 @@ impl FunctionsRegistry for FunctionsRegistryService {
             .map(|f| tonic::Response::new(f.into()))
     }
 
-    // TODO : Murder this function pls
-    async fn get_latest_version(
-        &self,
-        request: tonic::Request<GetLatestVersionRequest>,
-    ) -> Result<tonic::Response<FunctionDescriptor>, tonic::Status> {
-        let payload = request.into_inner();
-        let filtered_functions = self
-            .list(tonic::Request::new(ListRequest {
-                name_filter: payload.name.clone(),
-                version_requirement: payload.version_requirement.clone(),
-                order_direction: OrderingDirection::Descending as i32,
-                order_by: OrderingKey::Name as i32,
-                exact_name_match: true,
-                offset: 0,
-                limit: 1,
-                tags_filter: HashMap::new(),
-            }))
-            .await?
-            .into_inner()
-            .functions;
-        let version_requirement = payload.version_requirement.clone();
-        filtered_functions.first().map(|f| tonic::Response::new(f.clone())).ok_or_else(|| {
-            tonic::Status::new(
-                tonic::Code::NotFound,
-                format!("Found no function with name \"{}\", matching the version requirements \"{}\"", payload.name, version_requirement.unwrap_or_else(|| VersionRequirement{expression: "".to_owned()}).expression)
-                )
-        })
-    }
-
     async fn register(
         &self,
         register_request: tonic::Request<RegisterRequest>,
@@ -324,13 +295,6 @@ impl FunctionsRegistry for Arc<FunctionsRegistryService> {
         request: tonic::Request<FunctionId>,
     ) -> Result<tonic::Response<FunctionDescriptor>, tonic::Status> {
         (**self).get(request).await
-    }
-
-    async fn get_latest_version(
-        &self,
-        request: tonic::Request<GetLatestVersionRequest>,
-    ) -> Result<tonic::Response<FunctionDescriptor>, tonic::Status> {
-        (**self).get_latest_version(request).await
     }
 
     async fn register(
