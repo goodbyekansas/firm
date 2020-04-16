@@ -4,8 +4,7 @@ use futures;
 
 use avery::proto::{
     functions_registry_server::FunctionsRegistry, ArgumentType, ExecutionEnvironment, FunctionId,
-    FunctionInput, FunctionOutput, GetLatestVersionRequest, ListRequest, OrderingDirection,
-    OrderingKey, RegisterRequest, VersionRequirement,
+    FunctionInput, FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
 };
 use avery::registry::FunctionsRegistryService;
 
@@ -496,45 +495,6 @@ fn test_register_function() {
         })
     )));
     assert!(register_result.is_ok());
-}
-
-#[test]
-fn test_list_versions() {
-    let fr = registry!();
-
-    futures::executor::block_on(fr.register(register_request_with_version!("my-name", "1.2.3")))
-        .unwrap();
-    futures::executor::block_on(fr.register(register_request_with_version!("my-name", "2.0.3")))
-        .unwrap();
-    futures::executor::block_on(fr.register(register_request_with_version!("my-name", "8.1.4")))
-        .unwrap();
-
-    // since these are prereleases, they will only match exact version requirements
-    let latest_result = futures::executor::block_on(fr.get_latest_version(tonic::Request::new(
-        GetLatestVersionRequest {
-            name: "my-name".to_owned(),
-            version_requirement: Some(VersionRequirement {
-                expression: "2.0.3-dev".to_owned(),
-            }),
-        },
-    )));
-
-    assert!(latest_result.is_ok());
-
-    let latest_result = futures::executor::block_on(fr.get_latest_version(tonic::Request::new(
-        GetLatestVersionRequest {
-            name: "my-name".to_owned(),
-            version_requirement: Some(VersionRequirement {
-                expression: "2.0.3".to_owned(),
-            }),
-        },
-    )));
-
-    assert!(latest_result.is_err());
-    assert!(matches!(
-        latest_result.unwrap_err().code(),
-        tonic::Code::NotFound
-    ));
 }
 
 #[test]

@@ -7,14 +7,12 @@ package functions;
 service FunctionsRegistry {
   rpc List (ListRequest) returns (RegistryListResponse);
   rpc Get (FunctionId) returns (FunctionDescriptor);
-  rpc GetLatestVersion (GetLatestVersionRequest) returns (FunctionDescriptor);
   rpc Register (RegisterRequest) returns (FunctionId);
 }
 
 service Functions {
   rpc List (ListRequest) returns (ListResponse);
   rpc Get (FunctionId) returns (Function);
-  rpc GetLatestVersion (GetLatestVersionRequest) returns (Function);
   rpc Execute (ExecuteRequest) returns (ExecuteResponse);
 }
 
