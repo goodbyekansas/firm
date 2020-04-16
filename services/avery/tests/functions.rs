@@ -340,5 +340,31 @@ fn test_execution_environment_inputs() {
             .len()
     );
 
-    // TODO: Add test for get instead of list
+    // get should also give us execution environment inputs
+    let fn_id = function.id.clone().unwrap().value;
+    let res =
+        futures::executor::block_on(svc.get(tonic::Request::new(FunctionId { value: fn_id })));
+    assert!(res.is_ok());
+    let function = res.unwrap().into_inner();
+    assert_eq!(1, function.outputs.len());
+    assert_eq!("hass_string", &function.outputs.first().unwrap().name);
+    assert_eq!(3, function.inputs.len());
+    assert_eq!(
+        1,
+        function
+            .inputs
+            .iter()
+            .filter(|i| !i.from_execution_environment)
+            .collect::<Vec<_>>()
+            .len()
+    );
+    assert_eq!(
+        2,
+        function
+            .inputs
+            .iter()
+            .filter(|i| i.from_execution_environment)
+            .collect::<Vec<_>>()
+            .len()
+    );
 }

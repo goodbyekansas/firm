@@ -6,7 +6,6 @@ use std::{
     fs, str,
 };
 
-use futures::future::{BoxFuture, FutureExt};
 use semver::VersionReq;
 use slog::{o, Logger};
 use thiserror::Error;
@@ -111,58 +110,11 @@ async fn get_function_with_execution_environment(
     result.functions.first().cloned()
 }
 
-pub fn get_execution_env_inputs<'a>(
-    registry: &'a dyn FunctionsRegistry,
-    name: &'a str,
-) -> BoxFuture<'a, Result<Vec<FunctionInput>, ExecutorError>> {
-    async move {
-        match name {
-            "wasm" => Ok(vec![]),
-            ee => {
-                let function_descriptor =
-                    get_function_with_execution_environment(registry, ee, None)
-                        .await
-                        .ok_or_else(|| ExecutorError::ExecutorNotFound(ee.to_owned()))?;
-
-                let function = function_descriptor.function.as_ref().ok_or_else(|| {
-                    ExecutorError::InvalidFunctionDescriptor(
-                        "Function descriptor has no function".to_owned(),
-                    )
-                })?;
-
-                let execution_environment = function_descriptor
-                    .execution_environment
-                    .as_ref()
-                    .ok_or_else(|| {
-                        ExecutorError::MissingExecutionEnvironment(function.name.clone())
-                    })?;
-
-                let mut inputs: Vec<FunctionInput> = function
-                    .inputs
-                    .iter()
-                    .map(|i| {
-                        let mut input = i.clone();
-                        input.from_execution_environment = true;
-                        input
-                    })
-                    .collect();
-                inputs
-                    .extend(get_execution_env_inputs(registry, &execution_environment.name).await?);
-                Ok(inputs)
-            }
-        }
-    }
-    .boxed()
-}
-
-/// Lookup an executor for the given `name`
-///
-/// If an executor is not supported, an error is returned
-pub async fn lookup_executor<'a>(
-    logger: Logger,
+async fn traverse_execution_environments<'a>(
+    logger: &'a Logger,
     name: &'a str,
     registry: &'a dyn FunctionsRegistry,
-) -> Result<Box<dyn FunctionExecutor>, ExecutorError> {
+) -> Result<Vec<(FunctionDescriptor, Logger)>, ExecutorError> {
     let mut exec_env = name.to_owned();
     let mut function_descriptors = vec![];
     let mut ids = HashSet::new();
@@ -188,7 +140,7 @@ pub async fn lookup_executor<'a>(
                     function_descriptors
                         .last()
                         .map(|(_fd, logger)| logger)
-                        .unwrap_or(&logger)
+                        .unwrap_or(logger)
                         .new(o!("executor" => exec_env.clone())),
                 ));
 
@@ -224,6 +176,38 @@ pub async fn lookup_executor<'a>(
     }
 
     function_descriptors.reverse();
+    Ok(function_descriptors)
+}
+
+pub async fn get_execution_env_inputs<'a>(
+    logger: Logger,
+    registry: &'a dyn FunctionsRegistry,
+    name: &'a str,
+) -> Result<Vec<FunctionInput>, ExecutorError> {
+    let function_descriptors = traverse_execution_environments(&logger, name, registry).await?;
+    Ok(function_descriptors
+        .into_iter()
+        .filter_map(|(fd, _logger)| fd.function.map(|f| f.inputs))
+        .flatten()
+        .map(|mut i| {
+            i.from_execution_environment = true;
+            i
+        })
+        .collect())
+}
+
+/// Lookup an executor for the given `name`
+///
+/// If an executor is not supported, an error is returned
+pub async fn lookup_executor<'a>(
+    logger: Logger,
+    name: &'a str,
+    registry: &'a dyn FunctionsRegistry,
+) -> Result<Box<dyn FunctionExecutor>, ExecutorError> {
+    let function_descriptors = traverse_execution_environments(&logger, name, registry).await?;
+
+    // TODO: now we are assuming that the stop condition for the above function
+    // was "wasm". This may not be true later
     let executor = Box::new(WasmExecutor::new(
         function_descriptors
             .last()
@@ -241,7 +225,7 @@ pub async fn lookup_executor<'a>(
 
 /// Download function code from the given URL
 ///
-/// TODO: This is a huge security hole and needs to be managed properly (gpg sign things?)
+/// TODO: This is a huge security hole ⛳️ and needs to be managed properly (gpg sign 🔏 things?)
 pub fn download_code(url: &str) -> Result<Vec<u8>, ExecutorError> {
     let url = Url::parse(url).map_err(|e| ExecutorError::InvalidCodeUrl(e.to_string()))?;
     match url.scheme() {
@@ -441,9 +425,6 @@ pub enum ExecutorError {
 
     #[error("Invalid code url: {0}")]
     InvalidCodeUrl(String),
-
-    #[error("Function descriptor for function is invalid: \"{0}\"")]
-    InvalidFunctionDescriptor(String),
 
     #[error("Failed to read code from {0}: {1}")]
     CodeReadError(String, String),
