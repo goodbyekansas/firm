@@ -60,13 +60,13 @@ macro_rules! host_call {
     };
 }
 
-pub fn start_host_process<S: AsRef<str>>(
-    name: &str,
-    args: &[S],
+pub fn start_host_process<S1: AsRef<str>, S2: AsRef<str>>(
+    name: S1,
+    args: &[S2],
     environment: &HashMap<String, String, RandomState>,
 ) -> Result<u64, Error> {
     let request = StartProcessRequest {
-        command: name.to_owned(),
+        command: name.as_ref().to_owned(),
         args: args.iter().map(|s| s.as_ref().to_owned()).collect(),
         environment_variables: environment.clone(),
     };
@@ -83,13 +83,13 @@ pub fn start_host_process<S: AsRef<str>>(
     .map(|_| pid)
 }
 
-pub fn run_host_process<S: AsRef<str>>(
-    name: &str,
-    args: &[S],
+pub fn run_host_process<S1: AsRef<str>, S2: AsRef<str>>(
+    name: S1,
+    args: &[S2],
     environment: &HashMap<String, String, RandomState>,
 ) -> Result<i32, Error> {
     let request = StartProcessRequest {
-        command: name.to_owned(),
+        command: name.as_ref().to_owned(),
         args: args.iter().map(|s| s.as_ref().to_owned()).collect(),
         environment_variables: environment.clone(),
     };
@@ -209,18 +209,18 @@ impl ToReturnValue for Vec<u8> {
     }
 }
 
-pub fn get_input<T: FromFunctionArgument>(key: &str) -> Result<T, Error> {
+pub fn get_input<S: AsRef<str>, T: FromFunctionArgument>(key: S) -> Result<T, Error> {
     let mut size: u64 = 0;
     host_call!(raw::get_input_len(
-        key.as_ptr(),
-        key.len(),
+        key.as_ref().as_ptr(),
+        key.as_ref().as_bytes().len(),
         &mut size as *mut u64
     ))?;
 
     let mut value_buffer = Vec::with_capacity(size as usize);
     host_call!(raw::get_input(
-        key.as_ptr(),
-        key.len(),
+        key.as_ref().as_ptr(),
+        key.as_ref().as_bytes().len(),
         value_buffer.as_mut_ptr(),
         size as usize,
     ))?;
@@ -232,13 +232,16 @@ pub fn get_input<T: FromFunctionArgument>(key: &str) -> Result<T, Error> {
         .and_then(|a| T::from_arg(a).ok_or_else(Error::ConversionError))
 }
 
-pub fn set_output<T: ToReturnValue>(name: &str, value: &T) -> Result<(), Error> {
-    let ret_value = value.to_return_value(name);
+pub fn set_output<S: AsRef<str>, T: ToReturnValue>(name: S, value: &T) -> Result<(), Error> {
+    let ret_value = value.to_return_value(name.as_ref());
     let mut value = Vec::with_capacity(ret_value.encoded_len());
     ret_value.encode(&mut value)?;
     host_call!(raw::set_output(value.as_mut_ptr(), value.len()))
 }
 
-pub fn set_error(msg: &str) -> Result<(), Error> {
-    host_call!(raw::set_error(msg.as_ptr(), msg.len()))
+pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
+    host_call!(raw::set_error(
+        msg.as_ref().as_ptr(),
+        msg.as_ref().as_bytes().len()
+    ))
 }
