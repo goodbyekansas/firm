@@ -110,6 +110,7 @@ dependencies = [
  "toml",
  "tonic",
  "tonic-build",
+ "typetag",
  "url",
  "uuid",
  "wasmer-runtime",
