@@ -6,7 +6,7 @@ use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
 use crate::proto::{FunctionArgument, ReturnValue};
 
-trait WasmPtrExt<'a> {
+pub trait WasmPtrExt<'a> {
     fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]>;
 }
 

@@ -1,5 +1,6 @@
 mod error;
 mod function;
+mod net;
 mod process;
 mod sandbox;
 
@@ -86,8 +87,6 @@ fn execute_function(
         .and_then(|state| state.build())
         .map_err(|e| format!("Failed to create wasi state: {:?}", e))?;
 
-    let mut import_object = generate_import_object_from_state(wasi_state, wasi_version);
-
     // inject gbk specific functions in the wasm state
     let a = arguments.to_vec();
     let a2 = arguments.to_vec();
@@ -95,6 +94,7 @@ fn execute_function(
     let results = Arc::new(RwLock::new(v));
     let res = Arc::clone(&results);
     let res2 = Arc::clone(&results);
+
     let start_process_logger = logger.new(o!("scope" => "start_process"));
     let run_process_logger = logger.new(o!("scope" => "run_process"));
     let gbk_imports = imports! {
@@ -110,9 +110,11 @@ fn execute_function(
             "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u64, Item>| {
                 function::get_input_len(ctx.memory(0), key, keylen, value, &a).to_error_code()
             }),
+
             "get_input" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u8, Array>, valuelen: u32| {
                 function::get_input(ctx.memory(0), key, keylen, value, valuelen, &a2).to_error_code()
             }),
+
             "set_output" => func!(move |ctx: &mut Ctx, val: WasmPtr<u8, Array>, vallen: u32| {
                 function::set_output(ctx.memory(0), val, vallen).and_then(|v| {
                     res.write().map(|mut writer| {
@@ -120,15 +122,28 @@ fn execute_function(
                     }).map_err(|e| {WasmError::Unknown(format!("{}", e))})
                 }).to_error_code()
             }),
-            "set_error" => func!(move |ctx: &mut Ctx, msg: WasmPtr<u8, Array>, msglen: u32 | {
+
+            "set_error" => func!(move |ctx: &mut Ctx, msg: WasmPtr<u8, Array>, msglen: u32| {
                 function::set_error(ctx.memory(0), msg, msglen).and_then(|v| {
                     res2.write().map(|mut writer| {
                         writer.push(Err(v));
                     }).map_err(|e| {WasmError::Unknown(format!("{}", e))})
                 }).to_error_code()
             }),
+
+            "get_socket_path_length" => func!(move |ctx: &mut Ctx, addr: WasmPtr<u8, Array>, addr_len: u32, path_len: WasmPtr<u64, Item>| {
+                net::get_socket_path_length(ctx.memory(0), addr, addr_len, path_len).to_error_code()
+            }),
+
+            "connect" => func!(move |ctx: &mut Ctx, addr: WasmPtr<u8, Array>, addr_len: u32, path: WasmPtr<u8, Array>, path_len: u32| {
+                let mem = ctx.memory(0).clone();
+                let state = unsafe { wasmer_wasi::state::get_wasi_state(ctx) };
+                net::connect(&state.fs, &mem, addr, addr_len, path, path_len).to_error_code()
+            }),
         },
     };
+
+    let mut import_object = generate_import_object_from_state(wasi_state, wasi_version);
     import_object.extend(gbk_imports);
 
     let instance = module
