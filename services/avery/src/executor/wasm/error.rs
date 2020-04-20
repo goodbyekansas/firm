@@ -27,6 +27,12 @@ pub enum WasmError {
 
     #[error("Failed to encode value from protobuf: {0}")]
     FailedToEncodeProtobuf(#[from] prost::EncodeError),
+
+    #[error("Failed to open file descriptor: {0}")]
+    FailedToOpenFile(String),
+
+    #[error("Failed to connect to address \"{0}\". IO Error: {1}")]
+    FailedToConnect(String, io::Error),
 }
 
 pub type WasiResult<T> = std::result::Result<T, WasmError>;
@@ -55,6 +61,8 @@ impl From<WasmError> for u32 {
             WasmError::FailedToFindKey(_) => 6,
             WasmError::FailedToEncodeProtobuf(_) => 7,
             WasmError::FailedToStartProcess(_) => 8,
+            WasmError::FailedToOpenFile(_) => 9,
+            WasmError::FailedToConnect(..) => 10,
         }
     }
 }

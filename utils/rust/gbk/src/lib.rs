@@ -1,3 +1,6 @@
+#![cfg_attr(feature = "net", feature(wasi_ext))]
+#![deny(warnings)]
+
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/functions.rs"));
 }
@@ -244,4 +247,56 @@ pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
         msg.as_ref().as_ptr(),
         msg.as_ref().as_bytes().len()
     ))
+}
+
+#[cfg(feature = "net")]
+pub mod net {
+
+    mod raw {
+        #[link(wasm_import_module = "gbk")]
+        extern "C" {
+            pub fn connect(addr_ptr: *const u8, addr_len: usize, file_descriptor: *mut u32) -> u32;
+        }
+    }
+
+    use std::{
+        fs::File,
+        io::{self, Read, Write},
+        os::wasi::io::FromRawFd,
+    };
+
+    use super::ToResult;
+
+    pub struct TcpConnection {
+        file: File,
+    }
+
+    impl Read for TcpConnection {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.file.read(buf)
+        }
+    }
+
+    impl Write for TcpConnection {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.file.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.file.flush()
+        }
+    }
+
+    pub fn connect<S: AsRef<str>>(address: S) -> Result<TcpConnection, super::Error> {
+        let mut file_descriptor: u32 = 0;
+        host_call!(raw::connect(
+            address.as_ref().as_ptr(),
+            address.as_ref().as_bytes().len(),
+            &mut file_descriptor as *mut u32
+        ))?;
+
+        Ok(TcpConnection {
+            file: unsafe { File::from_raw_fd(file_descriptor) },
+        })
+    }
 }

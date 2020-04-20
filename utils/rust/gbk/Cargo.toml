@@ -13,3 +13,5 @@ prost = "0.6"
 [build-dependencies]
 prost-build = "0.6"
 
+[features]
+net = []

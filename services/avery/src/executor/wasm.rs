@@ -131,14 +131,10 @@ fn execute_function(
                 }).to_error_code()
             }),
 
-            "get_socket_path_length" => func!(move |ctx: &mut Ctx, addr: WasmPtr<u8, Array>, addr_len: u32, path_len: WasmPtr<u64, Item>| {
-                net::get_socket_path_length(ctx.memory(0), addr, addr_len, path_len).to_error_code()
-            }),
-
-            "connect" => func!(move |ctx: &mut Ctx, addr: WasmPtr<u8, Array>, addr_len: u32, path: WasmPtr<u8, Array>, path_len: u32| {
+            "connect" => func!(move |ctx: &mut Ctx, addr: WasmPtr<u8, Array>, addr_len: u32, fd_out: WasmPtr<u32, Item>| {
                 let mem = ctx.memory(0).clone();
                 let state = unsafe { wasmer_wasi::state::get_wasi_state(ctx) };
-                net::connect(&state.fs, &mem, addr, addr_len, path, path_len).to_error_code()
+                net::connect(&mut state.fs, &mem, addr, addr_len, fd_out).to_error_code()
             }),
         },
     };

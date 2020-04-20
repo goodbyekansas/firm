@@ -4,12 +4,11 @@ use std::net::TcpStream;
 use serde::{de, Deserialize, Serialize};
 use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 use wasmer_wasi::{
-    state::{WasiFile, WasiFs, WasiFsError},
-    types::__wasi_filesize_t,
+    state::{WasiFile, WasiFs, WasiFsError, VIRTUAL_ROOT_FD},
+    types,
 };
 
 use super::error::{WasiResult, WasmError};
-use super::function::WasmPtrExt;
 
 #[derive(Debug, Serialize)]
 struct SocketFile {
@@ -24,7 +23,6 @@ impl SocketFile {
         Ok(SocketFile {
             address: address.as_ref().to_owned(),
             stream,
-
         })
     }
 }
@@ -134,7 +132,7 @@ impl WasiFile for SocketFile {
         0
     }
 
-    fn set_len(&mut self, _new_size: __wasi_filesize_t) -> Result<(), WasiFsError> {
+    fn set_len(&mut self, _new_size: types::__wasi_filesize_t) -> Result<(), WasiFsError> {
         Err(WasiFsError::PermissionDenied)
     }
 
@@ -163,49 +161,40 @@ impl WasiFile for SocketFile {
     }
 }
 
-fn get_file_path_from_address(address: &str) -> String {
-    format!("sockets/{}.sock", address)
-}
-
-pub fn get_socket_path_length(
+pub fn connect(
+    fs: &mut WasiFs,
     vm_memory: &Memory,
     addr: WasmPtr<u8, Array>,
     addr_len: u32,
-    path_len: WasmPtr<u64, Item>,
+    fd_out: WasmPtr<u32, Item>,
 ) -> WasiResult<()> {
     let address = addr
         .get_utf8_string(vm_memory, addr_len)
         .ok_or_else(|| WasmError::FailedToReadStringPointer("address".to_owned()))?;
+
+    let socket_file = SocketFile::new(address.to_owned())
+        .map_err(|e| WasmError::FailedToConnect(address.to_owned(), e))?;
+
+    let fd = fs
+        .open_file_at(
+            VIRTUAL_ROOT_FD,
+            Box::new(socket_file),
+            types::__WASI_O_CREAT, // open_flags
+            format!("{}.sock", address),
+            types::__WASI_RIGHT_FD_READ
+                | types::__WASI_RIGHT_FD_WRITE
+                | types::__WASI_RIGHT_FD_SEEK,
+            0, // rights_inheriting
+            0, // fd_flags
+        )
+        .map_err(|e| WasmError::FailedToOpenFile(format!("{:#?}", e)))?;
 
     unsafe {
-        path_len
+        fd_out
             .deref_mut(vm_memory)
             .ok_or_else(WasmError::FailedToDerefPointer)
-            .map(|c| c.set(get_file_path_from_address(address).as_bytes().len() as u64))
+            .map(|c| {
+                c.set(fd);
+            })
     }
-}
-
-pub fn connect(
-    fs: &WasiFs,
-    vm_memory: &Memory,
-    addr: WasmPtr<u8, Array>,
-    addr_len: u32,
-    path: WasmPtr<u8, Array>,
-    path_len: u32,
-) -> WasiResult<()> {
-    let address = addr
-        .get_utf8_string(vm_memory, addr_len)
-        .ok_or_else(|| WasmError::FailedToReadStringPointer("address".to_owned()))?;
-
-    let file_path = get_file_path_from_address(address);
-    let socketFile = SocketFile::new(address.to_owned());
-    fs.open_file_at(0,);
-
-    path.as_byte_array_mut(&vm_memory, path_len as usize)
-        .ok_or_else(|| {
-            WasmError::ConversionError(
-                "Failed to convert provided input buffer to mut byte array.".to_owned(),
-            )
-        })
-        .map(|buff| buff.copy_from_slice(&file_path.as_bytes()))
 }
