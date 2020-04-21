@@ -40,9 +40,23 @@ jobs:
       run: |
         mkdir -p ~/.config/nix
         echo "sandbox = false" > ~/.config/nix/nix.conf
+    - name: Create Cache Folder
+      run: |
+        sudo mkdir -p /var/cache/nedryland-rust
+        sudo chown $(id -un):nixbld /var/cache/nedryland-rust
+        sudo chmod g+rwx /var/cache/nedryland-rust
+    - name: Cache rust output
+      uses: actions/cache@v1
+      with:
+        path: /var/cache/nedryland-rust
+        key: rust-${{ runner.os }}-${{matrix.component}}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          rust-${{ runner.os }}-${{matrix.component}}-
+          rust-${{ runner.os }}-
     - name: Build, test and cache ${{ matrix.component }} package
       uses: cachix/cachix-action@v5
       with:
         name: firm
+        nixBuildArgs: --verbose --show-trace
         attributes: "${{ matrix.component }}.packageWithChecks"
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
