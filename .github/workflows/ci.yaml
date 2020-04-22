@@ -46,13 +46,12 @@ jobs:
         sudo chown $(id -un):nixbld /var/cache/nedryland-rust
         sudo chmod g+rwx /var/cache/nedryland-rust
     - name: Cache rust output
-      uses: actions/cache@v1
+      uses: actions/cache@v1.1.2
       with:
         path: /var/cache/nedryland-rust
-        key: rust-${{ runner.os }}-${{matrix.component}}-${{ hashFiles('**/Cargo.lock') }}
+        key: rust-v1-${{ runner.os }}-${{matrix.component}}-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          rust-${{ runner.os }}-${{matrix.component}}-
-          rust-${{ runner.os }}-
+          rust-v1-${{ runner.os }}-${{matrix.component}}-
     - name: Build, test and cache ${{ matrix.component }} package
       uses: cachix/cachix-action@v5
       with:
