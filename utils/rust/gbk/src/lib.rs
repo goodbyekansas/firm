@@ -133,6 +133,16 @@ impl ToReturnValue for &str {
     }
 }
 
+impl ToReturnValue for String {
+    fn to_return_value(&self, name: &str) -> ReturnValue {
+        ReturnValue {
+            name: name.to_owned(),
+            value: self.as_bytes().to_vec(),
+            r#type: ArgumentType::String as i32,
+        }
+    }
+}
+
 macro_rules! bytes_as_64_bit_array {
     ($bytes: expr) => {{
         [
