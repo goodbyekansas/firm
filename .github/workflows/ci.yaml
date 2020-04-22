@@ -49,9 +49,9 @@ jobs:
       uses: actions/cache@v1.1.2
       with:
         path: /var/cache/nedryland-rust
-        key: rust-v1-${{ runner.os }}-${{matrix.component}}-${{ hashFiles('**/Cargo.lock') }}
+        key: rust-v3-${{ runner.os }}-${{matrix.component}}-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
-          rust-v1-${{ runner.os }}-${{matrix.component}}-
+          rust-v3-${{ runner.os }}-${{matrix.component}}-
     - name: Build, test and cache ${{ matrix.component }} package
       uses: cachix/cachix-action@v5
       with:
@@ -59,3 +59,5 @@ jobs:
         nixBuildArgs: --verbose --show-trace
         attributes: "${{ matrix.component }}.packageWithChecks"
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
+    - name: Cache hack to avoid empty cache
+      run: sudo rmdir /var/cache/nedryland-rust || true
