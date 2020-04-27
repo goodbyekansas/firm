@@ -7,7 +7,6 @@ use std::{
 use regex::Regex;
 use semver::{Version, VersionReq};
 use tempfile::NamedTempFile;
-use tonic;
 use url::Url;
 use uuid::Uuid;
 

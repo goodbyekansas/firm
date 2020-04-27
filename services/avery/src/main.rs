@@ -3,8 +3,6 @@
 use std::sync::Arc;
 
 use slog::{info, o, Drain};
-use slog_async;
-use slog_term;
 use structopt::StructOpt;
 use tonic::transport::Server;
 
