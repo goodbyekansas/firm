@@ -6,7 +6,6 @@ use std::{
 
 use serde::Deserialize;
 use thiserror::Error;
-use toml;
 
 use crate::proto::{
     ArgumentType, ExecutionEnvironment as ProtoExecutionEnvironment,

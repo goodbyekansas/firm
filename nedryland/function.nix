@@ -15,11 +15,23 @@ let
   };
   mkFunction = { name, package, manifest, code }:
     let
+      manifestContent = if builtins.isPath manifest then (builtins.fromTOML (builtins.readFile manifest)) else manifest;
+      manifestWithChecksum = manifestContent // {
+        checksums = {
+          sha256 = "$SHA256";
+        };
+        # TODO: In the future we must support signatures for functions as well
+      };
       packageWithManifest = package.overrideAttrs (
         oldAttrs: {
+          buildInputs = oldAttrs.buildInputs or [] ++ [ pkgs.utillinux ];
+          manifestContent = builtins.toJSON manifestWithChecksum;
+          passAsFile = oldAttrs.passAsFile or [] ++ [ "manifestContent" ];
           installPhase = ''
             ${oldAttrs.installPhase}
-            cp ${manifest } $out/manifest.toml
+            cat $manifestContentPath | \
+            SHA256=$(sha256sum $out/${code} | cut -d " " -f 1) ${pkgs.envsubst}/bin/envsubst | \
+            ${pkgs.remarshal}/bin/json2toml -o $out/manifest.toml
           '';
           inherit code;
         }
