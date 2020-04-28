@@ -63,13 +63,14 @@ enum Command {
 // impl display of listed functions
 impl Display for FunctionDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let env_name = self
+        let exe_env = self
             .execution_environment
             .clone()
             .unwrap_or(ExecutionEnvironment {
                 name: "n/a".to_string(),
-            })
-            .name;
+                args: HashMap::new(),
+                entrypoint: "n/a".to_string(),
+            });
 
         match &self.function {
             Some(k) => {
@@ -90,12 +91,12 @@ impl Display for FunctionDescriptor {
                 writeln!(f, "{}name:    {}", t, &k.name)?;
                 writeln!(f, "{}version: {}", t, &k.version)?;
                 // this will change to be more data
-                writeln!(f, "{}exeEnv:  {}", t, env_name)?;
+                writeln!(f, "{}exeEnv:  {}", t, exe_env.name)?;
                 write!(f, "{}entry:   ", t)?;
-                if self.entrypoint.is_empty() {
+                if exe_env.entrypoint.is_empty() {
                     writeln!(f, "n/a")?;
                 } else {
-                    writeln!(f, "{}", self.entrypoint)?;
+                    writeln!(f, "{}", exe_env.entrypoint)?;
                 }
                 write!(f, "{}codeUrl: ", t)?;
                 if self.code_url.is_empty() {

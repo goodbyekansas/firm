@@ -16,9 +16,7 @@ use avery::{
 
 // clean exit on crtl c
 async fn ctrlc() {
-    match tokio::signal::ctrl_c().await {
-        _ => {}
-    }
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 #[derive(StructOpt, Debug)]

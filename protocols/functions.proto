@@ -49,13 +49,15 @@ message RegistryListResponse {
 
 message ExecutionEnvironment {
   string name = 1;
+  string entrypoint = 2;
+  map<string, string> args = 3;
 }
 
 message FunctionDescriptor {
   ExecutionEnvironment execution_environment = 1;
-  string entrypoint = 2;
-  string code_url = 3;
-  Function function = 4;
+  string code_url = 2;
+  Function function = 3;
+  Checksums checksums = 4;
 }
 
 message Function {
@@ -74,9 +76,9 @@ message RegisterRequest {
   repeated FunctionInput inputs = 3;
   repeated FunctionOutput outputs = 4;
   bytes code = 5;
-  string entrypoint = 6;
-  ExecutionEnvironment execution_environment = 7;
-  string version = 8;
+  ExecutionEnvironment execution_environment = 6;
+  string version = 7;
+  Checksums checksums = 8;
 }
 
 message FunctionId {
@@ -143,4 +145,8 @@ message StartProcessRequest {
   string command = 1;
   repeated string args = 2;
   map<string, string> environment_variables = 3;
+}
+
+message Checksums {
+  string sha256 = 1;
 }

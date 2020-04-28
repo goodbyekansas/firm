@@ -15,7 +15,7 @@ use crate::executor::wasm::WasmExecutor;
 use crate::proto::execute_response::Result as ProtoResult;
 use crate::proto::functions_registry_server::FunctionsRegistry;
 use crate::proto::{
-    ArgumentType, FunctionArgument, FunctionDescriptor, FunctionInput, FunctionOutput,
+    ArgumentType, Checksums, FunctionArgument, FunctionDescriptor, FunctionInput, FunctionOutput,
     FunctionResult, ListRequest, OrderingDirection, OrderingKey, VersionRequirement,
 };
 
@@ -25,7 +25,9 @@ pub trait FunctionExecutor: Debug {
         function_name: &str,
         entrypoint: &str,
         code: &[u8],
-        arguments: &[FunctionArgument],
+        checksums: &Checksums,
+        executor_arguments: &HashMap<String, String>,
+        function_arguments: &[FunctionArgument],
     ) -> Result<ProtoResult, ExecutorError>;
 }
 
@@ -57,9 +59,11 @@ impl FunctionExecutor for FunctionAdapter {
         function_name: &str,
         entrypoint: &str,
         code: &[u8],
-        arguments: &[FunctionArgument],
+        checksums: &Checksums, // TODO: Use checksum to validate code
+        executor_arguments: &HashMap<String, String>,
+        function_arguments: &[FunctionArgument],
     ) -> Result<ProtoResult, ExecutorError> {
-        let mut nest_arguments = arguments.to_vec();
+        let mut nest_arguments = function_arguments.to_vec();
 
         // inject executor arguments to function
         nest_arguments.push(FunctionArgument {
@@ -74,10 +78,38 @@ impl FunctionExecutor for FunctionAdapter {
             value: entrypoint.as_bytes().to_vec(),
         });
 
-        let inner_code = download_code(&self.function_descriptor.code_url)?;
+        nest_arguments.push(FunctionArgument {
+            name: "sha256".to_owned(),
+            r#type: ArgumentType::String as i32,
+            value: checksums.sha256.as_bytes().to_vec(),
+        });
 
-        self.executor
-            .execute(function_name, entrypoint, &inner_code, &nest_arguments)
+        let mut exec_args: Vec<FunctionArgument> = executor_arguments
+            .iter()
+            .map(|(k, v)| FunctionArgument {
+                name: k.to_owned(),
+                r#type: ArgumentType::String as i32,
+                value: v.as_bytes().to_vec(),
+            })
+            .collect();
+
+        nest_arguments.append(&mut exec_args);
+
+        let inner_code = download_code(&self.function_descriptor.code_url)?;
+        let inner_checksums = self
+            .function_descriptor
+            .checksums
+            .as_ref()
+            .ok_or(ExecutorError::MissingChecksums)?;
+
+        self.executor.execute(
+            function_name,
+            entrypoint,
+            &inner_code,
+            &inner_checksums,
+            &HashMap::new(),
+            &nest_arguments,
+        )
     }
 }
 
@@ -477,6 +509,9 @@ pub enum ExecutorError {
         tp: String,
         value: String,
     },
+
+    #[error("Function descriptor is missing checksums.")]
+    MissingChecksums,
 }
 
 #[cfg(test)]
@@ -745,7 +780,9 @@ mod tests {
         function_name: RefCell<String>,
         entrypoint: RefCell<String>,
         code: RefCell<Vec<u8>>,
-        arguments: RefCell<Vec<FunctionArgument>>,
+        checksums: RefCell<Checksums>,
+        executor_arguments: RefCell<HashMap<String, String>>,
+        function_arguments: RefCell<Vec<FunctionArgument>>,
     }
 
     impl FunctionExecutor for Rc<FakeExecutor> {
@@ -754,27 +791,41 @@ mod tests {
             function_name: &str,
             entrypoint: &str,
             code: &[u8],
-            arguments: &[FunctionArgument],
+            checksums: &Checksums,
+            executor_arguments: &HashMap<String, String>,
+            function_arguments: &[FunctionArgument],
         ) -> Result<ProtoResult, ExecutorError> {
             *self.function_name.borrow_mut() = function_name.to_owned();
             *self.entrypoint.borrow_mut() = entrypoint.to_owned();
             *self.code.borrow_mut() = code.to_vec();
-            *self.arguments.borrow_mut() = arguments.to_vec();
+            *self.checksums.borrow_mut() = checksums.clone();
+            *self.executor_arguments.borrow_mut() = executor_arguments.clone();
+            *self.function_arguments.borrow_mut() = function_arguments.to_vec();
             Ok(ProtoResult::Ok(FunctionResult { values: Vec::new() }))
         }
     }
+
+    /*#[test]
+    // TODO:
+    fn test_bad_checksum_for_code() {
+    }*/
 
     #[test]
     fn test_nested_executor() {
         let mut tf = NamedTempFile::new().unwrap();
         let s = "some data 🖥️";
+        let mut exe_env_args = HashMap::new();
+        exe_env_args.insert("sune".to_owned(), "bune".to_owned());
         write!(tf, "{}", s).unwrap();
+        let checksums = Checksums {
+            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
+        };
         let fake = Rc::new(FakeExecutor::default());
         let nested = FunctionAdapter::new(
             Box::new(fake.clone()),
             FunctionDescriptor {
                 execution_environment: None,
-                entrypoint: "some entry".to_owned(),
+                checksums: Some(checksums.clone()),
                 code_url: format!("file://{}", tf.path().display()),
                 function: None,
             },
@@ -785,15 +836,27 @@ mod tests {
             r#type: ArgumentType::String as i32,
             value: "test-value".as_bytes().to_vec(),
         }];
-        let result = nested.execute("test", "entry", "vec".as_bytes(), &args);
+        let result = nested.execute(
+            "test",
+            "entry",
+            "vec".as_bytes(),
+            &checksums,
+            &exe_env_args,
+            &args,
+        );
         // Test that code got passed
         assert!(result.is_ok());
         assert_eq!(s.as_bytes(), fake.code.clone().into_inner().as_slice());
 
         // Test that the argument we send in is passed through
-        let fake_args = fake.arguments.clone().into_inner();
-        assert_eq!(fake_args.len(), 3);
+        let fake_args = fake.function_arguments.clone().into_inner();
+        assert_eq!(fake_args.len(), 5);
         assert_eq!(fake_args[0], args[0]);
+
+        // Test that we get the execution environment args we supplied earlier
+        let fake_exe_args = fake.executor_arguments.clone().into_inner();
+        assert_eq!(fake_exe_args.len(), 0);
+        assert!(fake_args.iter().find(|e| e.name == "sune").is_some());
     }
 
     #[test]
@@ -833,12 +896,18 @@ mod tests {
             "broken-chain-executor".to_owned(),
         );
 
+        let checksums = Some(Checksums {
+            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
+        });
+
         vec![
             RegisterRequest {
                 execution_environment: Some(ExecutionEnvironment {
                     name: "wasm".to_owned(),
+                    entrypoint: "wasm.kexe".to_owned(),
+                    args: HashMap::new(),
                 }),
-                entrypoint: "wasm.kexe".to_owned(),
+                checksums: checksums.clone(),
                 code: vec![],
                 name: "oran-func".to_owned(),
                 version: "0.1.1".to_owned(),
@@ -849,8 +918,10 @@ mod tests {
             RegisterRequest {
                 execution_environment: Some(ExecutionEnvironment {
                     name: "oran-malifant".to_owned(),
+                    entrypoint: "oran hehurr".to_owned(),
+                    args: HashMap::new(),
                 }),
-                entrypoint: "oran hehurr".to_owned(),
+                checksums: checksums.clone(),
                 code: vec![],
                 name: "precious-granag".to_owned(),
                 version: "8.1.5".to_owned(),
@@ -861,8 +932,10 @@ mod tests {
             RegisterRequest {
                 execution_environment: Some(ExecutionEnvironment {
                     name: "oran-elefant".to_owned(),
+                    entrypoint: "oran hehurr".to_owned(),
+                    args: HashMap::new(),
                 }),
-                entrypoint: "oran hehurr".to_owned(),
+                checksums,
                 code: vec![],
                 name: "precious-granag".to_owned(),
                 version: "3.2.2".to_owned(),
@@ -927,13 +1000,19 @@ mod tests {
         broken_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
         broken_executor_tags.insert("execution-environment".to_owned(), "cc-exec".to_owned());
 
+        let checksums = Some(Checksums {
+            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
+        });
+
         vec![
             RegisterRequest {
                 name: "aa-func".to_owned(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "bb-exec".to_owned(),
+                    entrypoint: "wasm.kexe".to_owned(),
+                    args: HashMap::new(),
                 }),
-                entrypoint: "wasm.kexe".to_owned(),
+                checksums: checksums.clone(),
                 code: vec![],
                 version: "0.1.1".to_owned(),
                 tags: wasm_executor_tags,
@@ -944,8 +1023,10 @@ mod tests {
                 name: "bb-func".to_owned(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "cc-exec".to_owned(),
+                    entrypoint: "wasm.kexe".to_owned(),
+                    args: HashMap::new(),
                 }),
-                entrypoint: "oran hehurr".to_owned(),
+                checksums: checksums.clone(),
                 code: vec![],
                 version: "8.1.5".to_owned(),
                 tags: nested_executor_tags,
@@ -956,8 +1037,10 @@ mod tests {
                 name: "cc-func".to_owned(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "aa-exec".to_owned(),
+                    entrypoint: "wasm.kexe".to_owned(),
+                    args: HashMap::new(),
                 }),
-                entrypoint: "an hehurr".to_owned(),
+                checksums,
                 code: vec![],
                 version: "3.2.2".to_owned(),
                 tags: broken_executor_tags,

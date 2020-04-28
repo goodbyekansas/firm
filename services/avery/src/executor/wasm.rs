@@ -5,6 +5,7 @@ mod process;
 mod sandbox;
 
 use std::{
+    collections::HashMap,
     fs::OpenOptions,
     str,
     sync::{Arc, RwLock},
@@ -20,8 +21,8 @@ use wasmer_wasi::{
 
 use crate::executor::{ExecutorError, FunctionExecutor};
 use crate::proto::{
-    execute_response::Result as ProtoResult, ExecutionError, FunctionArgument, FunctionResult,
-    ReturnValue,
+    execute_response::Result as ProtoResult, Checksums, ExecutionError, FunctionArgument,
+    FunctionResult, ReturnValue,
 };
 use error::{ToErrorCode, WasmError};
 use sandbox::Sandbox;
@@ -178,7 +179,9 @@ impl FunctionExecutor for WasmExecutor {
         function_name: &str,
         entrypoint: &str,
         code: &[u8],
-        arguments: &[FunctionArgument],
+        _checksums: &Checksums, // TODO: Use checksum
+        _executor_arguments: &HashMap<String, String>,
+        function_arguments: &[FunctionArgument],
     ) -> Result<ProtoResult, ExecutorError> {
         // TODO: separate host and guest errors
         Ok(execute_function(
@@ -186,7 +189,7 @@ impl FunctionExecutor for WasmExecutor {
             function_name,
             entrypoint,
             code,
-            arguments,
+            function_arguments,
         )
         .map_or_else(
             |e| ProtoResult::Error(ExecutionError { msg: e }),
@@ -221,6 +224,11 @@ mod tests {
             "hello-world",
             "could-be-anything",
             include_bytes!("hello.wasm"),
+            &Checksums {
+                sha256: "c455c4bc68c1afcdafa7c2f74a499810b0aa5d12f7a009d493789d595847af72"
+                    .to_owned(),
+            },
+            &HashMap::new(),
             &vec![],
         );
 

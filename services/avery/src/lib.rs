@@ -165,6 +165,12 @@ impl FunctionsServiceTrait for FunctionsService {
                     "Function descriptor did not contain any execution environment.",
                 )
             })?;
+        let checksums = function_descriptor.clone().checksums.ok_or_else(|| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                "Function descriptor did not contain any checksums.",
+            )
+        })?;
 
         // lookup executor and run
         let mut tags = HashMap::new();
@@ -201,8 +207,10 @@ impl FunctionsServiceTrait for FunctionsService {
             }?;
             let res = executor.execute(
                 &function.name,
-                &function_descriptor.entrypoint,
+                &execution_environment.entrypoint,
                 &code,
+                &checksums,
+                &execution_environment.args,
                 &args,
             );
             match res {

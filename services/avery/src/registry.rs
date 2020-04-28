@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use crate::proto::functions_registry_server::FunctionsRegistry;
 use crate::proto::{
-    ExecutionEnvironment, Function as ProtoFunction, FunctionDescriptor, FunctionId, FunctionInput,
-    FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
+    Checksums, ExecutionEnvironment, Function as ProtoFunction, FunctionDescriptor, FunctionId,
+    FunctionInput, FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
     RegistryListResponse,
 };
 
@@ -27,12 +27,12 @@ struct Function {
     id: Uuid,
     name: String,
     version: Version,
-    execution_environment: String,
-    entrypoint: String,
+    execution_environment: ExecutionEnvironment,
     inputs: Vec<FunctionInput>,
     outputs: Vec<FunctionOutput>,
     tags: HashMap<String, String>,
     code_url: Option<Url>,
+    checksums: Checksums,
 }
 
 impl From<&Function> for FunctionDescriptor {
@@ -48,15 +48,13 @@ impl From<&Function> for FunctionDescriptor {
                 inputs: f.inputs.clone(),
                 outputs: f.outputs.clone(),
             }),
-            entrypoint: f.entrypoint.clone(),
-            execution_environment: Some(ExecutionEnvironment {
-                name: f.execution_environment.clone(),
-            }),
+            execution_environment: Some(f.execution_environment.clone()),
             code_url: f
                 .code_url
                 .as_ref()
                 .map(|u| u.to_string())
                 .unwrap_or_default(),
+            checksums: Some(f.checksums.clone()),
         }
     }
 }
@@ -213,6 +211,12 @@ impl FunctionsRegistry for FunctionsRegistryService {
                 String::from("Execution environment is required when registering function"),
             )
         })?;
+        let checksums = payload.checksums.ok_or_else(|| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                String::from("Checksums is required when registering function"),
+            )
+        })?;
 
         // TODO: A better storage mechanism _will_ be needed 🏩
         let code_url = if payload.code.is_empty() {
@@ -257,12 +261,12 @@ impl FunctionsRegistry for FunctionsRegistryService {
                 id,
                 name: payload.name,
                 version,
-                entrypoint: payload.entrypoint,
-                execution_environment: execution_environment.name,
+                execution_environment,
                 code_url,
                 tags: payload.tags,
                 inputs: payload.inputs,
                 outputs: payload.outputs,
+                checksums,
             },
         );
 

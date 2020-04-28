@@ -7,7 +7,7 @@ use tonic::Request;
 use avery::{
     proto::{
         functions_registry_server::FunctionsRegistry,
-        functions_server::Functions as FunctionsTrait, ArgumentType, ExecuteRequest,
+        functions_server::Functions as FunctionsTrait, ArgumentType, Checksums, ExecuteRequest,
         ExecutionEnvironment, FunctionArgument, FunctionId, FunctionInput, FunctionOutput,
         ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
     },
@@ -30,6 +30,9 @@ macro_rules! functions_service {
 macro_rules! functions_service_with_functions {
     () => {{
         let functions_registry_service = Arc::new(FunctionsRegistryService::new());
+        let checksums = Some(Checksums {
+            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
+        });
         vec![
             RegisterRequest {
                 name: "hello-world".to_owned(),
@@ -38,9 +41,11 @@ macro_rules! functions_service_with_functions {
                 inputs: Vec::with_capacity(0),
                 outputs: Vec::with_capacity(0),
                 code: vec![],
-                entrypoint: "det du!".to_owned(),
+                checksums: checksums.clone(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "wasm".to_owned(),
+                    entrypoint: "det du!".to_owned(),
+                    args: HashMap::new(),
                 }),
             },
             RegisterRequest {
@@ -68,9 +73,11 @@ macro_rules! functions_service_with_functions {
                     r#type: ArgumentType::String as i32,
                 }],
                 code: vec![],
-                entrypoint: "kanske".to_owned(),
+                checksums,
                 execution_environment: Some(ExecutionEnvironment {
                     name: "wasm".to_owned(),
+                    entrypoint: "kanske".to_owned(),
+                    args: HashMap::new(),
                 }),
             },
         ]
@@ -201,9 +208,13 @@ fn test_execute() {
             r#type: ArgumentType::String as i32,
         }],
         code: vec![],
-        entrypoint: "kanske".to_owned(),
+        checksums: Some(Checksums {
+            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
+        }),
         execution_environment: Some(ExecutionEnvironment {
             name: "wasm".to_owned(),
+            entrypoint: "kanske".to_owned(),
+            args: HashMap::new()
         }),
     }]);
 
@@ -250,6 +261,10 @@ fn test_execution_environment_inputs() {
     let mut tags = HashMap::new();
     tags.insert("type".to_owned(), "execution-environment".to_owned());
     tags.insert("execution-environment".to_owned(), "kalle-bula".to_owned());
+    let checksums = Some(Checksums {
+        sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
+    });
+
     let svc = functions_service_with_specified_functions!(vec![
         RegisterRequest {
             name: "kalle-bula-execution-environment".to_owned(),
@@ -276,9 +291,11 @@ fn test_execution_environment_inputs() {
                 r#type: ArgumentType::String as i32,
             }],
             code: vec![],
-            entrypoint: "kanske".to_owned(),
+            checksums: checksums.clone(),
             execution_environment: Some(ExecutionEnvironment {
                 name: "wasm".to_owned(),
+                entrypoint: "kanske".to_owned(),
+                args: HashMap::new(),
             }),
         },
         RegisterRequest {
@@ -297,9 +314,11 @@ fn test_execution_environment_inputs() {
                 r#type: ArgumentType::String as i32,
             }],
             code: vec![],
-            entrypoint: "kanske".to_owned(),
+            checksums: checksums.clone(),
             execution_environment: Some(ExecutionEnvironment {
                 name: "kalle-bula".to_owned(),
+                entrypoint: "kanske".to_owned(),
+                args: HashMap::new(),
             }),
         }
     ]);
