@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use futures;
 
 use avery::proto::{
-    functions_registry_server::FunctionsRegistry, ArgumentType, ExecutionEnvironment, FunctionId,
-    FunctionInput, FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
+    functions_registry_server::FunctionsRegistry, ArgumentType, Checksums, ExecutionEnvironment,
+    FunctionId, FunctionInput, FunctionOutput, ListRequest, OrderingDirection, OrderingKey,
+    RegisterRequest,
 };
 use avery::registry::FunctionsRegistryService;
 
@@ -16,6 +17,9 @@ macro_rules! registry {
 
 macro_rules! register_request {
     ($name: expr) => {{
+        let checksums = Some(Checksums {
+            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
+        });
         tonic::Request::new(RegisterRequest {
             name: $name.to_owned(),
             version: "0.1.0".to_owned(),
@@ -41,16 +45,18 @@ macro_rules! register_request {
                 r#type: ArgumentType::String as i32,
             }],
             code: vec![],
-            entrypoint: "kanske".to_owned(),
+            checksums,
             execution_environment: Some(ExecutionEnvironment {
                 name: "wasm".to_owned(),
+                entrypoint: "kanske".to_owned(),
+                args: HashMap::new(),
             }),
         })
     }};
 }
 
 macro_rules! custom_register_request {
-    ($name:expr, $entrypoint:expr, $execution_environment:expr) => {{
+    ($name:expr, $execution_environment:expr) => {{
         tonic::Request::new(RegisterRequest {
             name: $name.to_owned(),
             version: "0.1.0".to_owned(),
@@ -58,7 +64,10 @@ macro_rules! custom_register_request {
             inputs: vec![],
             outputs: vec![],
             code: vec![],
-            entrypoint: $entrypoint.to_owned(),
+            checksums: Some(Checksums {
+                sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
+                    .to_owned(),
+            }),
             execution_environment: $execution_environment,
         })
     }};
@@ -73,9 +82,14 @@ macro_rules! register_request_with_version {
             inputs: vec![],
             outputs: vec![],
             code: vec![],
-            entrypoint: "kanske".to_owned(),
+            checksums: Some(Checksums {
+                sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
+                    .to_owned(),
+            }),
             execution_environment: Some(ExecutionEnvironment {
                 name: "wasm".to_owned(),
+                entrypoint: "kanske".to_owned(),
+                args: HashMap::new(),
             }),
         })
     }};
@@ -114,9 +128,13 @@ macro_rules! register_request_with_tags {
                 r#type: ArgumentType::String as i32,
             }],
             code: vec![],
-            entrypoint: "kanske".to_owned(),
+            checksums: Some(Checksums {
+                sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
+            }),
             execution_environment: Some(ExecutionEnvironment {
                 name: "wasm".to_owned(),
+                args: HashMap::new(),
+                entrypoint: "kanske".to_owned(),
             }),
         })
     }};
@@ -474,11 +492,8 @@ fn test_get_function() {
 fn test_register_function() {
     // Register a function missing execution environment
     let fr = registry!();
-    let register_result = futures::executor::block_on(fr.register(custom_register_request!(
-        "create-cake",
-        "my-entrypoint",
-        None
-    )));
+    let register_result =
+        futures::executor::block_on(fr.register(custom_register_request!("create-cake", None)));
 
     assert!(register_result.is_err());
     assert!(matches!(
@@ -489,9 +504,10 @@ fn test_register_function() {
     // Testing if we can register a valid function
     let register_result = futures::executor::block_on(fr.register(custom_register_request!(
         "my-name",
-        "my-entrypoint",
         Some(ExecutionEnvironment {
             name: "wassaa".to_owned(),
+            entrypoint: "my-entrypoint".to_owned(),
+            args: HashMap::new()
         })
     )));
     assert!(register_result.is_ok());
@@ -502,9 +518,10 @@ fn test_register_dev_version() {
     let fr = registry!();
     let register_result = futures::executor::block_on(fr.register(custom_register_request!(
         "my-name",
-        "my-entrypoint",
         Some(ExecutionEnvironment {
             name: "wassaa".to_owned(),
+            entrypoint: "my-entrypoint".to_owned(),
+            args: HashMap::new()
         })
     )));
 
@@ -523,9 +540,10 @@ fn test_register_dev_version() {
     let first_id = f.id.unwrap();
     let register_result = futures::executor::block_on(fr.register(custom_register_request!(
         "my-name",
-        "my-entrypoint",
         Some(ExecutionEnvironment {
             name: "wassaa".to_owned(),
+            entrypoint: "my-entrypoint".to_owned(),
+            args: HashMap::new()
         })
     )));
 

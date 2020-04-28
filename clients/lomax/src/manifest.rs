@@ -8,7 +8,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::proto::{
-    ArgumentType, ExecutionEnvironment as ProtoExecutionEnvironment,
+    ArgumentType, Checksums as ProtoChecksums, ExecutionEnvironment as ProtoExecutionEnvironment,
     FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput, RegisterRequest,
 };
 
@@ -55,6 +55,8 @@ pub struct FunctionManifest {
     #[serde(rename = "execution-environment")]
     execution_environment: ExecutionEnvironment,
 
+    checksums: Checksums,
+
     #[serde(default)]
     tags: HashMap<String, String>,
 }
@@ -76,8 +78,19 @@ struct FunctionOutput {
 }
 
 #[derive(Debug, Deserialize)]
+struct Checksums {
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct ExecutionEnvironment {
     r#type: String,
+
+    #[serde(default)]
+    entrypoint: String,
+
+    #[serde(default)]
+    args: HashMap<String, String>,
 }
 
 impl FunctionManifest {
@@ -99,6 +112,9 @@ impl From<&FunctionManifest> for RegisterRequest {
     fn from(fm: &FunctionManifest) -> Self {
         RegisterRequest {
             name: fm.name.clone(),
+            checksums: Some(ProtoChecksums {
+                sha256: fm.checksums.sha256.clone(),
+            }),
             version: fm.version.clone(),
             tags: fm.tags.clone(),
             inputs: fm
@@ -121,9 +137,10 @@ impl From<&FunctionManifest> for RegisterRequest {
                 })
                 .collect(),
             code: vec![],
-            entrypoint: String::new(),
             execution_environment: Some(ProtoExecutionEnvironment {
                 name: fm.execution_environment.r#type.clone(),
+                args: fm.execution_environment.args.clone(),
+                entrypoint: fm.execution_environment.entrypoint.clone(),
             }),
         }
     }
@@ -185,6 +202,9 @@ mod tests {
         name = "start-blender"
         [execution-environment]
         type = "wasm"
+
+        [checksums]
+        sha256 = "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
         "#;
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
         assert!(r.is_ok());
@@ -200,6 +220,9 @@ mod tests {
 
         [execution-environment]
         type = "wasm"
+
+        [checksums]
+        sha256 = "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
         "#;
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
         assert!(r.is_err());
@@ -210,6 +233,7 @@ mod tests {
 
         let toml = r#"
         name = "start-blender"
+
         [inputs]
           [inputs.version]
           type = "string"
@@ -220,6 +244,9 @@ mod tests {
 
         [execution-environment]
         type = "wasm"
+
+        [checksums]
+        sha256 = "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
         "#;
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
         assert!(r.is_ok());
