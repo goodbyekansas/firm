@@ -50,7 +50,7 @@ message RegistryListResponse {
 message ExecutionEnvironment {
   string name = 1;
   string entrypoint = 2;
-  map<string, string> args = 3;
+  repeated FunctionArgument args = 3;
 }
 
 message FunctionDescriptor {
@@ -89,6 +89,10 @@ message FunctionId {
 message ExecuteRequest {
   FunctionId function = 1;
   repeated FunctionArgument arguments = 2;
+}
+
+message FunctionArguments {
+  repeated FunctionArgument arguments = 1;
 }
 
 message ExecuteResponse {

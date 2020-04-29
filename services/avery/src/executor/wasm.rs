@@ -5,7 +5,6 @@ mod process;
 mod sandbox;
 
 use std::{
-    collections::HashMap,
     fs::OpenOptions,
     str,
     sync::{Arc, RwLock},
@@ -180,7 +179,7 @@ impl FunctionExecutor for WasmExecutor {
         entrypoint: &str,
         code: &[u8],
         _checksums: &Checksums, // TODO: Use checksum
-        _executor_arguments: &HashMap<String, String>,
+        _executor_arguments: &[FunctionArgument],
         function_arguments: &[FunctionArgument],
     ) -> Result<ProtoResult, ExecutorError> {
         // TODO: separate host and guest errors
@@ -228,7 +227,7 @@ mod tests {
                 sha256: "c455c4bc68c1afcdafa7c2f74a499810b0aa5d12f7a009d493789d595847af72"
                     .to_owned(),
             },
-            &HashMap::new(),
+            &vec![],
             &vec![],
         );
 

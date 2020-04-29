@@ -49,7 +49,7 @@ macro_rules! register_request {
             execution_environment: Some(ExecutionEnvironment {
                 name: "wasm".to_owned(),
                 entrypoint: "kanske".to_owned(),
-                args: HashMap::new(),
+                args: vec![],
             }),
         })
     }};
@@ -89,7 +89,7 @@ macro_rules! register_request_with_version {
             execution_environment: Some(ExecutionEnvironment {
                 name: "wasm".to_owned(),
                 entrypoint: "kanske".to_owned(),
-                args: HashMap::new(),
+                args: vec![],
             }),
         })
     }};
@@ -133,7 +133,7 @@ macro_rules! register_request_with_tags {
             }),
             execution_environment: Some(ExecutionEnvironment {
                 name: "wasm".to_owned(),
-                args: HashMap::new(),
+                args: vec![],
                 entrypoint: "kanske".to_owned(),
             }),
         })
@@ -507,7 +507,7 @@ fn test_register_function() {
         Some(ExecutionEnvironment {
             name: "wassaa".to_owned(),
             entrypoint: "my-entrypoint".to_owned(),
-            args: HashMap::new()
+            args: vec![],
         })
     )));
     assert!(register_result.is_ok());
@@ -521,7 +521,7 @@ fn test_register_dev_version() {
         Some(ExecutionEnvironment {
             name: "wassaa".to_owned(),
             entrypoint: "my-entrypoint".to_owned(),
-            args: HashMap::new()
+            args: vec![],
         })
     )));
 
@@ -543,7 +543,7 @@ fn test_register_dev_version() {
         Some(ExecutionEnvironment {
             name: "wassaa".to_owned(),
             entrypoint: "my-entrypoint".to_owned(),
-            args: HashMap::new()
+            args: vec![],
         })
     )));
 

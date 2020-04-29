@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::proto::{
     ArgumentType, Checksums as ProtoChecksums, ExecutionEnvironment as ProtoExecutionEnvironment,
-    FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput, RegisterRequest,
+    FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput, RegisterRequest, FunctionArgument
 };
 
 #[derive(Debug, Error)]
@@ -139,7 +139,13 @@ impl From<&FunctionManifest> for RegisterRequest {
             code: vec![],
             execution_environment: Some(ProtoExecutionEnvironment {
                 name: fm.execution_environment.r#type.clone(),
-                args: fm.execution_environment.args.clone(),
+                args: fm.execution_environment.args.iter()
+                    .map(|(k, v)| FunctionArgument {
+                        name: k.to_owned(),
+                        r#type: ArgumentType::String as i32,
+                        value: v.as_bytes().to_vec(),
+                    })
+                    .collect(),
                 entrypoint: fm.execution_environment.entrypoint.clone(),
             }),
         }
@@ -245,11 +251,15 @@ mod tests {
         [execution-environment]
         type = "wasm"
 
+        [execution-environment.args]
+        sune = "bune"
+
         [checksums]
         sha256 = "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
         "#;
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
         assert!(r.is_ok());
+        assert_eq!(r.unwrap().execution_environment.args["sune"], "bune");
 
         let r = FunctionManifest::parse(Path::new(""));
         assert!(r.is_err());
