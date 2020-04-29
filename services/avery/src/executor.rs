@@ -6,6 +6,7 @@ use std::{
     fs, str,
 };
 
+use prost::Message;
 use semver::VersionReq;
 use slog::{o, Logger};
 use thiserror::Error;
@@ -15,8 +16,9 @@ use crate::executor::wasm::WasmExecutor;
 use crate::proto::execute_response::Result as ProtoResult;
 use crate::proto::functions_registry_server::FunctionsRegistry;
 use crate::proto::{
-    ArgumentType, Checksums, FunctionArgument, FunctionDescriptor, FunctionInput, FunctionOutput,
-    FunctionResult, ListRequest, OrderingDirection, OrderingKey, VersionRequirement,
+    ArgumentType, Checksums, FunctionArgument, FunctionArguments, FunctionDescriptor,
+    FunctionInput, FunctionOutput, FunctionResult, ListRequest, OrderingDirection, OrderingKey,
+    VersionRequirement,
 };
 
 pub trait FunctionExecutor: Debug {
@@ -26,7 +28,7 @@ pub trait FunctionExecutor: Debug {
         entrypoint: &str,
         code: &[u8],
         checksums: &Checksums,
-        executor_arguments: &HashMap<String, String>,
+        executor_arguments: &[FunctionArgument],
         function_arguments: &[FunctionArgument],
     ) -> Result<ProtoResult, ExecutorError>;
 }
@@ -56,59 +58,77 @@ impl FunctionAdapter {
 impl FunctionExecutor for FunctionAdapter {
     fn execute(
         &self,
-        function_name: &str,
+        _function_name: &str,
         entrypoint: &str,
         code: &[u8],
         checksums: &Checksums, // TODO: Use checksum to validate code
-        executor_arguments: &HashMap<String, String>,
+        executor_arguments: &[FunctionArgument],
         function_arguments: &[FunctionArgument],
     ) -> Result<ProtoResult, ExecutorError> {
-        let mut nest_arguments = function_arguments.to_vec();
+        let mut inner_function_arguments = vec![];
 
         // inject executor arguments to function
-        nest_arguments.push(FunctionArgument {
+        inner_function_arguments.push(FunctionArgument {
             name: "code".to_owned(),
             r#type: ArgumentType::Bytes as i32,
             value: code.to_vec(),
         });
 
-        nest_arguments.push(FunctionArgument {
+        inner_function_arguments.push(FunctionArgument {
             name: "entrypoint".to_owned(),
             r#type: ArgumentType::String as i32,
             value: entrypoint.as_bytes().to_vec(),
         });
 
-        nest_arguments.push(FunctionArgument {
+        inner_function_arguments.push(FunctionArgument {
             name: "sha256".to_owned(),
             r#type: ArgumentType::String as i32,
             value: checksums.sha256.as_bytes().to_vec(),
         });
 
-        let mut exec_args: Vec<FunctionArgument> = executor_arguments
-            .iter()
-            .map(|(k, v)| FunctionArgument {
-                name: k.to_owned(),
-                r#type: ArgumentType::String as i32,
-                value: v.as_bytes().to_vec(),
-            })
-            .collect();
+        let mut manifest_executor_arguments = executor_arguments.to_vec();
+        inner_function_arguments.append(&mut manifest_executor_arguments);
 
-        nest_arguments.append(&mut exec_args);
+        let mut encoded_function_arguments = Vec::with_capacity(1024);
+        FunctionArguments {
+            arguments: function_arguments.to_vec(),
+        }
+        .encode(&mut encoded_function_arguments)?;
 
+        inner_function_arguments.push(FunctionArgument {
+            name: "args".to_owned(),
+            r#type: ArgumentType::Bytes as i32,
+            value: encoded_function_arguments,
+        });
+
+        let inner_function_name = self
+            .function_descriptor
+            .function
+            .as_ref()
+            .ok_or(ExecutorError::FunctionDescriptorMissingFunction)?
+            .name
+            .clone();
         let inner_code = download_code(&self.function_descriptor.code_url)?;
         let inner_checksums = self
             .function_descriptor
             .checksums
             .as_ref()
             .ok_or(ExecutorError::MissingChecksums)?;
+        let inner_exe_env = self
+            .function_descriptor
+            .execution_environment
+            .clone()
+            .ok_or_else(|| {
+                ExecutorError::MissingExecutionEnvironment(inner_function_name.clone())
+            })?;
 
         self.executor.execute(
-            function_name,
-            entrypoint,
+            &inner_function_name,
+            &inner_exe_env.entrypoint,
             &inner_code,
             &inner_checksums,
-            &HashMap::new(),
-            &nest_arguments,
+            &inner_exe_env.args,
+            &inner_function_arguments,
         )
     }
 }
@@ -512,6 +532,12 @@ pub enum ExecutorError {
 
     #[error("Function descriptor is missing checksums.")]
     MissingChecksums,
+
+    #[error("Function descriptor is missing field function.")]
+    FunctionDescriptorMissingFunction,
+
+    #[error("Failed to encode proto data: {0}")]
+    EncodeError(#[from] prost::EncodeError),
 }
 
 #[cfg(test)]
@@ -522,7 +548,7 @@ mod tests {
 
     use tempfile::NamedTempFile;
 
-    use crate::proto::{ExecutionEnvironment, RegisterRequest, ReturnValue};
+    use crate::proto::{ExecutionEnvironment, Function, FunctionId, RegisterRequest, ReturnValue};
     use crate::registry::FunctionsRegistryService;
 
     macro_rules! null_logger {
@@ -781,7 +807,7 @@ mod tests {
         entrypoint: RefCell<String>,
         code: RefCell<Vec<u8>>,
         checksums: RefCell<Checksums>,
-        executor_arguments: RefCell<HashMap<String, String>>,
+        executor_arguments: RefCell<Vec<FunctionArgument>>,
         function_arguments: RefCell<Vec<FunctionArgument>>,
     }
 
@@ -792,14 +818,14 @@ mod tests {
             entrypoint: &str,
             code: &[u8],
             checksums: &Checksums,
-            executor_arguments: &HashMap<String, String>,
+            executor_arguments: &[FunctionArgument],
             function_arguments: &[FunctionArgument],
         ) -> Result<ProtoResult, ExecutorError> {
             *self.function_name.borrow_mut() = function_name.to_owned();
             *self.entrypoint.borrow_mut() = entrypoint.to_owned();
             *self.code.borrow_mut() = code.to_vec();
             *self.checksums.borrow_mut() = checksums.clone();
-            *self.executor_arguments.borrow_mut() = executor_arguments.clone();
+            *self.executor_arguments.borrow_mut() = executor_arguments.to_vec();
             *self.function_arguments.borrow_mut() = function_arguments.to_vec();
             Ok(ProtoResult::Ok(FunctionResult { values: Vec::new() }))
         }
@@ -814,8 +840,13 @@ mod tests {
     fn test_nested_executor() {
         let mut tf = NamedTempFile::new().unwrap();
         let s = "some data 🖥️";
-        let mut exe_env_args = HashMap::new();
-        exe_env_args.insert("sune".to_owned(), "bune".to_owned());
+
+        let exe_env_args = [FunctionArgument {
+            name: "sune".to_owned(),
+            r#type: ArgumentType::String as i32,
+            value: "bune".as_bytes().to_vec(),
+        }];
+
         write!(tf, "{}", s).unwrap();
         let checksums = Checksums {
             sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
@@ -824,22 +855,37 @@ mod tests {
         let nested = FunctionAdapter::new(
             Box::new(fake.clone()),
             FunctionDescriptor {
-                execution_environment: None,
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "Avlivningsmiljö 🗡️".to_owned(),
+                    entrypoint: "ingångspoäng 💯".to_owned(),
+                    args: vec![],
+                }),
                 checksums: Some(checksums.clone()),
                 code_url: format!("file://{}", tf.path().display()),
-                function: None,
+                function: Some(Function {
+                    id: Some(FunctionId {
+                        value: "huuuuuus".to_owned(),
+                    }),
+                    name: "wienerbröööööööö".to_owned(),
+                    version: "2019.3-5-PR2".to_owned(),
+                    tags: HashMap::new(),
+                    inputs: vec![],
+                    outputs: vec![],
+                }),
             },
             null_logger!(),
         );
-        let args = vec![FunctionArgument {
+        let args = [FunctionArgument {
             name: "test-arg".to_owned(),
             r#type: ArgumentType::String as i32,
             value: "test-value".as_bytes().to_vec(),
         }];
+        let code = "asd️".as_bytes();
+        let entry = "entry";
         let result = nested.execute(
             "test",
-            "entry",
-            "vec".as_bytes(),
+            entry.clone(),
+            code.clone(),
             &checksums,
             &exe_env_args,
             &args,
@@ -851,12 +897,78 @@ mod tests {
         // Test that the argument we send in is passed through
         let fake_args = fake.function_arguments.clone().into_inner();
         assert_eq!(fake_args.len(), 5);
-        assert_eq!(fake_args[0], args[0]);
+        assert_eq!(
+            fake_args.iter().find(|v| v.name == "code").unwrap().value,
+            code
+        );
+        assert_eq!(
+            fake_args
+                .iter()
+                .find(|v| v.name == "entrypoint")
+                .unwrap()
+                .value,
+            entry.as_bytes()
+        );
+        assert_eq!(
+            fake_args.iter().find(|v| v.name == "sha256").unwrap().value,
+            checksums.sha256.as_bytes()
+        );
+        assert!(fake_args.iter().find(|v| v.name == "args").is_some());
+        assert!(fake_args.iter().find(|v| v.name == "test-arg").is_none());
 
         // Test that we get the execution environment args we supplied earlier
         let fake_exe_args = fake.executor_arguments.clone().into_inner();
         assert_eq!(fake_exe_args.len(), 0);
-        assert!(fake_args.iter().find(|e| e.name == "sune").is_some());
+        assert_eq!(
+            fake_args.iter().find(|v| v.name == "sune").unwrap().value,
+            "bune".as_bytes()
+        );
+
+        let nested2 = FunctionAdapter::new(
+            Box::new(nested),
+            FunctionDescriptor {
+                execution_environment: Some(ExecutionEnvironment {
+                    name: "Avlivningsmiljö 🗡️".to_owned(),
+                    entrypoint: "ingångspoäng 💯".to_owned(),
+                    args: vec![],
+                }),
+                checksums: Some(checksums.clone()),
+                code_url: format!("file://{}", tf.path().display()),
+                function: Some(Function {
+                    id: Some(FunctionId {
+                        value: "pieceee of pie".to_owned(),
+                    }),
+                    name: "mandelkubb".to_owned(),
+                    version: "2022.1-5-PR50".to_owned(),
+                    tags: HashMap::new(),
+                    inputs: vec![],
+                    outputs: vec![],
+                }),
+            },
+            null_logger!(),
+        );
+        let args = vec![FunctionArgument {
+            name: "test-arg".to_owned(),
+            r#type: ArgumentType::String as i32,
+            value: "test-value".as_bytes().to_vec(),
+        }];
+        let result = nested2.execute(
+            "test",
+            "entry",
+            "vec".as_bytes(),
+            &checksums,
+            &exe_env_args,
+            &args,
+        );
+        assert!(result.is_ok());
+        let fake_args = fake.function_arguments.clone().into_inner();
+        assert_eq!(fake_args.iter().filter(|a| a.name == "code").count(), 1);
+        assert_eq!(fake_args.iter().filter(|a| a.name == "sha256").count(), 1);
+        assert_eq!(
+            fake_args.iter().filter(|a| a.name == "entrypoint").count(),
+            1
+        );
+        assert_eq!(fake_args.iter().filter(|a| a.name == "args").count(), 1);
     }
 
     #[test]
@@ -905,43 +1017,43 @@ mod tests {
                 execution_environment: Some(ExecutionEnvironment {
                     name: "wasm".to_owned(),
                     entrypoint: "wasm.kexe".to_owned(),
-                    args: HashMap::new(),
+                    args: vec![],
                 }),
                 checksums: checksums.clone(),
                 code: vec![],
                 name: "oran-func".to_owned(),
                 version: "0.1.1".to_owned(),
                 tags: wasm_executor_tags,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
+                inputs: vec![],
+                outputs: vec![],
             },
             RegisterRequest {
                 execution_environment: Some(ExecutionEnvironment {
                     name: "oran-malifant".to_owned(),
                     entrypoint: "oran hehurr".to_owned(),
-                    args: HashMap::new(),
+                    args: vec![],
                 }),
                 checksums: checksums.clone(),
                 code: vec![],
                 name: "precious-granag".to_owned(),
                 version: "8.1.5".to_owned(),
                 tags: nested_executor_tags,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
+                inputs: vec![],
+                outputs: vec![],
             },
             RegisterRequest {
                 execution_environment: Some(ExecutionEnvironment {
                     name: "oran-elefant".to_owned(),
                     entrypoint: "oran hehurr".to_owned(),
-                    args: HashMap::new(),
+                    args: vec![],
                 }),
                 checksums,
                 code: vec![],
                 name: "precious-granag".to_owned(),
                 version: "3.2.2".to_owned(),
                 tags: broken_executor_tags,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
+                inputs: vec![],
+                outputs: vec![],
             },
         ]
         .into_iter()
@@ -1010,42 +1122,42 @@ mod tests {
                 execution_environment: Some(ExecutionEnvironment {
                     name: "bb-exec".to_owned(),
                     entrypoint: "wasm.kexe".to_owned(),
-                    args: HashMap::new(),
+                    args: vec![],
                 }),
                 checksums: checksums.clone(),
                 code: vec![],
                 version: "0.1.1".to_owned(),
                 tags: wasm_executor_tags,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
+                inputs: vec![],
+                outputs: vec![],
             },
             RegisterRequest {
                 name: "bb-func".to_owned(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "cc-exec".to_owned(),
                     entrypoint: "wasm.kexe".to_owned(),
-                    args: HashMap::new(),
+                    args: vec![],
                 }),
                 checksums: checksums.clone(),
                 code: vec![],
                 version: "8.1.5".to_owned(),
                 tags: nested_executor_tags,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
+                inputs: vec![],
+                outputs: vec![],
             },
             RegisterRequest {
                 name: "cc-func".to_owned(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "aa-exec".to_owned(),
                     entrypoint: "wasm.kexe".to_owned(),
-                    args: HashMap::new(),
+                    args: vec![],
                 }),
                 checksums,
                 code: vec![],
                 version: "3.2.2".to_owned(),
                 tags: broken_executor_tags,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
+                inputs: vec![],
+                outputs: vec![],
             },
         ]
         .into_iter()

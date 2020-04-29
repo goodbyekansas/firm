@@ -68,7 +68,7 @@ impl Display for FunctionDescriptor {
             .clone()
             .unwrap_or(ExecutionEnvironment {
                 name: "n/a".to_string(),
-                args: HashMap::new(),
+                args: vec![],
                 entrypoint: "n/a".to_string(),
             });
 

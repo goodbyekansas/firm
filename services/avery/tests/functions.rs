@@ -45,7 +45,7 @@ macro_rules! functions_service_with_functions {
                 execution_environment: Some(ExecutionEnvironment {
                     name: "wasm".to_owned(),
                     entrypoint: "det du!".to_owned(),
-                    args: HashMap::new(),
+                    args: vec![],
                 }),
             },
             RegisterRequest {
@@ -77,7 +77,7 @@ macro_rules! functions_service_with_functions {
                 execution_environment: Some(ExecutionEnvironment {
                     name: "wasm".to_owned(),
                     entrypoint: "kanske".to_owned(),
-                    args: HashMap::new(),
+                    args: vec![],
                 }),
             },
         ]
@@ -214,7 +214,7 @@ fn test_execute() {
         execution_environment: Some(ExecutionEnvironment {
             name: "wasm".to_owned(),
             entrypoint: "kanske".to_owned(),
-            args: HashMap::new()
+            args: vec![],
         }),
     }]);
 
@@ -295,7 +295,7 @@ fn test_execution_environment_inputs() {
             execution_environment: Some(ExecutionEnvironment {
                 name: "wasm".to_owned(),
                 entrypoint: "kanske".to_owned(),
-                args: HashMap::new(),
+                args: vec![]
             }),
         },
         RegisterRequest {
@@ -318,7 +318,7 @@ fn test_execution_environment_inputs() {
             execution_environment: Some(ExecutionEnvironment {
                 name: "kalle-bula".to_owned(),
                 entrypoint: "kanske".to_owned(),
-                args: HashMap::new(),
+                args: vec![],
             }),
         }
     ]);
