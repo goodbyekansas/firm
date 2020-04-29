@@ -9,7 +9,7 @@ use std::collections::{hash_map::RandomState, HashMap};
 
 use prost::Message;
 pub use proto::ReturnValue;
-use proto::{ArgumentType, FunctionArgument, StartProcessRequest};
+use proto::{ArgumentType, FunctionArgument, FunctionArguments, StartProcessRequest};
 use thiserror::Error;
 
 mod raw {
@@ -55,6 +55,9 @@ pub enum Error {
 
     #[error("Failed to convert to requested type")]
     ConversionError(),
+
+    #[error("Failed to find input \"{0}\"")]
+    FailedToFindInput(String),
 }
 
 macro_rules! host_call {
@@ -245,8 +248,34 @@ pub fn get_input<S: AsRef<str>, T: FromFunctionArgument>(key: S) -> Result<T, Er
         .and_then(|a| T::from_arg(a).ok_or_else(Error::ConversionError))
 }
 
+pub fn get_input_from_list<S: AsRef<str>, T: FromFunctionArgument>(
+    args: &FunctionArguments,
+    key: S,
+) -> Result<T, Error> {
+    T::from_arg(get_input_as_function_argument_from_list(args, key)?).ok_or_else(Error::ConversionError)
+}
+
+pub fn get_input_as_function_argument_from_list<S: AsRef<str>>(
+    args: &FunctionArguments,
+    key: S,
+) -> Result<FunctionArgument, Error> {
+    // TODO: cloning a bytes argument can be pretty 💰
+    args.arguments
+        .iter()
+        .find(|a| a.name == key.as_ref())
+        .ok_or_else(|| Error::FailedToFindInput(key.as_ref().to_owned())).map(|o| o.clone())
+}
+
+pub fn decode_function_arguments(args_buffer: &[u8]) -> Result<FunctionArguments, Error> {
+    Ok(FunctionArguments::decode(args_buffer)?)
+}
+
 pub fn set_output<S: AsRef<str>, T: ToReturnValue>(name: S, value: &T) -> Result<(), Error> {
     let ret_value = value.to_return_value(name.as_ref());
+    set_output_with_return_value(&ret_value)
+}
+
+pub fn set_output_with_return_value(ret_value: &ReturnValue) -> Result<(), Error> {
     let mut value = Vec::with_capacity(ret_value.encoded_len());
     ret_value.encode(&mut value)?;
     host_call!(raw::set_output(value.as_mut_ptr(), value.len()))

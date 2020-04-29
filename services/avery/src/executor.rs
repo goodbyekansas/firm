@@ -89,11 +89,13 @@ impl FunctionExecutor for FunctionAdapter {
         let mut manifest_executor_arguments = executor_arguments.to_vec();
         inner_function_arguments.append(&mut manifest_executor_arguments);
 
-        let mut encoded_function_arguments = Vec::with_capacity(1024);
-        FunctionArguments {
+        let proto_function_arguments = FunctionArguments {
             arguments: function_arguments.to_vec(),
-        }
-        .encode(&mut encoded_function_arguments)?;
+        };
+
+        let mut encoded_function_arguments =
+            Vec::with_capacity(proto_function_arguments.encoded_len());
+        proto_function_arguments.encode(&mut encoded_function_arguments)?;
 
         inner_function_arguments.push(FunctionArgument {
             name: "args".to_owned(),
