@@ -27,11 +27,16 @@ let
           buildInputs = oldAttrs.buildInputs or [] ++ [ pkgs.utillinux ];
           manifestContent = builtins.toJSON manifestWithChecksum;
           passAsFile = oldAttrs.passAsFile or [] ++ [ "manifestContent" ];
-          installPhase = ''
-            ${oldAttrs.installPhase}
-            cat $manifestContentPath | \
-            SHA256=$(sha256sum $out/${code} | cut -d " " -f 1) ${pkgs.envsubst}/bin/envsubst | \
-            ${pkgs.remarshal}/bin/json2toml -o $out/manifest.toml
+          postInstall = ''
+            ${oldAttrs.postInstall or ""}
+            if [ -f $out/${code} ]; then
+              cat $manifestContentPath | \
+              SHA256=$(sha256sum $out/${code} | cut -d " " -f 1) ${pkgs.envsubst}/bin/envsubst | \
+              ${pkgs.remarshal}/bin/json2toml -o $out/manifest.toml
+            else
+              echo "ERROR: specified code does not exist..."
+              exit 1
+            fi
           '';
           inherit code;
         }
