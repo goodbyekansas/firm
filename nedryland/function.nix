@@ -27,9 +27,10 @@ let
           buildInputs = oldAttrs.buildInputs or [] ++ [ pkgs.utillinux ];
           manifestContent = builtins.toJSON manifestWithChecksum;
           passAsFile = oldAttrs.passAsFile or [] ++ [ "manifestContent" ];
-          postInstall = ''
-            ${oldAttrs.postInstall or ""}
+          installPhase = ''
+            ${oldAttrs.installPhase or ""}
             if [ -f $out/${code} ]; then
+              echo "Creating output manifest.."
               cat $manifestContentPath | \
               SHA256=$(sha256sum $out/${code} | cut -d " " -f 1) ${pkgs.envsubst}/bin/envsubst | \
               ${pkgs.remarshal}/bin/json2toml -o $out/manifest.toml

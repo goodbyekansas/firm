@@ -9,7 +9,7 @@ use std::collections::{hash_map::RandomState, HashMap};
 
 use prost::Message;
 pub use proto::ReturnValue;
-use proto::{ArgumentType, FunctionArgument, FunctionArguments, StartProcessRequest};
+use proto::{ArgumentType, FunctionArgument, StartProcessRequest};
 use thiserror::Error;
 
 mod raw {
@@ -248,28 +248,6 @@ pub fn get_input<S: AsRef<str>, T: FromFunctionArgument>(key: S) -> Result<T, Er
         .and_then(|a| T::from_arg(a).ok_or_else(Error::ConversionError))
 }
 
-pub fn get_input_from_list<S: AsRef<str>, T: FromFunctionArgument>(
-    args: &FunctionArguments,
-    key: S,
-) -> Result<T, Error> {
-    T::from_arg(get_input_as_function_argument_from_list(args, key)?).ok_or_else(Error::ConversionError)
-}
-
-pub fn get_input_as_function_argument_from_list<S: AsRef<str>>(
-    args: &FunctionArguments,
-    key: S,
-) -> Result<FunctionArgument, Error> {
-    // TODO: cloning a bytes argument can be pretty 💰
-    args.arguments
-        .iter()
-        .find(|a| a.name == key.as_ref())
-        .ok_or_else(|| Error::FailedToFindInput(key.as_ref().to_owned())).map(|o| o.clone())
-}
-
-pub fn decode_function_arguments(args_buffer: &[u8]) -> Result<FunctionArguments, Error> {
-    Ok(FunctionArguments::decode(args_buffer)?)
-}
-
 pub fn set_output<S: AsRef<str>, T: ToReturnValue>(name: S, value: &T) -> Result<(), Error> {
     let ret_value = value.to_return_value(name.as_ref());
     set_output_with_return_value(&ret_value)
@@ -286,6 +264,77 @@ pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
         msg.as_ref().as_ptr(),
         msg.as_ref().as_bytes().len()
     ))
+}
+
+pub mod execution_environment {
+
+    use prost::Message;
+
+    use crate::{
+        get_input,
+        proto::{FunctionArgument, FunctionArguments},
+        Error, FromFunctionArgument,
+    };
+
+    /// Special function inputs for
+    /// functions that are execution environments
+    pub struct ExecutionEnvironmentArgs {
+        code: Vec<u8>,
+        sha256: String,
+        entrypoint: String,
+        args: Vec<FunctionArgument>,
+    }
+
+    impl ExecutionEnvironmentArgs {
+        /// Create execution environment args from the wasi host
+        pub fn from_wasi_host() -> Result<Self, Error> {
+            Ok(Self {
+                code: get_input("code")?,
+                sha256: get_input("sha256")?,
+                entrypoint: get_input("entrypoint")?,
+                args: get_input("args")
+                    .and_then(|a: Vec<u8>| {
+                        FunctionArguments::decode(a.as_slice()).map_err(|e| e.into())
+                    })?
+                    .arguments,
+            })
+        }
+
+        /// Get the code that the execution environment is expected to execute
+        pub fn code(&self) -> &[u8] {
+            &self.code
+        }
+
+        /// Get the sha256 for the code that the execution environment is expected to execute
+        pub fn sha256(&self) -> &str {
+            &self.sha256
+        }
+
+        /// Get the entrypoint that the execution environment is expected to use
+        pub fn entrypoint(&self) -> &str {
+            &self.entrypoint
+        }
+
+        /// Get an input designated by `key` for the function that the execution environment is
+        /// expected to execute
+        pub fn input<S: AsRef<str>, T: FromFunctionArgument>(&self, key: S) -> Result<T, Error> {
+            // TODO: cloning a BEEG bytes argument can be pretty 💰
+            self.input_as_function_argument(key)
+                .and_then(|a| T::from_arg(a.clone()).ok_or_else(Error::ConversionError))
+        }
+
+        /// Get an input designated by `key` for the function that the execution environment is
+        /// expected to execute but as the `FunctionArgument` type
+        pub fn input_as_function_argument<S: AsRef<str>>(
+            &self,
+            key: S,
+        ) -> Result<&FunctionArgument, Error> {
+            self.args
+                .iter()
+                .find(|a| a.name == key.as_ref())
+                .ok_or_else(|| Error::FailedToFindInput(key.as_ref().to_owned()))
+        }
+    }
 }
 
 #[cfg(feature = "net")]
