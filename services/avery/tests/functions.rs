@@ -1,18 +1,17 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use futures;
 use slog::o;
-use tonic::Request;
 
-use avery::{
-    proto::{
+use avery::{registry::FunctionsRegistryService, FunctionsService};
+use gbk_protocols::{
+    functions::{
         functions_registry_server::FunctionsRegistry,
         functions_server::Functions as FunctionsTrait, ArgumentType, Checksums, ExecuteRequest,
         ExecutionEnvironment, FunctionArgument, FunctionId, FunctionInput, FunctionOutput,
         ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
     },
-    registry::FunctionsRegistryService,
-    FunctionsService,
+    tonic,
 };
 
 macro_rules! null_logger {
@@ -23,13 +22,13 @@ macro_rules! null_logger {
 
 macro_rules! functions_service {
     () => {{
-        FunctionsService::new(null_logger!(), Arc::new(FunctionsRegistryService::new()))
+        FunctionsService::new(null_logger!(), FunctionsRegistryService::new())
     }};
 }
 
 macro_rules! functions_service_with_functions {
     () => {{
-        let functions_registry_service = Arc::new(FunctionsRegistryService::new());
+        let functions_registry_service = FunctionsRegistryService::new();
         let checksums = Some(Checksums {
             sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
         });
@@ -91,13 +90,13 @@ macro_rules! functions_service_with_functions {
                 |_| (),
             );
         });
-        FunctionsService::new(null_logger!(), Arc::clone(&functions_registry_service))
+        FunctionsService::new(null_logger!(), functions_registry_service)
     }};
 }
 
 macro_rules! functions_service_with_specified_functions {
     ($fns:expr) => {{
-        let functions_registry_service = Arc::new(FunctionsRegistryService::new());
+        let functions_registry_service = FunctionsRegistryService::new();
         $fns.iter().for_each(|f| {
             futures::executor::block_on(
                 functions_registry_service.register(tonic::Request::new(f.clone())),
@@ -107,13 +106,13 @@ macro_rules! functions_service_with_specified_functions {
                 |_| (),
             );
         });
-        FunctionsService::new(null_logger!(), Arc::clone(&functions_registry_service))
+        FunctionsService::new(null_logger!(), functions_registry_service)
     }};
 }
 
 macro_rules! first_function {
     ($service:expr) => {{
-        futures::executor::block_on($service.list(Request::new(ListRequest {
+        futures::executor::block_on($service.list(tonic::Request::new(ListRequest {
             name_filter: String::from(""),
             tags_filter: HashMap::new(),
             offset: 0,
@@ -135,7 +134,7 @@ macro_rules! first_function {
 fn test_list() {
     let svc = functions_service!();
 
-    let r = futures::executor::block_on(svc.list(Request::new(ListRequest {
+    let r = futures::executor::block_on(svc.list(tonic::Request::new(ListRequest {
         name_filter: String::from(""),
         tags_filter: HashMap::new(),
         offset: 0,
@@ -151,7 +150,7 @@ fn test_list() {
     assert_eq!(0, fns.functions.len());
 
     let svc2 = functions_service_with_functions!();
-    let r = futures::executor::block_on(svc2.list(Request::new(ListRequest {
+    let r = futures::executor::block_on(svc2.list(tonic::Request::new(ListRequest {
         name_filter: String::from(""),
         tags_filter: HashMap::new(),
         offset: 0,
@@ -170,12 +169,12 @@ fn test_list() {
 fn test_get() {
     let svc2 = functions_service_with_functions!();
     let first_function_id = first_function!(svc2).id.clone().unwrap();
-    let r = futures::executor::block_on(svc2.get(Request::new(first_function_id.clone())));
+    let r = futures::executor::block_on(svc2.get(tonic::Request::new(first_function_id.clone())));
     assert!(r.is_ok());
     let f = r.unwrap().into_inner();
     assert_eq!(first_function_id, f.id.unwrap());
 
-    let r = futures::executor::block_on(svc2.get(Request::new(FunctionId {
+    let r = futures::executor::block_on(svc2.get(tonic::Request::new(FunctionId {
         value: "ef394e5b-0b32-447d-b483-a34bcb70cbc1".to_string(),
     })));
     assert!(r.is_err());
@@ -230,7 +229,7 @@ fn test_execute() {
             value: 3i64.to_le_bytes().to_vec(),
         },
     ];
-    let r = futures::executor::block_on(svc.execute(Request::new(ExecuteRequest {
+    let r = futures::executor::block_on(svc.execute(tonic::Request::new(ExecuteRequest {
         function: first_function!(svc).id.clone(),
         arguments: correct_args,
     })));
@@ -249,7 +248,7 @@ fn test_execute() {
         },
     ];
 
-    let r = futures::executor::block_on(svc.execute(Request::new(ExecuteRequest {
+    let r = futures::executor::block_on(svc.execute(tonic::Request::new(ExecuteRequest {
         function: first_function!(svc).id.clone(),
         arguments: incorrect_args,
     })));

@@ -4,7 +4,7 @@ use super::error::{WasiResult, WasmError};
 use prost::Message;
 use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
-use crate::proto::{FunctionArgument, ReturnValue};
+use gbk_protocols::functions::{FunctionArgument, ReturnValue};
 
 pub trait WasmPtrExt<'a> {
     fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]>;
@@ -107,7 +107,7 @@ pub fn set_error(vm_memory: &Memory, msg: WasmPtr<u8, Array>, msglen: u32) -> Wa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::ArgumentType;
+    use gbk_protocols::functions::ArgumentType;
     use wasmer_runtime::memory::Memory;
     use wasmer_runtime::{types::MemoryDescriptor, units::Pages};
 

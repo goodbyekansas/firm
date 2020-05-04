@@ -7,9 +7,10 @@ use std::{
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::proto::{
+use gbk_protocols::functions::{
     ArgumentType, Checksums as ProtoChecksums, ExecutionEnvironment as ProtoExecutionEnvironment,
-    FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput, RegisterRequest, FunctionArgument
+    FunctionArgument, FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput,
+    RegisterRequest,
 };
 
 #[derive(Debug, Error)]
@@ -139,7 +140,10 @@ impl From<&FunctionManifest> for RegisterRequest {
             code: vec![],
             execution_environment: Some(ProtoExecutionEnvironment {
                 name: fm.execution_environment.r#type.clone(),
-                args: fm.execution_environment.args.iter()
+                args: fm
+                    .execution_environment
+                    .args
+                    .iter()
                     .map(|(k, v)| FunctionArgument {
                         name: k.to_owned(),
                         r#type: ArgumentType::String as i32,

@@ -19,11 +19,11 @@ use wasmer_wasi::{
 };
 
 use crate::executor::{ExecutorError, FunctionExecutor};
-use crate::proto::{
+use error::{ToErrorCode, WasmError};
+use gbk_protocols::functions::{
     execute_response::Result as ProtoResult, Checksums, ExecutionError, FunctionArgument,
     FunctionResult, ReturnValue,
 };
-use error::{ToErrorCode, WasmError};
 use sandbox::Sandbox;
 
 fn execute_function(
@@ -207,7 +207,11 @@ mod tests {
         }};
     }
 
-    impl ProtoResult {
+    trait ProtoResultExt {
+        fn is_ok(&self) -> bool;
+    }
+
+    impl ProtoResultExt for ProtoResult {
         fn is_ok(&self) -> bool {
             match self {
                 ProtoResult::Ok(_) => true,

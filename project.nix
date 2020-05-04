@@ -17,18 +17,31 @@ let
   project = nedryland.mkProject {
     name = "firm";
     configFile = ./firm.toml;
-    protoLocation = ./protocols;
     baseExtensions = [
       (import ./nedryland/function.nix)
     ];
   };
 
+  protocols = nedryland.importProject {
+    name = "protocols";
+    url = "git@github.com:goodbyekansas/protocols.git";
+    rev = "9d30daaf66342f6e224f7c30e6f6376c20319007";
+  };
+
   # declare the components of the project and their dependencies
   components = rec {
-    rustGbkUtils = project.declareComponent ./utils/rust/gbk/gbk.nix {};
-    avery = project.declareComponent ./services/avery/avery.nix {};
-    bendini = project.declareComponent ./clients/bendini/bendini.nix {};
-    lomax = project.declareComponent ./clients/lomax/lomax.nix {};
+    wasiFunctionUtils = project.declareComponent ./utils/rust/gbk/gbk.nix {
+      protocols = protocols.rustOnlyMessages;
+    };
+    avery = project.declareComponent ./services/avery/avery.nix {
+      protocols = protocols.rustWithServices;
+    };
+    bendini = project.declareComponent ./clients/bendini/bendini.nix {
+      protocols = protocols.rustWithServices;
+    };
+    lomax = project.declareComponent ./clients/lomax/lomax.nix {
+      protocols = protocols.rustWithServices;
+    };
 
     os-packaging = project.declareComponent ./deployment/os-packaging.nix {
       linuxPackages = [
@@ -79,4 +92,4 @@ project.mkGrid {
   lib = {
     inherit getFunctionDeployments;
   };
-}
+} // protocols

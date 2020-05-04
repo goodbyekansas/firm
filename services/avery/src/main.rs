@@ -1,18 +1,16 @@
 #![deny(warnings)]
 
-use std::sync::Arc;
-
 use slog::{info, o, Drain};
 use structopt::StructOpt;
-use tonic::transport::Server;
 
-use avery::{
-    proto::{
+use gbk_protocols::{
+    functions::{
         functions_registry_server::FunctionsRegistryServer, functions_server::FunctionsServer,
     },
-    registry::FunctionsRegistryService,
-    FunctionsService,
+    tonic::transport::Server,
 };
+
+use avery::{registry::FunctionsRegistryService, FunctionsService};
 
 // clean exit on crtl c
 async fn ctrlc() {
@@ -36,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let port: u32 = 1939;
     let addr = format!("[::]:{}", port).parse().unwrap();
-    let functions_registry_service = Arc::new(FunctionsRegistryService::new());
+    let functions_registry_service = FunctionsRegistryService::new();
 
     let functions_service = FunctionsService::new(
         log.new(o!("service" => "functions")),
@@ -50,9 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Server::builder()
         .add_service(FunctionsServer::new(functions_service))
-        .add_service(FunctionsRegistryServer::new(Arc::clone(
-            &functions_registry_service,
-        )))
+        .add_service(FunctionsRegistryServer::new(functions_registry_service))
         .serve_with_shutdown(addr, ctrlc())
         .await?;
     info!(log, "👋 see you soon - no one leaves the Firm");

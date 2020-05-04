@@ -6,7 +6,7 @@ use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
 use super::error::{WasiResult, WasmError};
 use super::sandbox::Sandbox;
-use crate::proto::StartProcessRequest;
+use gbk_protocols::functions::StartProcessRequest;
 
 pub fn get_args_and_envs(
     request: &StartProcessRequest,
