@@ -2,11 +2,15 @@ use std::collections::HashMap;
 
 use futures;
 
-use avery::proto::{
-    functions_registry_server::FunctionsRegistry, ArgumentType, Checksums, ExecutionEnvironment,
-    FunctionId, FunctionInput, FunctionOutput, ListRequest, OrderingDirection, OrderingKey,
-    RegisterRequest,
+use gbk_protocols::{
+    functions::{
+        functions_registry_server::FunctionsRegistry, ArgumentType, Checksums,
+        ExecutionEnvironment, FunctionId, FunctionInput, FunctionOutput, ListRequest,
+        OrderingDirection, OrderingKey, RegisterRequest,
+    },
+    tonic,
 };
+
 use avery::registry::FunctionsRegistryService;
 
 macro_rules! registry {

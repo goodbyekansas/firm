@@ -1,14 +1,9 @@
 #![deny(warnings)]
 
-// magic to enable tonic prtobufs
-pub mod proto {
-    tonic::include_proto!("functions");
-}
-
 mod executor;
 pub mod registry;
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use futures::future::{join_all, OptionFuture};
 use slog::{o, Logger};
@@ -17,23 +12,28 @@ use slog::{o, Logger};
 use executor::{
     download_code, get_execution_env_inputs, lookup_executor, validate_args, validate_results,
 };
-use proto::functions_registry_server::FunctionsRegistry;
-use proto::functions_server::Functions as FunctionsServiceTrait;
-use proto::{
-    execute_response::Result as ProtoResult, ExecuteRequest, ExecuteResponse, Function, FunctionId,
-    ListRequest, ListResponse,
+
+use registry::FunctionsRegistryService;
+
+use gbk_protocols::{
+    functions::{
+        execute_response::Result as ProtoResult, functions_registry_server::FunctionsRegistry,
+        functions_server::Functions as FunctionsServiceTrait, ExecuteRequest, ExecuteResponse,
+        Function, FunctionId, ListRequest, ListResponse,
+    },
+    tonic,
 };
 
 // define the FunctionsService struct
 #[derive(Debug)]
 pub struct FunctionsService {
-    functions_register: Arc<registry::FunctionsRegistryService>,
+    functions_register: FunctionsRegistryService,
     log: Logger,
 }
 
 // local methods to operate on a FunctionsService struct
 impl FunctionsService {
-    pub fn new(log: Logger, functions_register: Arc<registry::FunctionsRegistryService>) -> Self {
+    pub fn new(log: Logger, functions_register: FunctionsRegistryService) -> Self {
         Self {
             functions_register,
             log,

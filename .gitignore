@@ -3,3 +3,5 @@ result*
 
 # Ignore editor settings
 .vscode
+
+nix-deps/

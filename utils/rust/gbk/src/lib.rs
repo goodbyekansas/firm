@@ -1,16 +1,13 @@
 #![cfg_attr(feature = "net", feature(wasi_ext))]
 #![deny(warnings)]
 
-pub mod proto {
-    include!(concat!(env!("OUT_DIR"), "/functions.rs"));
-}
-
 use std::collections::{hash_map::RandomState, HashMap};
 
 use prost::Message;
-pub use proto::ReturnValue;
-use proto::{ArgumentType, FunctionArgument, StartProcessRequest};
 use thiserror::Error;
+
+pub use gbk_protocols::ReturnValue;
+use gbk_protocols::functions::{ArgumentType, FunctionArgument, StartProcessRequest};
 
 mod raw {
     #[link(wasm_import_module = "gbk")]

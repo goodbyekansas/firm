@@ -1,10 +1,5 @@
 #![deny(warnings)]
 
-// module declarations
-pub mod proto {
-    tonic::include_proto!("functions");
-}
-
 mod manifest;
 
 // std
@@ -18,13 +13,15 @@ use std::{
 use manifest::FunctionManifest;
 use structopt::StructOpt;
 use tokio::runtime;
-use tonic::Request;
 
 // internal
-use proto::functions_registry_client::FunctionsRegistryClient;
-use proto::{
-    ArgumentType, ExecutionEnvironment, Function, FunctionDescriptor, FunctionId, FunctionInput,
-    FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
+use gbk_protocols::{
+    functions::{
+        functions_registry_client::FunctionsRegistryClient, ArgumentType, ExecutionEnvironment,
+        Function, FunctionDescriptor, FunctionId, FunctionInput, FunctionOutput, ListRequest,
+        OrderingDirection, OrderingKey, RegisterRequest,
+    },
+    tonic,
 };
 
 // arguments
@@ -60,8 +57,35 @@ enum Command {
     },
 }
 
+struct Displayer<'a, T> {
+    display: &'a T,
+}
+
+impl<T> std::ops::Deref for Displayer<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.display
+    }
+}
+
+trait DisplayExt<'a, T>
+where
+    T: prost::Message,
+{
+    fn display(&'a self) -> Displayer<T>;
+}
+
+impl<'a, U> DisplayExt<'a, U> for U
+where
+    U: prost::Message,
+{
+    fn display(&'a self) -> Displayer<U> {
+        Displayer { display: self }
+    }
+}
+
 // impl display of listed functions
-impl Display for FunctionDescriptor {
+impl Display for Displayer<'_, FunctionDescriptor> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let exe_env = self
             .execution_environment
@@ -111,7 +135,7 @@ impl Display for FunctionDescriptor {
                     k.inputs
                         .clone()
                         .into_iter()
-                        .map(|i| writeln!(f, "{}{}", t2, i))
+                        .map(|i| writeln!(f, "{}{}", t2, i.display()))
                         .collect::<fmt::Result>()?;
                 }
                 if k.outputs.is_empty() {
@@ -121,7 +145,7 @@ impl Display for FunctionDescriptor {
                     k.outputs
                         .clone()
                         .into_iter()
-                        .map(|i| writeln!(f, "{}{}", t2, i))
+                        .map(|i| writeln!(f, "{}{}", t2, i.display()))
                         .collect::<fmt::Result>()?;
                 }
                 if k.tags.is_empty() {
@@ -141,7 +165,7 @@ impl Display for FunctionDescriptor {
     }
 }
 
-impl Display for Function {
+impl Display for Displayer<'_, Function> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let na = "n/a".to_string();
         let id_str = self.id.clone().unwrap_or(FunctionId { value: na }).value;
@@ -154,7 +178,7 @@ impl Display for Function {
             self.inputs
                 .clone()
                 .into_iter()
-                .map(|i| writeln!(f, "\t\t {}", i))
+                .map(|i| writeln!(f, "\t\t {}", i.display()))
                 .collect::<fmt::Result>()?;
         }
         if self.outputs.is_empty() {
@@ -164,7 +188,7 @@ impl Display for Function {
             self.outputs
                 .clone()
                 .into_iter()
-                .map(|i| writeln!(f, "\t\t {}", i))
+                .map(|i| writeln!(f, "\t\t {}", i.display()))
                 .collect::<fmt::Result>()?;
         }
         if self.tags.is_empty() {
@@ -180,7 +204,7 @@ impl Display for Function {
     }
 }
 
-impl Display for FunctionInput {
+impl Display for Displayer<'_, FunctionInput> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let required = if self.required {
             "[required]"
@@ -214,7 +238,7 @@ impl Display for FunctionInput {
     }
 }
 
-impl Display for FunctionOutput {
+impl Display for Displayer<'_, FunctionOutput> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let tp = ArgumentType::from_i32(self.r#type)
             .map(|at| match at {
@@ -271,7 +295,7 @@ fn main() -> Result<(), u32> {
             };
 
             let list_response = basic_rt
-                .block_on(client.list(Request::new(list_request)))
+                .block_on(client.list(tonic::Request::new(list_request)))
                 .map_err(|e| {
                     println!("Failed to list functions: {}", e);
                     3u32
@@ -281,7 +305,7 @@ fn main() -> Result<(), u32> {
                 .into_inner()
                 .functions
                 .into_iter()
-                .for_each(|f| println!("{}", f))
+                .for_each(|f| println!("{}", f.display()))
         }
 
         Command::Register { code, manifest } => {

@@ -1,10 +1,4 @@
 #![deny(warnings)]
-//#![allow(warnings)]
-
-// module declarations
-pub mod proto {
-    tonic::include_proto!("functions");
-}
 
 // std
 use std::{
@@ -19,15 +13,18 @@ use std::{
 use structopt::StructOpt;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 use tokio::runtime;
-use tonic::Request;
 use uuid::Uuid;
 
 // internal
-use proto::functions_client::FunctionsClient;
-use proto::{
-    execute_response::Result as ProtoResult, ArgumentType, ExecuteRequest, ExecuteResponse,
-    Function, FunctionArgument, FunctionId, FunctionInput, FunctionOutput, FunctionResult,
-    ListRequest, OrderingDirection, OrderingKey, ReturnValue, VersionRequirement,
+//use proto::functions_client::FunctionsClient;
+use gbk_protocols::{
+    functions::{
+        execute_response::Result as ProtoResult, functions_client::FunctionsClient, ArgumentType,
+        ExecuteRequest, ExecuteResponse, Function, FunctionArgument, FunctionId, FunctionInput,
+        FunctionOutput, FunctionResult, ListRequest, OrderingDirection, OrderingKey, ReturnValue,
+        VersionRequirement,
+    },
+    tonic::Request,
 };
 
 /// Bendini is a command line client to Avery, the function executor service of the GBK pipeline
@@ -195,47 +192,6 @@ impl DisplayColored for FunctionOutput {
     }
 }
 
-impl Display for ExecuteResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let na = "n/a".to_string();
-        let id_str = self
-            .function
-            .clone()
-            .unwrap_or(FunctionId { value: na })
-            .value;
-        let result = self.result.clone();
-        writeln!(f, "\tid:     {}", id_str)?;
-
-        match result {
-            Some(ProtoResult::Ok(r)) => writeln!(f, "\tresult: {}", r),
-            Some(ProtoResult::Error(e)) => writeln!(f, "\terror: {}", e.msg),
-            None => writeln!(f, "\tfunction execution did not produce a result? 🧐"),
-        }
-    }
-}
-
-impl Display for FunctionResult {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.values
-            .iter()
-            .map(|rv| writeln!(f, "{}", rv))
-            .collect::<fmt::Result>()
-    }
-}
-
-fn get_reasonable_value_string(argument_value: &[u8]) -> String {
-    const MAX_PRINTABLE_VALUE_LENGTH: usize = 256;
-    if argument_value.len() < MAX_PRINTABLE_VALUE_LENGTH {
-        String::from_utf8(argument_value.to_vec())
-            .unwrap_or_else(|_| String::from("invalid utf-8 string 🚑"))
-    } else {
-        format!(
-            "too long value (> {} bytes, vaccuum tubes will explode) 💣",
-            MAX_PRINTABLE_VALUE_LENGTH
-        )
-    }
-}
-
 macro_rules! bytes_as_64_bit_array {
     ($bytes: expr) => {{
         [
@@ -251,14 +207,47 @@ macro_rules! bytes_as_64_bit_array {
     }};
 }
 
-impl Display for ReturnValue {
+struct Displayer<'a, T> {
+    display: &'a T,
+}
+
+trait DisplayExt<'a, T>
+where
+    T: prost::Message,
+{
+    fn display(&'a self) -> Displayer<T>;
+}
+
+impl<'a, U> DisplayExt<'a, U> for U
+where
+    U: prost::Message,
+{
+    fn display(&'a self) -> Displayer<U> {
+        Displayer { display: self }
+    }
+}
+
+impl Display for Displayer<'_, FunctionResult> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (tp, val) = ArgumentType::from_i32(self.r#type)
+        self.display
+            .values
+            .iter()
+            .map(|rv| writeln!(f, "{}", rv.display()))
+            .collect::<fmt::Result>()
+    }
+}
+
+impl Display for Displayer<'_, ReturnValue> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (tp, val) = ArgumentType::from_i32(self.display.r#type)
             .map(|at| match at {
-                ArgumentType::String => ("[string ]", get_reasonable_value_string(&self.value)),
+                ArgumentType::String => (
+                    "[string ]",
+                    get_reasonable_value_string(&self.display.value),
+                ),
                 ArgumentType::Bool => (
                     "[bool   ]",
-                    if self.value[0] == 0 {
+                    if self.display.value[0] == 0 {
                         String::from("true")
                     } else {
                         String::from("false")
@@ -266,22 +255,64 @@ impl Display for ReturnValue {
                 ),
                 ArgumentType::Int => (
                     "[int    ]",
-                    format!("{}", i64::from_le_bytes(bytes_as_64_bit_array!(self.value))),
+                    format!(
+                        "{}",
+                        i64::from_le_bytes(bytes_as_64_bit_array!(self.display.value))
+                    ),
                 ),
                 ArgumentType::Float => (
                     "[float  ]",
-                    format!("{}", f64::from_le_bytes(bytes_as_64_bit_array!(self.value))),
+                    format!(
+                        "{}",
+                        f64::from_le_bytes(bytes_as_64_bit_array!(self.display.value))
+                    ),
                 ),
-                ArgumentType::Bytes => ("[bytes  ]", get_reasonable_value_string(&self.value)),
+                ArgumentType::Bytes => (
+                    "[bytes  ]",
+                    get_reasonable_value_string(&self.display.value),
+                ),
             })
             .unwrap_or(("[Invalid type ]", String::new()));
 
         write!(
             f,
             "{ftype}:{name}: {val}",
-            name = self.name,
+            name = self.display.name,
             ftype = tp,
             val = val
+        )
+    }
+}
+
+impl Display for Displayer<'_, ExecuteResponse> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let na = "n/a".to_string();
+        let id_str = self
+            .display
+            .function
+            .clone()
+            .unwrap_or(FunctionId { value: na })
+            .value;
+        let result = self.display.result.clone();
+        writeln!(f, "\tid:     {}", id_str)?;
+
+        match result {
+            Some(ProtoResult::Ok(r)) => writeln!(f, "\tresult: {}", r.display()),
+            Some(ProtoResult::Error(e)) => writeln!(f, "\terror: {}", e.msg),
+            None => writeln!(f, "\tfunction execution did not produce a result? 🧐"),
+        }
+    }
+}
+
+fn get_reasonable_value_string(argument_value: &[u8]) -> String {
+    const MAX_PRINTABLE_VALUE_LENGTH: usize = 256;
+    if argument_value.len() < MAX_PRINTABLE_VALUE_LENGTH {
+        String::from_utf8(argument_value.to_vec())
+            .unwrap_or_else(|_| String::from("invalid utf-8 string 🚑"))
+    } else {
+        format!(
+            "too long value (> {} bytes, vaccuum tubes will explode) 💣",
+            MAX_PRINTABLE_VALUE_LENGTH
         )
     }
 }
@@ -475,7 +506,7 @@ fn run() -> Result<(), BendiniError> {
                 let fm: HashMap<String, i32> = function_record
                     .inputs
                     .iter()
-                    .map(|f: &proto::FunctionInput| (f.name.clone(), f.r#type))
+                    .map(|f: &FunctionInput| (f.name.clone(), f.r#type))
                     .collect();
 
                 arguments.iter().map(
@@ -554,7 +585,7 @@ fn run() -> Result<(), BendiniError> {
                     println!("Failed to execute function \"{}\": {}", function_name, e);
                     4
                 })?;
-            println!("{}", execute_response.into_inner());
+            println!("{}", execute_response.into_inner().display());
         }
     }
 

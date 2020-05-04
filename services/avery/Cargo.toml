@@ -19,14 +19,10 @@ tempfile = "3"
 thiserror = "1"
 tokio = { version = "0.2", features = ["rt-threaded", "time", "stream", "fs", "macros", "uds", "signal"] }
 toml = "0.5"
-tonic = "0.1"
 url = "2"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 wasmer-runtime = "0.16"
 wasmer-wasi = "0.16"
 futures = "0.3"
 typetag = "0.1"
-
-[build-dependencies]
-tonic-build = "0.1"
-
+gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }

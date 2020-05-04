@@ -13,12 +13,14 @@ use thiserror::Error;
 use url::Url;
 
 use crate::executor::wasm::WasmExecutor;
-use crate::proto::execute_response::Result as ProtoResult;
-use crate::proto::functions_registry_server::FunctionsRegistry;
-use crate::proto::{
-    ArgumentType, Checksums, FunctionArgument, FunctionArguments, FunctionDescriptor,
-    FunctionInput, FunctionOutput, FunctionResult, ListRequest, OrderingDirection, OrderingKey,
-    VersionRequirement,
+use gbk_protocols::{
+    functions::{
+        execute_response::Result as ProtoResult, functions_registry_server::FunctionsRegistry,
+        ArgumentType, Checksums, FunctionArgument, FunctionArguments, FunctionDescriptor,
+        FunctionInput, FunctionOutput, FunctionResult, ListRequest, OrderingDirection, OrderingKey,
+        VersionRequirement,
+    },
+    tonic,
 };
 
 pub trait FunctionExecutor: Debug {
@@ -359,10 +361,8 @@ where
                         } else {
                             Err(ExecutorError::MismatchedResultType {
                                 result_name: output.name.clone(),
-                                expected: ArgumentType::from_i32(output.r#type)
-                                    .map_or("invalid_type".to_owned(), |t| t.to_string()),
-                                got: ArgumentType::from_i32(arg.r#type)
-                                    .map_or("invalid_type".to_owned(), |t| t.to_string()),
+                                expected: ProtoArgumentTypeToString::to_string(&output.r#type),
+                                got: ProtoArgumentTypeToString::to_string(&arg.r#type),
                             })
                         }
                     },
@@ -420,10 +420,8 @@ where
                     } else {
                         Err(ExecutorError::MismatchedArgumentType {
                             argument_name: input.name.clone(),
-                            expected: ArgumentType::from_i32(input.r#type)
-                                .map_or("invalid_type".to_owned(), |t| t.to_string()),
-                            got: ArgumentType::from_i32(arg.r#type)
-                                .map_or("invalid_type".to_owned(), |t| t.to_string()),
+                            expected: ProtoArgumentTypeToString::to_string(&input.r#type),
+                            got: ProtoArgumentTypeToString::to_string(&arg.r#type),
                         })
                     }
                 },
@@ -438,19 +436,29 @@ where
     }
 }
 
-impl fmt::Display for ArgumentType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                ArgumentType::String => "string",
-                ArgumentType::Int => "int",
-                ArgumentType::Bool => "bool",
-                ArgumentType::Float => "float",
-                ArgumentType::Bytes => "bytes",
-            }
-        )
+trait ProtoArgumentTypeToString {
+    fn to_string(&self) -> String;
+}
+
+impl ProtoArgumentTypeToString for ArgumentType {
+    fn to_string(&self) -> String {
+        match self {
+            ArgumentType::String => "string",
+            ArgumentType::Int => "int",
+            ArgumentType::Bool => "bool",
+            ArgumentType::Float => "float",
+            ArgumentType::Bytes => "bytes",
+        }
+        .to_owned()
+    }
+}
+
+impl ProtoArgumentTypeToString for i32 {
+    fn to_string(&self) -> String {
+        match ArgumentType::from_i32(*self) {
+            Some(at) => ProtoArgumentTypeToString::to_string(&at),
+            None => "invalid type".to_owned(),
+        }
     }
 }
 
@@ -550,8 +558,10 @@ mod tests {
 
     use tempfile::NamedTempFile;
 
-    use crate::proto::{ExecutionEnvironment, Function, FunctionId, RegisterRequest, ReturnValue};
     use crate::registry::FunctionsRegistryService;
+    use gbk_protocols::functions::{
+        ExecutionEnvironment, Function, FunctionId, RegisterRequest, ReturnValue,
+    };
 
     macro_rules! null_logger {
         () => {{

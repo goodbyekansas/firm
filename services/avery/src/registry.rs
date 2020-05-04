@@ -10,14 +10,16 @@ use tempfile::NamedTempFile;
 use url::Url;
 use uuid::Uuid;
 
-use crate::proto::functions_registry_server::FunctionsRegistry;
-use crate::proto::{
-    Checksums, ExecutionEnvironment, Function as ProtoFunction, FunctionDescriptor, FunctionId,
-    FunctionInput, FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
-    RegistryListResponse,
+use gbk_protocols::{
+    functions::{
+        functions_registry_server::FunctionsRegistry, Checksums, ExecutionEnvironment,
+        Function as ProtoFunction, FunctionDescriptor, FunctionId, FunctionInput, FunctionOutput,
+        ListRequest, OrderingDirection, OrderingKey, RegisterRequest, RegistryListResponse,
+    },
+    tonic,
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FunctionsRegistryService {
     functions: Arc<RwLock<HashMap<Uuid, Function>>>,
 }
@@ -281,30 +283,6 @@ impl FunctionsRegistryService {
         Self {
             functions: Arc::new(RwLock::new(HashMap::new())),
         }
-    }
-}
-
-#[tonic::async_trait]
-impl FunctionsRegistry for Arc<FunctionsRegistryService> {
-    async fn list(
-        &self,
-        request: tonic::Request<ListRequest>,
-    ) -> Result<tonic::Response<RegistryListResponse>, tonic::Status> {
-        (**self).list(request).await
-    }
-
-    async fn get(
-        &self,
-        request: tonic::Request<FunctionId>,
-    ) -> Result<tonic::Response<FunctionDescriptor>, tonic::Status> {
-        (**self).get(request).await
-    }
-
-    async fn register(
-        &self,
-        register_request: tonic::Request<RegisterRequest>,
-    ) -> Result<tonic::Response<FunctionId>, tonic::Status> {
-        (**self).register(register_request).await
     }
 }
 

@@ -96,6 +96,7 @@ name = "avery"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "gbk-protocols",
  "prost",
  "regex",
  "semver",
@@ -108,22 +109,11 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
- "tonic",
- "tonic-build",
  "typetag",
  "url",
  "uuid",
  "wasmer-runtime",
  "wasmer-wasi",
-]
-
-[[package]]
-name = "base64"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b25d992356d2eb0ed82172f5248873db5560c4721f564b13cb5193bda5e668e"
-dependencies = [
- "byteorder",
 ]
 
 [[package]]
@@ -471,12 +461,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fixedbitset"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37ab347416e802de484e4d03c7316c48f1ecb56574dfd4a46a80f173ce1de04d"
-
-[[package]]
 name = "fnv"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -590,6 +574,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gbk-protocols"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "prost",
+ "tonic",
+]
+
+[[package]]
 name = "gcc"
 version = "0.3.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -648,9 +641,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.2.1"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9433d71e471c1736fd5a61b671fc0b148d7a2992f666c958d03cd8feb3b88d1"
+checksum = "377038bf3c89d18d6ca1431e7a5027194fbd724ca10592b9487ede5e8e144f42"
 dependencies = [
  "bytes",
  "fnv",
@@ -718,9 +711,9 @@ checksum = "cd179ae861f0c2e53da70d892f5f3029f9594be0c41dc5269cd371691b1dc2f9"
 
 [[package]]
 name = "hyper"
-version = "0.13.2"
+version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa1c527bbc634be72aa7ba31e4e4def9bbb020f5416916279b7c705cd838893e"
+checksum = "96816e1d921eca64d208a85aab4f7798455a8e34229ee5a88c935bdee1b78b14"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -927,12 +920,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multimap"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a97fbd5d00e0e37bfb10f433af8f5aaf631e739368dc9fc28286ca81ca4948dc"
-
-[[package]]
 name = "net2"
 version = "0.2.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1021,25 +1008,9 @@ dependencies = [
 
 [[package]]
 name = "percent-encoding"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31010dd2e1ac33d5b46a5b413495239882813e0369f8ed8a5e266f173602f831"
-
-[[package]]
-name = "percent-encoding"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4fd5641d01c8f18a23da7b6fe29298ff4b55afcccdf78973b24cf3175fee32e"
-
-[[package]]
-name = "petgraph"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29c127eea4a29ec6c85d153c59dc1213f33ec74cead30fe4730aecc88cc1fd92"
-dependencies = [
- "fixedbitset",
- "indexmap",
-]
 
 [[package]]
 name = "pin-project"
@@ -1137,24 +1108,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost-build"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02b10678c913ecbd69350e8535c3aef91a8676c0773fc1d7b95cdd196d7f2f26"
-dependencies = [
- "bytes",
- "heck",
- "itertools",
- "log",
- "multimap",
- "petgraph",
- "prost",
- "prost-types",
- "tempfile",
- "which",
-]
-
-[[package]]
 name = "prost-derive"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1165,16 +1118,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "prost-types"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1834f67c0697c001304b75be76f67add9c89742eda3a085ad8ee0bb38c3417aa"
-dependencies = [
- "bytes",
- "prost",
 ]
 
 [[package]]
@@ -1322,7 +1265,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2bc8af4bda8e1ff4932523b94d3dd20ee30a87232323eda55903ffd71d2fb017"
 dependencies = [
- "base64 0.11.0",
+ "base64",
  "blake2b_simd",
  "constant_time_eq",
  "crossbeam-utils 0.7.2",
@@ -1644,9 +1587,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-util"
-version = "0.2.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "571da51182ec208780505a32528fc5512a8fe1443ab960b3f2f3ef093cd16930"
+checksum = "be8242891f2b6cbef26a2d7e8605133c2c554cd35b3e4948ea892d6d68436499"
 dependencies = [
  "bytes",
  "futures-core",
@@ -1667,20 +1610,20 @@ dependencies = [
 
 [[package]]
 name = "tonic"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08283643b1d483eb7f3fc77069e63b5cba3e4db93514b3d45470e67f123e4e48"
+checksum = "b058d1caf0c61cd4d7425b4f161fa3c41a4e0ca2d2e9f63af842ad2f1eca1628"
 dependencies = [
  "async-stream",
  "async-trait",
- "base64 0.10.1",
+ "base64",
  "bytes",
  "futures-core",
  "futures-util",
  "http",
  "http-body",
  "hyper",
- "percent-encoding 1.0.1",
+ "percent-encoding",
  "pin-project",
  "prost",
  "prost-derive",
@@ -1693,18 +1636,6 @@ dependencies = [
  "tower-service",
  "tracing",
  "tracing-futures",
-]
-
-[[package]]
-name = "tonic-build"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0436413ba71545bcc6c2b9a0f9d78d72deb0123c6a75ccdfe7c056f9930f5e52"
-dependencies = [
- "proc-macro2",
- "prost-build",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -2005,7 +1936,7 @@ checksum = "829d4a8476c35c9bf0bbce5a3b23f4106f79728039b726d292bb93bc106787cb"
 dependencies = [
  "idna",
  "matches",
- "percent-encoding 2.1.0",
+ "percent-encoding",
 ]
 
 [[package]]
@@ -2183,15 +2114,6 @@ name = "wasmparser"
 version = "0.51.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aeb1956b19469d1c5e63e459d29e7b5aa0f558d9f16fcef09736f8a265e6c10a"
-
-[[package]]
-name = "which"
-version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5475d47078209a02e60614f7ba5e645ef3ed60f771920ac1906d7c1cc65024c8"
-dependencies = [
- "libc",
-]
 
 [[package]]
 name = "winapi"
