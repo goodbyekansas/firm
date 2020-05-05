@@ -63,6 +63,6 @@ jobs:
         attributes: "${{ matrix.component }}.packageWithChecks"
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
     - name: Set correct permissions of cache directory
-      run: sudo chmod -R o+r /var/cache/nedryland-rust
+      run: sudo chmod -R o+rX /var/cache/nedryland-rust
     - name: Cache hack to avoid empty cache
       run: sudo rmdir /var/cache/nedryland-rust || true
