@@ -9,7 +9,7 @@ let
       builtins.fetchGit {
         name = "nedryland";
         url = "git@github.com:goodbyekansas/nedryland.git";
-        rev = "2f9f1cd8aa198e2ddf8e3e64abd1c76351bba9fd";
+        rev = "e2ffeeaf2e204e412e7f00f043c8692e1561cc8b";
       }
   );
 
@@ -25,7 +25,7 @@ let
   protocols = nedryland.importProject {
     name = "protocols";
     url = "git@github.com:goodbyekansas/protocols.git";
-    rev = "9d30daaf66342f6e224f7c30e6f6376c20319007";
+    rev = "b3fc3901b1e01495bb43569cad3eb9597ec872e0";
   };
 
   # declare the components of the project and their dependencies
