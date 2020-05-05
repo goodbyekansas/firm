@@ -6,7 +6,8 @@ use std::collections::{hash_map::RandomState, HashMap};
 use prost::Message;
 use thiserror::Error;
 
-use gbk_protocols::functions::{ArgumentType, FunctionArgument, ReturnValue, StartProcessRequest};
+pub use gbk_protocols::functions::ReturnValue;
+use gbk_protocols::functions::{ArgumentType, FunctionArgument, StartProcessRequest};
 
 mod raw {
     #[link(wasm_import_module = "gbk")]
