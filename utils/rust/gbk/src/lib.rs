@@ -6,8 +6,7 @@ use std::collections::{hash_map::RandomState, HashMap};
 use prost::Message;
 use thiserror::Error;
 
-pub use gbk_protocols::ReturnValue;
-use gbk_protocols::functions::{ArgumentType, FunctionArgument, StartProcessRequest};
+use gbk_protocols::functions::{ArgumentType, FunctionArgument, ReturnValue, StartProcessRequest};
 
 mod raw {
     #[link(wasm_import_module = "gbk")]
@@ -265,13 +264,10 @@ pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
 
 pub mod execution_environment {
 
+    use gbk_protocols::functions::{FunctionArgument, FunctionArguments};
     use prost::Message;
 
-    use crate::{
-        get_input,
-        proto::{FunctionArgument, FunctionArguments},
-        Error, FromFunctionArgument,
-    };
+    use crate::{get_input, Error, FromFunctionArgument};
 
     /// Special function inputs for
     /// functions that are execution environments
