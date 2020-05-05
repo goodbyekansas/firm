@@ -9,7 +9,7 @@ let
       builtins.fetchGit {
         name = "nedryland";
         url = "git@github.com:goodbyekansas/nedryland.git";
-        rev = "e2ffeeaf2e204e412e7f00f043c8692e1561cc8b";
+        rev = "d35f63d55eef44fe50e544d5c4e8513c90232b97";
       }
   );
 
@@ -22,30 +22,30 @@ let
     ];
   };
 
-  protocols = nedryland.importProject {
-    name = "protocols";
-    url = "git@github.com:goodbyekansas/protocols.git";
-    rev = "b3fc3901b1e01495bb43569cad3eb9597ec872e0";
-  };
+  protocols = import ./protocols project;
 
   # declare the components of the project and their dependencies
   components = rec {
+    inherit protocols;
+
     wasiFunctionUtils = project.declareComponent ./utils/rust/gbk/gbk.nix {
-      protocols = protocols.rustOnlyMessages;
+      protocols = protocols.rust.onlyMessages;
     };
     avery = project.declareComponent ./services/avery/avery.nix {
-      protocols = protocols.rustWithServices;
+      protocols = protocols.rust.withServices;
     };
     bendini = project.declareComponent ./clients/bendini/bendini.nix {
-      protocols = protocols.rustWithServices;
+      protocols = protocols.rust.withServices;
     };
     lomax = project.declareComponent ./clients/lomax/lomax.nix {
-      protocols = protocols.rustWithServices;
+      protocols = protocols.rust.withServices;
     };
 
     os-packaging = project.declareComponent ./deployment/os-packaging.nix {
       linuxPackages = [
         avery
+        bendini
+        lomax
       ];
 
       windowsPackages = [];
@@ -92,4 +92,4 @@ project.mkGrid {
   lib = {
     inherit getFunctionDeployments;
   };
-} // protocols
+}

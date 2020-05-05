@@ -30,12 +30,12 @@ let
           installPhase = ''
             ${oldAttrs.installPhase or ""}
             if [ -f $out/${code} ]; then
-              echo "Creating output manifest.."
+              echo "📜 Creating output manifest..."
               cat $manifestContentPath | \
               SHA256=$(sha256sum $out/${code} | cut -d " " -f 1) ${pkgs.envsubst}/bin/envsubst | \
               ${pkgs.remarshal}/bin/json2toml -o $out/manifest.toml
             else
-              echo "ERROR: specified code does not exist..."
+              echo "ERROR: 💥 specified code does not exist..."
               exit 1
             fi
           '';

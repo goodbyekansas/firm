@@ -22,7 +22,10 @@ jobs:
           avery,
           bendini,
           lomax,
-          rustGbkUtils,
+          wasiFunctionUtils,
+          protocols.python,
+          protocols.rust.withServices,
+          protocols.rustProtoCompiler,
         ]
 
     steps:
