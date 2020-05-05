@@ -1,0 +1,52 @@
+syntax = "proto3";
+import "functions/functions.proto";
+package dcc_integration;
+
+message FunctionPayloadMetadata {
+  string name = 1;
+  string sha256 = 2;
+}
+
+message FunctionPayloadMetadataResponse {
+  bool send_payload = 1;
+}
+
+message GetInputCommand {
+  string name = 1;
+}
+
+message GetInputResponse {
+  functions.FunctionArgument argument = 1;
+}
+
+message SetOutputCommand {
+  functions.ReturnValue return_value = 1;
+}
+
+message SetOutputResponse {}
+
+message SetErrorCommand {
+  string message = 1;
+}
+
+message SetErrorResponse {}
+
+message FunctionFinishedCommand {}
+
+message IntegrationCommand {
+  oneof command {
+    GetInputCommand get_input = 1;
+    SetOutputCommand set_output = 2;
+    SetErrorCommand set_error = 3;
+    FunctionFinishedCommand function_finished = 4;
+  }
+}
+
+message IntegrationResponse {
+  oneof response {
+    GetInputResponse get_response = 1;
+    SetOutputResponse set_response = 2;
+    SetErrorResponse set_error_response = 3;
+    string error_message = 4;
+  }
+}
