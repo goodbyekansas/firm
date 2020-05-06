@@ -1,8 +1,8 @@
 project:
 rec {
-  rustProtoCompiler = project.declareComponent ./rust/compiler/compiler.nix {};
+  rustProtoCompiler = project.declareComponent ./rust/compiler/compiler.nix { };
 
-  python = project.declareComponent ./python/python.nix {};
+  python = project.declareComponent ./python/python.nix { };
   rust = {
     withServices = project.declareComponent ./rust/rust.nix {
       rustProtoCompiler = rustProtoCompiler.package;
