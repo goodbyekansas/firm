@@ -19,14 +19,14 @@ base.mkComponent {
     ];
 
     buildPhase = ''
-      ${rustProtoCompiler}/bin/compiler -I ./ ${if includeServices then "--build-services" else ""} -o ./gbk-protocols/src **/*.proto
-      substitute rust/Cargo.toml ./gbk-protocols/Cargo.toml --subst-var-by includeTonic ${if includeServices then "'tonic = \"0.2\"'" else "''"}  
+      ${rustProtoCompiler}/bin/compiler -I ./ ${ if includeServices then "--build-services" else ""} -o ./gbk-protocols/src **/*.proto
+      substitute rust/Cargo.toml ./gbk-protocols/Cargo.toml --subst-var-by includeTonic ${ if includeServices then "'tonic = \"0.2\"'" else "''"}
 
       # generate a useable lib.rs
       for f in ./gbk-protocols/src/**.rs; do
         echo "pub mod $(basename "$f" .rs);" >> ./gbk-protocols/src/lib.rs
       done
-      ${if includeServices then "echo 'pub use tonic;' >> ./gbk-protocols/src/lib.rs" else "" }
+      ${ if includeServices then "echo 'pub use tonic;' >> ./gbk-protocols/src/lib.rs" else "" }
     '';
 
     checkPhase = ''
