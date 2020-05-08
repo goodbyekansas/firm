@@ -91,6 +91,7 @@ base.extend.mkExtension {
                   cp target/wasm32-wasi/release/*.wasm $out/bin
                 '';
                 CARGO_TARGET_WASM32_WASI_RUNNER = "wasmer";
+                RUST_TEST_NOCAPTURE = 1;
                 cargoAlias = ''
                   cargo()
                   {
