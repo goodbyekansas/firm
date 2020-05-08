@@ -77,9 +77,9 @@ base.extend.mkExtension {
         }:
         let
           package = base.languages.rust.mkPackage {
-            inherit buildInputs src name rustDependencies useNightly;
+            buildInputs = buildInputs ++ [ pkgs.wasmer ];
+            inherit src name rustDependencies useNightly;
             targets = targets ++ [ "wasm32-wasi" ];
-            hasTests = false;
             defaultTarget = "wasm32-wasi";
           };
           newPackage = package.overrideAttrs
@@ -90,10 +90,31 @@ base.extend.mkExtension {
                   mkdir -p $out/bin
                   cp target/wasm32-wasi/release/*.wasm $out/bin
                 '';
+                CARGO_TARGET_WASM32_WASI_RUNNER = "wasmer";
+                cargoAlias = ''
+                  cargo()
+                  {
+                  if [ $# -gt 0 ] && [ "$1" == "test" ] ; then
+                    shift
+                    command cargo test --features gbk/mock "$@"
+                  else
+                    command cargo "$@"
+                  fi
+                  }
+                '';
+
+                configurePhase = ''
+                  ${oldAttrs.configurePhase}
+                  eval "$cargoAlias"
+                '';
               }
             );
         in
-        mkFunction (attrs // { package = newPackage; code = "bin/${newPackage.name}.wasm"; });
+        mkFunction
+          (attrs // {
+            package = newPackage;
+            code = "bin/${newPackage.name}.wasm";
+          });
     };
   };
 }
