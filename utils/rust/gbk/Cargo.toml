@@ -13,3 +13,4 @@ gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
 
 [features]
 net = []
+mock = []
