@@ -11,6 +11,9 @@ thiserror = "1"
 prost = "0.6"
 gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
 
+[dev-dependencies]
+lazy_static = "1"
+
 [features]
 net = []
 mock = []

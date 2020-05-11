@@ -75,8 +75,7 @@ base.extend.mkExtension {
         }:
         let
           package = base.languages.rust.mkPackage {
-            buildInputs = buildInputs ++ [ pkgs.wasmer ];
-            inherit src name rustDependencies useNightly;
+            inherit src name rustDependencies useNightly buildInputs;
             targets = targets ++ [ "wasm32-wasi" ];
             defaultTarget = "wasm32-wasi";
           };
@@ -87,7 +86,7 @@ base.extend.mkExtension {
                 mkdir -p $out/bin
                 cp target/wasm32-wasi/release/*.wasm $out/bin
               '';
-              CARGO_TARGET_WASM32_WASI_RUNNER = "wasmer run --env=RUST_TEST_NOCAPTURE=1";
+
               cargoAlias = ''
                 cargo()
                 {
