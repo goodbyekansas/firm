@@ -6,7 +6,7 @@ extern "C" {
     pub fn get_input(
         key_ptr: *const u8,
         key_len: usize,
-        value_ptr: *const u8,
+        value_ptr: *mut u8,
         value_len: usize,
     ) -> u32;
     pub fn set_output(value_ptr: *const u8, value_len: usize) -> u32;
