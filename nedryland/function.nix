@@ -22,37 +22,35 @@ let
         };
         # TODO: In the future we must support signatures for functions as well
       };
-      packageWithManifest = package.overrideAttrs
-        (
-          oldAttrs: {
-            buildInputs = oldAttrs.buildInputs or [ ] ++ [ pkgs.utillinux ];
-            manifestContent = builtins.toJSON manifestWithChecksum;
-            passAsFile = oldAttrs.passAsFile or [ ] ++ [ "manifestContent" ];
-            installPhase = ''
-              ${oldAttrs.installPhase or ""}
-              if [ -f $out/${code} ]; then
-                echo "📜 Creating output manifest..."
-                cat $manifestContentPath | \
-                SHA256=$(sha256sum $out/${code} | cut -d " " -f 1) ${pkgs.envsubst}/bin/envsubst | \
-                ${pkgs.remarshal}/bin/json2toml -o $out/manifest.toml
-              else
-                echo "ERROR: 💥 specified code does not exist..."
-                exit 1
-              fi
-            '';
-            inherit code;
-          }
-        );
-    in
-    base.mkComponent
-      (
-        attrs // {
-          package = packageWithManifest;
-          deployment = {
-            function = deployFunction { package = packageWithManifest; };
-          };
+      packageWithManifest = package.overrideAttrs (
+        oldAttrs: {
+          buildInputs = oldAttrs.buildInputs or [ ] ++ [ pkgs.utillinux ];
+          manifestContent = builtins.toJSON manifestWithChecksum;
+          passAsFile = oldAttrs.passAsFile or [ ] ++ [ "manifestContent" ];
+          installPhase = ''
+            ${oldAttrs.installPhase or ""}
+            if [ -f $out/${code} ]; then
+              echo "📜 Creating output manifest..."
+              cat $manifestContentPath | \
+              SHA256=$(sha256sum $out/${code} | cut -d " " -f 1) ${pkgs.envsubst}/bin/envsubst | \
+              ${pkgs.remarshal}/bin/json2toml -o $out/manifest.toml
+            else
+              echo "ERROR: 💥 specified code does not exist..."
+              exit 1
+            fi
+          '';
+          inherit code;
         }
       );
+    in
+    base.mkComponent (
+      attrs // {
+        package = packageWithManifest;
+        deployment = {
+          function = deployFunction { package = packageWithManifest; };
+        };
+      }
+    );
 in
 base.extend.mkExtension {
   componentTypes = base.extend.mkComponentType {
@@ -82,40 +80,37 @@ base.extend.mkExtension {
             targets = targets ++ [ "wasm32-wasi" ];
             defaultTarget = "wasm32-wasi";
           };
-          newPackage = package.overrideAttrs
-            (
-              oldAttrs: {
-                installPhase = ''
-                  ${oldAttrs.installPhase}
-                  mkdir -p $out/bin
-                  cp target/wasm32-wasi/release/*.wasm $out/bin
-                '';
-                CARGO_TARGET_WASM32_WASI_RUNNER = "wasmer";
-                RUST_TEST_NOCAPTURE = 1;
-                cargoAlias = ''
-                  cargo()
-                  {
-                  if [ $# -gt 0 ] && [ "$1" == "test" ] ; then
-                    shift
-                    command cargo test --features gbk/mock "$@"
-                  else
-                    command cargo "$@"
-                  fi
-                  }
-                '';
+          newPackage = package.overrideAttrs (
+            oldAttrs: {
+              installPhase = ''
+                ${oldAttrs.installPhase}
+                mkdir -p $out/bin
+                cp target/wasm32-wasi/release/*.wasm $out/bin
+              '';
+              CARGO_TARGET_WASM32_WASI_RUNNER = "wasmer run --env=RUST_TEST_NOCAPTURE=1";
+              cargoAlias = ''
+                cargo()
+                {
+                if [ $# -gt 0 ] && [ "$1" == "test" ] ; then
+                  shift
+                  command cargo test --features gbk/mock "$@"
+                else
+                  command cargo "$@"
+                fi
+                }
+              '';
 
-                configurePhase = ''
-                  ${oldAttrs.configurePhase}
-                  eval "$cargoAlias"
-                '';
-              }
-            );
+              configurePhase = ''
+                ${oldAttrs.configurePhase}
+                eval "$cargoAlias"
+              '';
+            }
+          );
         in
-        mkFunction
-          (attrs // {
-            package = newPackage;
-            code = "bin/${newPackage.name}.wasm";
-          });
+        mkFunction (attrs // {
+          package = newPackage;
+          code = "bin/${newPackage.name}.wasm";
+        });
     };
   };
 }

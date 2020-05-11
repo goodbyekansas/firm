@@ -2,8 +2,8 @@ let
   # the if statement here is to be able to switch to
   # a local dev version of nedryland
   # if you do not need this, just keep the else statement
-  nedryland = import
-    (
+  nedryland =
+    import (
       if builtins.getEnv "NEDRYLAND_PATH" != "" then
         (./. + "/${builtins.getEnv "NEDRYLAND_PATH"}")
       else
