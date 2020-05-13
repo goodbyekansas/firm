@@ -19,7 +19,7 @@ use wasmer_wasi::{
 };
 
 use crate::executor::{ExecutorError, FunctionExecutor};
-use error::{ToErrorCode, WasmError};
+use error::{ToErrorCode, WasiError};
 use gbk_protocols::functions::{
     execute_response::Result as ProtoResult, Checksums, ExecutionError, FunctionArgument,
     FunctionResult, ReturnValue,
@@ -119,7 +119,7 @@ fn execute_function(
                 function::set_output(ctx.memory(0), val, vallen).and_then(|v| {
                     res.write().map(|mut writer| {
                         writer.push(Ok(v));
-                    }).map_err(|e| {WasmError::Unknown(format!("{}", e))})
+                    }).map_err(|e| {WasiError::Unknown(format!("{}", e))})
                 }).to_error_code()
             }),
 
@@ -127,7 +127,7 @@ fn execute_function(
                 function::set_error(ctx.memory(0), msg, msglen).and_then(|v| {
                     res2.write().map(|mut writer| {
                         writer.push(Err(v));
-                    }).map_err(|e| {WasmError::Unknown(format!("{}", e))})
+                    }).map_err(|e| {WasiError::Unknown(format!("{}", e))})
                 }).to_error_code()
             }),
 
@@ -162,17 +162,17 @@ fn execute_function(
 }
 
 #[derive(Debug)]
-pub struct WasmExecutor {
+pub struct WasiExecutor {
     logger: Logger,
 }
 
-impl WasmExecutor {
+impl WasiExecutor {
     pub fn new(logger: Logger) -> Self {
         Self { logger }
     }
 }
 
-impl FunctionExecutor for WasmExecutor {
+impl FunctionExecutor for WasiExecutor {
     fn execute(
         &self,
         function_name: &str,
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_execution() {
-        let executor = WasmExecutor::new(null_logger!());
+        let executor = WasiExecutor::new(null_logger!());
         let res = executor.execute(
             "hello-world",
             "could-be-anything",

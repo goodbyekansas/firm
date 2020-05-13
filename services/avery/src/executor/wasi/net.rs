@@ -8,7 +8,7 @@ use wasmer_wasi::{
     types,
 };
 
-use super::error::{WasiResult, WasmError};
+use super::error::{WasiError, WasiResult};
 
 #[derive(Debug, Serialize)]
 struct SocketFile {
@@ -170,10 +170,10 @@ pub fn connect(
 ) -> WasiResult<()> {
     let address = addr
         .get_utf8_string(vm_memory, addr_len)
-        .ok_or_else(|| WasmError::FailedToReadStringPointer("address".to_owned()))?;
+        .ok_or_else(|| WasiError::FailedToReadStringPointer("address".to_owned()))?;
 
     let socket_file = SocketFile::new(address.to_owned())
-        .map_err(|e| WasmError::FailedToConnect(address.to_owned(), e))?;
+        .map_err(|e| WasiError::FailedToConnect(address.to_owned(), e))?;
 
     let fd = fs
         .open_file_at(
@@ -187,12 +187,12 @@ pub fn connect(
             0, // rights_inheriting
             0, // fd_flags
         )
-        .map_err(|e| WasmError::FailedToOpenFile(format!("{:#?}", e)))?;
+        .map_err(|e| WasiError::FailedToOpenFile(format!("{:#?}", e)))?;
 
     unsafe {
         fd_out
             .deref_mut(vm_memory)
-            .ok_or_else(WasmError::FailedToDerefPointer)
+            .ok_or_else(WasiError::FailedToDerefPointer)
             .map(|c| {
                 c.set(fd);
             })

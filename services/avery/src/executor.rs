@@ -1,4 +1,4 @@
-mod wasm;
+mod wasi;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -12,7 +12,7 @@ use slog::{o, Logger};
 use thiserror::Error;
 use url::Url;
 
-use crate::executor::wasm::WasmExecutor;
+use crate::executor::wasi::WasiExecutor;
 use gbk_protocols::{
     functions::{
         execute_response::Result as ProtoResult, functions_registry_server::FunctionsRegistry,
@@ -177,7 +177,7 @@ async fn traverse_execution_environments<'a>(
 
     loop {
         match exec_env.as_str() {
-            "wasm" => break,
+            "wasi" => break,
             ee => {
                 let function_descriptor =
                     get_function_with_execution_environment(registry, ee, None)
@@ -263,13 +263,13 @@ pub async fn lookup_executor<'a>(
     let function_descriptors = traverse_execution_environments(&logger, name, registry).await?;
 
     // TODO: now we are assuming that the stop condition for the above function
-    // was "wasm". This may not be true later
-    let executor = Box::new(WasmExecutor::new(
+    // was "wasi". This may not be true later
+    let executor = Box::new(WasiExecutor::new(
         function_descriptors
             .last()
             .map(|(_fd, logger)| logger)
             .unwrap_or(&logger)
-            .new(o!("executor" => "wasm")),
+            .new(o!("executor" => "wasi")),
     ));
 
     Ok(function_descriptors
@@ -985,9 +985,9 @@ mod tests {
 
     #[test]
     fn test_lookup_executor() {
-        // get wasm executor
+        // get wasi executor
         let fr = registry!();
-        let res = futures::executor::block_on(lookup_executor(null_logger!(), "wasm", &fr));
+        let res = futures::executor::block_on(lookup_executor(null_logger!(), "wasi", &fr));
         assert!(res.is_ok());
 
         // get non existing executor
@@ -999,9 +999,9 @@ mod tests {
         ));
 
         // get function executor
-        let mut wasm_executor_tags = HashMap::new();
-        wasm_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
-        wasm_executor_tags.insert(
+        let mut wasi_executor_tags = HashMap::new();
+        wasi_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
+        wasi_executor_tags.insert(
             "execution-environment".to_owned(),
             "oran-malifant".to_owned(),
         );
@@ -1027,15 +1027,15 @@ mod tests {
         vec![
             RegisterRequest {
                 execution_environment: Some(ExecutionEnvironment {
-                    name: "wasm".to_owned(),
-                    entrypoint: "wasm.kexe".to_owned(),
+                    name: "wasi".to_owned(),
+                    entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
                 }),
                 checksums: checksums.clone(),
                 code: vec![],
                 name: "oran-func".to_owned(),
                 version: "0.1.1".to_owned(),
-                tags: wasm_executor_tags,
+                tags: wasi_executor_tags,
                 inputs: vec![],
                 outputs: vec![],
             },
@@ -1100,7 +1100,7 @@ mod tests {
     #[test]
     fn test_cyclic_dependency_check() {
         let fr = registry!();
-        let res = futures::executor::block_on(lookup_executor(null_logger!(), "wasm", &fr));
+        let res = futures::executor::block_on(lookup_executor(null_logger!(), "wasi", &fr));
         assert!(res.is_ok());
 
         // get non existing executor
@@ -1112,9 +1112,9 @@ mod tests {
         ));
 
         // get function executor
-        let mut wasm_executor_tags = HashMap::new();
-        wasm_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
-        wasm_executor_tags.insert("execution-environment".to_owned(), "aa-exec".to_owned());
+        let mut wasi_executor_tags = HashMap::new();
+        wasi_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
+        wasi_executor_tags.insert("execution-environment".to_owned(), "aa-exec".to_owned());
 
         let mut nested_executor_tags = HashMap::new();
         nested_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
@@ -1133,13 +1133,13 @@ mod tests {
                 name: "aa-func".to_owned(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "bb-exec".to_owned(),
-                    entrypoint: "wasm.kexe".to_owned(),
+                    entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
                 }),
                 checksums: checksums.clone(),
                 code: vec![],
                 version: "0.1.1".to_owned(),
-                tags: wasm_executor_tags,
+                tags: wasi_executor_tags,
                 inputs: vec![],
                 outputs: vec![],
             },
@@ -1147,7 +1147,7 @@ mod tests {
                 name: "bb-func".to_owned(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "cc-exec".to_owned(),
-                    entrypoint: "wasm.kexe".to_owned(),
+                    entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
                 }),
                 checksums: checksums.clone(),
@@ -1161,7 +1161,7 @@ mod tests {
                 name: "cc-func".to_owned(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "aa-exec".to_owned(),
-                    entrypoint: "wasm.kexe".to_owned(),
+                    entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
                 }),
                 checksums,

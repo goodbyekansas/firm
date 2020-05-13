@@ -10,7 +10,7 @@ let
         builtins.fetchGit {
           name = "nedryland";
           url = "git@github.com:goodbyekansas/nedryland.git";
-          rev = "12e2c0f268dd450f51ee22d35331ac44b8322b2f";
+          rev = "3cf04fee3d82be643503a72ba6aa121cc745c6cb";
         }
     );
 
@@ -41,7 +41,7 @@ let
       protocols = protocols.rust.withServices;
     };
 
-    os-packaging = project.declareComponent ./deployment/os-packaging.nix {
+    osPackaging = project.declareComponent ./deployment/os-packaging.nix {
       linuxPackages = [
         avery
         bendini

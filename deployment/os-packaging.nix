@@ -11,12 +11,12 @@ base.mkComponent {
     # scripts 👼 
     builder = builtins.toFile "builder.sh" ''
       source $stdenv/setup
-      mkdir -p $out/linux
-      mkdir -p $out/windows
+      mkdir -p $out/linux/bin
+      mkdir -p $out/windows/bin
       echo "this is the linux packages"
       echo $linuxPackages
       for lp in $linuxPackages; do
-         cp -r $lp/bin $out/linux
+         cp -r $lp/bin/* $out/linux/bin
       done
 
       echo "This is temp output and will not be printed here"
