@@ -19,7 +19,7 @@ use gbk_protocols::functions::{ArgumentType, FunctionArgument, StartProcessReque
 mod raw;
 
 #[cfg(any(test, feature = "mock"))]
-mod mock;
+pub mod mock;
 
 #[cfg(any(test, feature = "mock"))]
 use mock as raw;

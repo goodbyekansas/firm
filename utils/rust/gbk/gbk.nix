@@ -7,5 +7,5 @@ base.languages.rust.mkUtility {
   useNightly = "2020-05-01";
   rustDependencies = [ protocols ];
   testFeatures = [ "net" ];
-  buildFeatures = [ "net" ];
+  buildFeatures = [ "net" "mock" ];
 }
