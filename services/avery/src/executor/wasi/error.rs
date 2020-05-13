@@ -3,7 +3,7 @@ use std::io;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum WasmError {
+pub enum WasiError {
     #[error("Unknown: {0}")]
     Unknown(String),
 
@@ -35,7 +35,7 @@ pub enum WasmError {
     FailedToConnect(String, io::Error),
 }
 
-pub type WasiResult<T> = std::result::Result<T, WasmError>;
+pub type WasiResult<T> = std::result::Result<T, WasiError>;
 
 pub trait ToErrorCode<T> {
     fn to_error_code(self) -> u32;
@@ -50,19 +50,19 @@ impl<T> ToErrorCode<T> for WasiResult<T> {
     }
 }
 
-impl From<WasmError> for u32 {
-    fn from(err: WasmError) -> Self {
+impl From<WasiError> for u32 {
+    fn from(err: WasiError) -> Self {
         match err {
-            WasmError::Unknown(_) => 1,
-            WasmError::FailedToDerefPointer() => 2,
-            WasmError::FailedToDecodeProtobuf(_) => 3,
-            WasmError::ConversionError(_) => 4,
-            WasmError::FailedToReadStringPointer(_) => 5,
-            WasmError::FailedToFindKey(_) => 6,
-            WasmError::FailedToEncodeProtobuf(_) => 7,
-            WasmError::FailedToStartProcess(_) => 8,
-            WasmError::FailedToOpenFile(_) => 9,
-            WasmError::FailedToConnect(..) => 10,
+            WasiError::Unknown(_) => 1,
+            WasiError::FailedToDerefPointer() => 2,
+            WasiError::FailedToDecodeProtobuf(_) => 3,
+            WasiError::ConversionError(_) => 4,
+            WasiError::FailedToReadStringPointer(_) => 5,
+            WasiError::FailedToFindKey(_) => 6,
+            WasiError::FailedToEncodeProtobuf(_) => 7,
+            WasiError::FailedToStartProcess(_) => 8,
+            WasiError::FailedToOpenFile(_) => 9,
+            WasiError::FailedToConnect(..) => 10,
         }
     }
 }

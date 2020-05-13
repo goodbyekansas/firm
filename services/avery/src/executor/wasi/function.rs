@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use super::error::{WasiResult, WasmError};
+use super::error::{WasiError, WasiResult};
 use prost::Message;
 use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
@@ -29,18 +29,18 @@ pub fn get_input_len(
 ) -> WasiResult<()> {
     let key = key
         .get_utf8_string(vm_memory, keylen)
-        .ok_or_else(|| WasmError::FailedToReadStringPointer("key".to_owned()))?;
+        .ok_or_else(|| WasiError::FailedToReadStringPointer("key".to_owned()))?;
 
     arguments
         .iter()
         .find(|a| a.name == key)
-        .ok_or_else(|| WasmError::FailedToFindKey(key.to_string()))
+        .ok_or_else(|| WasiError::FailedToFindKey(key.to_string()))
         .and_then(|a| {
             let len = a.encoded_len();
             unsafe {
                 value
                     .deref_mut(vm_memory)
-                    .ok_or_else(WasmError::FailedToDerefPointer)
+                    .ok_or_else(WasiError::FailedToDerefPointer)
                     .map(|c| {
                         c.set(len as u64);
                     })
@@ -58,23 +58,23 @@ pub fn get_input(
 ) -> WasiResult<()> {
     let key = key
         .get_utf8_string(vm_memory, keylen)
-        .ok_or_else(|| WasmError::FailedToReadStringPointer("key".to_owned()))?;
+        .ok_or_else(|| WasiError::FailedToReadStringPointer("key".to_owned()))?;
 
     arguments
         .iter()
         .find(|a| a.name == key)
-        .ok_or_else(|| WasmError::FailedToFindKey(key.to_string()))
+        .ok_or_else(|| WasiError::FailedToFindKey(key.to_string()))
         .and_then(|a| {
             value
                 .as_byte_array_mut(&vm_memory, valuelen as usize)
                 .ok_or_else(|| {
-                    WasmError::ConversionError(
+                    WasiError::ConversionError(
                         "Failed to convert provided input buffer to mut byte array.".to_owned(),
                     )
                 })
                 .and_then(|mut buff| {
                     a.encode(&mut buff)
-                        .map_err(WasmError::FailedToEncodeProtobuf)
+                        .map_err(WasiError::FailedToEncodeProtobuf)
                 })
         })
 }
@@ -85,7 +85,7 @@ pub fn set_output(
     vallen: u32,
 ) -> WasiResult<ReturnValue> {
     val.deref(vm_memory, 0, vallen)
-        .ok_or_else(WasmError::FailedToDerefPointer)
+        .ok_or_else(WasiError::FailedToDerefPointer)
         .and_then(|cells| {
             ReturnValue::decode(
                 cells
@@ -94,13 +94,13 @@ pub fn set_output(
                     .collect::<Vec<u8>>()
                     .as_slice(),
             )
-            .map_err(WasmError::FailedToDecodeProtobuf)
+            .map_err(WasiError::FailedToDecodeProtobuf)
         })
 }
 
 pub fn set_error(vm_memory: &Memory, msg: WasmPtr<u8, Array>, msglen: u32) -> WasiResult<String> {
     msg.get_utf8_string(vm_memory, msglen)
-        .ok_or_else(|| WasmError::FailedToReadStringPointer("msg".to_owned()))
+        .ok_or_else(|| WasiError::FailedToReadStringPointer("msg".to_owned()))
         .map(|s| s.to_owned())
 }
 
@@ -151,7 +151,7 @@ mod tests {
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
-            WasmError::FailedToReadStringPointer(..)
+            WasiError::FailedToReadStringPointer(..)
         ));
 
         // get non existant input
@@ -176,7 +176,7 @@ mod tests {
         );
 
         assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), WasmError::FailedToFindKey(..)));
+        assert!(matches!(res.unwrap_err(), WasiError::FailedToFindKey(..)));
 
         // get existing input
         let mem = create_mem!();
@@ -229,7 +229,7 @@ mod tests {
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
-            WasmError::FailedToDerefPointer()
+            WasiError::FailedToDerefPointer()
         ));
     }
 
@@ -244,7 +244,7 @@ mod tests {
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
-            WasmError::FailedToReadStringPointer(..)
+            WasiError::FailedToReadStringPointer(..)
         ));
 
         // testing failed to find key
@@ -263,7 +263,7 @@ mod tests {
         );
 
         assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), WasmError::FailedToFindKey(..)));
+        assert!(matches!(res.unwrap_err(), WasiError::FailedToFindKey(..)));
 
         // testing failing to convert provided input
         let mem = create_mem!();
@@ -287,7 +287,7 @@ mod tests {
         );
 
         assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), WasmError::ConversionError(..)));
+        assert!(matches!(res.unwrap_err(), WasiError::ConversionError(..)));
 
         // testing failed to encode protobuf
         let mem = create_mem!();
@@ -319,7 +319,7 @@ mod tests {
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
-            WasmError::FailedToEncodeProtobuf(..)
+            WasiError::FailedToEncodeProtobuf(..)
         ));
 
         // testing getting valid input
@@ -374,7 +374,7 @@ mod tests {
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
-            WasmError::FailedToDerefPointer()
+            WasiError::FailedToDerefPointer()
         ));
 
         let return_value = ReturnValue {
@@ -391,7 +391,7 @@ mod tests {
         let res = set_output(&mem, ptr, encoded_len as u32);
         assert!(matches!(
             res.unwrap_err(),
-            WasmError::FailedToDecodeProtobuf(..)
+            WasiError::FailedToDecodeProtobuf(..)
         ));
 
         // Try with written pointer

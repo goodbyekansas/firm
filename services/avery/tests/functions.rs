@@ -211,7 +211,7 @@ fn test_execute() {
             sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
         }),
         execution_environment: Some(ExecutionEnvironment {
-            name: "wasm".to_owned(),
+            name: "wasi".to_owned(),
             entrypoint: "kanske".to_owned(),
             args: vec![],
         }),
@@ -292,7 +292,7 @@ fn test_execution_environment_inputs() {
             code: vec![],
             checksums: checksums.clone(),
             execution_environment: Some(ExecutionEnvironment {
-                name: "wasm".to_owned(),
+                name: "wasi".to_owned(),
                 entrypoint: "kanske".to_owned(),
                 args: vec![]
             }),
