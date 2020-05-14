@@ -91,21 +91,8 @@ base.extend.mkExtension {
                 cp target/wasm32-wasi/release/*.wasm $out/bin
               '';
 
-              cargoAlias = ''
-                cargo()
-                {
-                if [ $# -gt 0 ] && [ "$1" == "test" ] ; then
-                  shift
-                  command cargo test --features gbk/mock "$@"
-                else
-                  command cargo "$@"
-                fi
-                }
-              '';
-
               configurePhase = ''
                 ${oldAttrs.configurePhase}
-                eval "$cargoAlias"
               '';
             }
           );
