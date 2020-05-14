@@ -5,12 +5,12 @@ let
   nedryland =
     import (
       if builtins.getEnv "NEDRYLAND_PATH" != "" then
-        (./. + "/${builtins.getEnv "NEDRYLAND_PATH"}")
+        (builtins.getEnv "PWD" + "/${builtins.getEnv "NEDRYLAND_PATH"}")
       else
         builtins.fetchGit {
           name = "nedryland";
           url = "git@github.com:goodbyekansas/nedryland.git";
-          rev = "0dca5ced8b0458bc756e6c85a94fe9497cb0572d";
+          rev = "ba13d1485567af21a9cdab46f4ce6422b8b9631e";
         }
     );
 
