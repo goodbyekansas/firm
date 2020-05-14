@@ -6,6 +6,6 @@ base.languages.rust.mkUtility {
   targets = [ "wasm32-wasi" ];
   useNightly = "2020-05-01";
   rustDependencies = [ protocols ];
-  testFeatures = [ "net" ];
-  buildFeatures = [ "net" "mock" ];
+  testFeatures = [ "net" "mock" ];
+  buildFeatures = [ "net" ];
 }

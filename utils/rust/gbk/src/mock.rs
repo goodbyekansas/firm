@@ -8,18 +8,38 @@ use gbk_protocols::functions::{FunctionArgument, ReturnValue, StartProcessReques
 use lazy_static::lazy_static;
 use prost::Message;
 
+/// Start host process
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
 pub unsafe fn start_host_process(request_ptr: *const u8, len: usize, pid: *mut u64) -> u32 {
     MockResultRegistry::execute_start_host_process(request_ptr, len, pid)
 }
 
+/// Run host process
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
 pub unsafe fn run_host_process(request_ptr: *const u8, len: usize, exit_code: *mut i32) -> u32 {
     MockResultRegistry::execute_run_host_process(request_ptr, len, exit_code)
 }
 
+/// Get length of an input
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
 pub unsafe fn get_input_len(key_ptr: *const u8, len: usize, value: *mut u64) -> u32 {
     MockResultRegistry::execute_get_input_len(key_ptr, len, value)
 }
 
+/// Get a function input
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
 pub unsafe fn get_input(
     key_ptr: *const u8,
     key_len: usize,
@@ -29,53 +49,56 @@ pub unsafe fn get_input(
     MockResultRegistry::execute_get_input(key_ptr, key_len, value_ptr, value_len)
 }
 
+/// Set a function output
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
 pub unsafe fn set_output(value_ptr: *const u8, value_len: usize) -> u32 {
     MockResultRegistry::execute_set_output(value_ptr, value_len)
 }
 
+/// Set an error for this function
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
 pub unsafe fn set_error(msg_ptr: *const u8, msg_len: usize) -> u32 {
     MockResultRegistry::execute_set_error(msg_ptr, msg_len)
 }
 
 #[cfg(feature = "net")]
+/// Connect to a remote endpoint
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
 pub unsafe fn connect(addr_ptr: *const u8, addr_len: usize, file_descriptor: *mut u32) -> u32 {
     MockResultRegistry::execute_connect(addr_ptr, addr_len, file_descriptor)
 }
 
 lazy_static! {
     static ref MOCK_RESULT_REGISTRY: Mutex<MockResultRegistry> =
-        Mutex::new(MockResultRegistry::new());
+        Mutex::new(MockResultRegistry::default());
 }
 
+type MockCallbacks<T> = HashMap<ThreadId, Box<T>>;
+
+#[derive(Default)]
 pub struct MockResultRegistry {
     start_host_process_closure:
-        HashMap<ThreadId, Box<dyn Fn(StartProcessRequest) -> Result<u64, u32> + Send>>,
-    run_host_process_closure:
-        HashMap<ThreadId, Box<dyn Fn(StartProcessRequest) -> Result<i32, u32> + Send>>,
-    get_input_len_closure: HashMap<ThreadId, Box<dyn Fn(&str) -> Result<usize, u32> + Send>>,
-    get_input_closure: HashMap<ThreadId, Box<dyn Fn(&str) -> Result<FunctionArgument, u32> + Send>>,
-    set_output_closure: HashMap<ThreadId, Box<dyn Fn(ReturnValue) -> Result<(), u32> + Send>>,
-    set_error_closure: HashMap<ThreadId, Box<dyn Fn(&str) -> Result<(), u32> + Send>>,
+        MockCallbacks<dyn Fn(StartProcessRequest) -> Result<u64, u32> + Send>,
+    run_host_process_closure: MockCallbacks<dyn Fn(StartProcessRequest) -> Result<i32, u32> + Send>,
+    get_input_len_closure: MockCallbacks<dyn Fn(&str) -> Result<usize, u32> + Send>,
+    get_input_closure: MockCallbacks<dyn Fn(&str) -> Result<FunctionArgument, u32> + Send>,
+    set_output_closure: MockCallbacks<dyn Fn(ReturnValue) -> Result<(), u32> + Send>,
+    set_error_closure: MockCallbacks<dyn Fn(&str) -> Result<(), u32> + Send>,
 
     #[cfg(feature = "net")]
-    connect_closure: HashMap<ThreadId, Box<dyn Fn(&str) -> Result<u32, u32> + Send>>,
+    connect_closure: MockCallbacks<dyn Fn(&str) -> Result<u32, u32> + Send>,
 }
 
 impl MockResultRegistry {
-    pub fn new() -> Self {
-        Self {
-            start_host_process_closure: HashMap::new(),
-            run_host_process_closure: HashMap::new(),
-            get_input_len_closure: HashMap::new(),
-            get_input_closure: HashMap::new(),
-            set_output_closure: HashMap::new(),
-            set_error_closure: HashMap::new(),
-
-            #[cfg(feature = "net")]
-            connect_closure: HashMap::new(),
-        }
-    }
-
     pub fn set_start_host_process_impl<F>(closure: F)
     where
         F: Fn(StartProcessRequest) -> Result<u64, u32> + 'static + Send,
@@ -343,7 +366,7 @@ impl MockResultRegistry {
 
         let arguments = args.to_vec();
         MockResultRegistry::set_get_input_impl(move |key| {
-            match arguments.iter().find(|i| &i.name == key) {
+            match arguments.iter().find(|i| i.name == key) {
                 None => Err(1),
                 Some(a) => Ok(a.clone()),
             }
