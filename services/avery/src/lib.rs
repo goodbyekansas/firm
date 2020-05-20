@@ -190,21 +190,23 @@ impl FunctionsServiceTrait for FunctionsService {
         .and_then(|executor| {
             // not having any code for the function is a valid case used for example to execute
             // external functions (gcp, aws lambdas, etc)
-            let code = if function_descriptor.code_url.is_empty() {
-                Ok(vec![])
-            } else {
-                download_code(&function_descriptor.code_url).map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Internal,
-                        format!(
-                            "Failed to download code 🖨️ for function \"{}\" from {}: {}",
-                            function.name.clone(),
-                            &function_descriptor.code_url,
-                            e
-                        ),
-                    )
-                })
-            }?;
+            let code = function_descriptor.code.map_or_else(
+                || Ok(vec![]),
+                |code| {
+                    download_code(&code.url).map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Internal,
+                            format!(
+                                "Failed to download code 🖨️ for function \"{}\" from \"{}\": {}",
+                                function.name.clone(),
+                                &code.url,
+                                e
+                            ),
+                        )
+                    })
+                },
+            )?;
+
             let res = executor.execute(
                 &function.name,
                 &execution_environment.entrypoint,

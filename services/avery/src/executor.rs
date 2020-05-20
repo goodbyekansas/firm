@@ -112,7 +112,13 @@ impl FunctionExecutor for FunctionAdapter {
             .ok_or(ExecutorError::FunctionDescriptorMissingFunction)?
             .name
             .clone();
-        let inner_code = download_code(&self.function_descriptor.code_url)?;
+
+        let inner_code = self
+            .function_descriptor
+            .code
+            .as_ref()
+            .map_or_else(|| Ok(vec![]), |code| download_code(&code.url))?;
+
         let inner_checksums = self
             .function_descriptor
             .checksums
@@ -557,10 +563,12 @@ mod tests {
     use std::{collections::HashMap, io::Write};
 
     use tempfile::NamedTempFile;
+    use uuid::Uuid;
 
     use crate::registry::FunctionsRegistryService;
     use gbk_protocols::functions::{
-        ExecutionEnvironment, Function, FunctionId, RegisterRequest, ReturnValue,
+        ExecutionEnvironment, Function, FunctionAttachment, FunctionAttachmentId, FunctionId,
+        RegisterRequest, ReturnValue,
     };
 
     macro_rules! null_logger {
@@ -873,7 +881,14 @@ mod tests {
                     args: vec![],
                 }),
                 checksums: Some(checksums.clone()),
-                code_url: format!("file://{}", tf.path().display()),
+                code: Some(FunctionAttachment {
+                    id: Some(FunctionAttachmentId {
+                        id: Uuid::new_v4().to_string(),
+                    }),
+                    name: "the-code".to_owned(),
+                    url: format!("file://{}", tf.path().display()),
+                }),
+                attachments: vec![],
                 function: Some(Function {
                     id: Some(FunctionId {
                         value: "huuuuuus".to_owned(),
@@ -945,7 +960,14 @@ mod tests {
                     args: vec![],
                 }),
                 checksums: Some(checksums.clone()),
-                code_url: format!("file://{}", tf.path().display()),
+                code: Some(FunctionAttachment {
+                    id: Some(FunctionAttachmentId {
+                        id: Uuid::new_v4().to_string(),
+                    }),
+                    name: "the-code".to_owned(),
+                    url: format!("file://{}", tf.path().display()),
+                }),
+                attachments: vec![],
                 function: Some(Function {
                     id: Some(FunctionId {
                         value: "pieceee of pie".to_owned(),
@@ -1032,12 +1054,13 @@ mod tests {
                     args: vec![],
                 }),
                 checksums: checksums.clone(),
-                code: vec![],
+                code: None,
                 name: "oran-func".to_owned(),
                 version: "0.1.1".to_owned(),
                 tags: wasi_executor_tags,
                 inputs: vec![],
                 outputs: vec![],
+                attachment_ids: vec![],
             },
             RegisterRequest {
                 execution_environment: Some(ExecutionEnvironment {
@@ -1046,12 +1069,13 @@ mod tests {
                     args: vec![],
                 }),
                 checksums: checksums.clone(),
-                code: vec![],
+                code: None,
                 name: "precious-granag".to_owned(),
                 version: "8.1.5".to_owned(),
                 tags: nested_executor_tags,
                 inputs: vec![],
                 outputs: vec![],
+                attachment_ids: vec![],
             },
             RegisterRequest {
                 execution_environment: Some(ExecutionEnvironment {
@@ -1060,12 +1084,13 @@ mod tests {
                     args: vec![],
                 }),
                 checksums,
-                code: vec![],
+                code: None,
                 name: "precious-granag".to_owned(),
                 version: "3.2.2".to_owned(),
                 tags: broken_executor_tags,
                 inputs: vec![],
                 outputs: vec![],
+                attachment_ids: vec![],
             },
         ]
         .into_iter()
@@ -1137,11 +1162,12 @@ mod tests {
                     args: vec![],
                 }),
                 checksums: checksums.clone(),
-                code: vec![],
+                code: None,
                 version: "0.1.1".to_owned(),
                 tags: wasi_executor_tags,
                 inputs: vec![],
                 outputs: vec![],
+                attachment_ids: vec![],
             },
             RegisterRequest {
                 name: "bb-func".to_owned(),
@@ -1151,11 +1177,12 @@ mod tests {
                     args: vec![],
                 }),
                 checksums: checksums.clone(),
-                code: vec![],
+                code: None,
                 version: "8.1.5".to_owned(),
                 tags: nested_executor_tags,
                 inputs: vec![],
                 outputs: vec![],
+                attachment_ids: vec![],
             },
             RegisterRequest {
                 name: "cc-func".to_owned(),
@@ -1165,11 +1192,12 @@ mod tests {
                     args: vec![],
                 }),
                 checksums,
-                code: vec![],
+                code: None,
                 version: "3.2.2".to_owned(),
                 tags: broken_executor_tags,
                 inputs: vec![],
                 outputs: vec![],
+                attachment_ids: vec![],
             },
         ]
         .into_iter()
