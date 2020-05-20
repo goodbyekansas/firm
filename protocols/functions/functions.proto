@@ -8,6 +8,9 @@ service FunctionsRegistry {
   rpc List (ListRequest) returns (RegistryListResponse);
   rpc Get (FunctionId) returns (FunctionDescriptor);
   rpc Register (RegisterRequest) returns (FunctionId);
+  rpc RegisterAttachment (RegisterAttachmentRequest) returns (FunctionAttachmentId);
+  rpc UploadStreamedAttachment (stream AttachmentStreamUpload) returns (AttachmentUploadResponse);
+  rpc UploadAttachmentUrl(AttachmentUpload) returns (AttachmentUploadResponse);
 }
 
 service Functions {
@@ -55,9 +58,10 @@ message ExecutionEnvironment {
 
 message FunctionDescriptor {
   ExecutionEnvironment execution_environment = 1;
-  string code_url = 2;
+  FunctionAttachment code = 2;
   Function function = 3;
   Checksums checksums = 4;
+  repeated FunctionAttachment attachments = 9;
 }
 
 message Function {
@@ -75,10 +79,38 @@ message RegisterRequest {
   map<string, string> tags = 2;
   repeated FunctionInput inputs = 3;
   repeated FunctionOutput outputs = 4;
-  bytes code = 5;
+  FunctionAttachmentId code = 5;
   ExecutionEnvironment execution_environment = 6;
   string version = 7;
   Checksums checksums = 8;
+  repeated FunctionAttachmentId attachment_ids = 9;
+}
+
+message FunctionAttachment {
+  FunctionAttachmentId id = 1;
+  string name = 2;
+  string url = 3;
+}
+
+message FunctionAttachmentId {
+  string id = 1;
+}
+
+message AttachmentUpload {
+  FunctionAttachmentId id = 1;
+}
+
+message AttachmentStreamUpload {
+  FunctionAttachmentId id = 1;
+  bytes content = 2;
+}
+
+message AttachmentUploadResponse {
+  string url = 1;
+}
+
+message RegisterAttachmentRequest {
+  string name = 1;
 }
 
 message FunctionId {

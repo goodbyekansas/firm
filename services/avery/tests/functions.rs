@@ -39,13 +39,14 @@ macro_rules! functions_service_with_functions {
                 tags: HashMap::with_capacity(0),
                 inputs: Vec::with_capacity(0),
                 outputs: Vec::with_capacity(0),
-                code: vec![],
+                code: None,
                 checksums: checksums.clone(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "wasm".to_owned(),
                     entrypoint: "det du!".to_owned(),
                     args: vec![],
                 }),
+                attachment_ids: vec![],
             },
             RegisterRequest {
                 name: "say-hello-yourself".to_owned(),
@@ -71,13 +72,14 @@ macro_rules! functions_service_with_functions {
                     name: "output_string".to_string(),
                     r#type: ArgumentType::String as i32,
                 }],
-                code: vec![],
+                code: None,
                 checksums,
                 execution_environment: Some(ExecutionEnvironment {
                     name: "wasm".to_owned(),
                     entrypoint: "kanske".to_owned(),
                     args: vec![],
                 }),
+                attachment_ids: vec![],
             },
         ]
         .iter()
@@ -206,7 +208,7 @@ fn test_execute() {
             name: "output_string".to_string(),
             r#type: ArgumentType::String as i32,
         }],
-        code: vec![],
+        code: None,
         checksums: Some(Checksums {
             sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
         }),
@@ -215,6 +217,7 @@ fn test_execute() {
             entrypoint: "kanske".to_owned(),
             args: vec![],
         }),
+        attachment_ids: vec![],
     }]);
 
     let correct_args = vec![
@@ -289,13 +292,14 @@ fn test_execution_environment_inputs() {
                 name: "feff".to_string(),
                 r#type: ArgumentType::String as i32,
             }],
-            code: vec![],
+            code: None,
             checksums: checksums.clone(),
             execution_environment: Some(ExecutionEnvironment {
                 name: "wasi".to_owned(),
                 entrypoint: "kanske".to_owned(),
                 args: vec![]
             }),
+            attachment_ids: vec![],
         },
         RegisterRequest {
             name: "jockes-dank-method".to_owned(),
@@ -312,13 +316,14 @@ fn test_execution_environment_inputs() {
                 name: "hass_string".to_string(),
                 r#type: ArgumentType::String as i32,
             }],
-            code: vec![],
+            code: None,
             checksums: checksums.clone(),
             execution_environment: Some(ExecutionEnvironment {
                 name: "kalle-bula".to_owned(),
                 entrypoint: "kanske".to_owned(),
                 args: vec![],
             }),
+            attachment_ids: vec![],
         }
     ]);
 

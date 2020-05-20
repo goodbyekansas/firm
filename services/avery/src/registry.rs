@@ -1,20 +1,24 @@
 use std::{
     collections::HashMap,
     fs,
+    io::Write,
+    path::PathBuf,
     sync::{Arc, RwLock},
 };
 
+use futures::{Stream, StreamExt};
 use regex::Regex;
 use semver::{Version, VersionReq};
 use tempfile::NamedTempFile;
-use url::Url;
 use uuid::Uuid;
 
 use gbk_protocols::{
     functions::{
-        functions_registry_server::FunctionsRegistry, Checksums, ExecutionEnvironment,
-        Function as ProtoFunction, FunctionDescriptor, FunctionId, FunctionInput, FunctionOutput,
-        ListRequest, OrderingDirection, OrderingKey, RegisterRequest, RegistryListResponse,
+        functions_registry_server::FunctionsRegistry, AttachmentStreamUpload, AttachmentUpload,
+        AttachmentUploadResponse, Checksums, ExecutionEnvironment, Function as ProtoFunction,
+        FunctionAttachment, FunctionAttachmentId, FunctionDescriptor, FunctionId, FunctionInput,
+        FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterAttachmentRequest,
+        RegisterRequest, RegistryListResponse,
     },
     tonic,
 };
@@ -22,6 +26,7 @@ use gbk_protocols::{
 #[derive(Debug, Default, Clone)]
 pub struct FunctionsRegistryService {
     functions: Arc<RwLock<HashMap<Uuid, Function>>>,
+    function_attachments: Arc<RwLock<HashMap<Uuid, (FunctionAttachment, PathBuf)>>>,
 }
 
 #[derive(Debug)]
@@ -33,13 +38,123 @@ struct Function {
     inputs: Vec<FunctionInput>,
     outputs: Vec<FunctionOutput>,
     tags: HashMap<String, String>,
-    code_url: Option<Url>,
+    code: Option<FunctionAttachmentId>,
     checksums: Checksums,
+    attachments: Vec<FunctionAttachmentId>,
 }
 
-impl From<&Function> for FunctionDescriptor {
-    fn from(f: &Function) -> Self {
-        FunctionDescriptor {
+impl FunctionsRegistryService {
+    pub async fn upload_stream_attachment<S>(
+        &self,
+        attachment_stream_upload_request: tonic::Request<S>,
+    ) -> Result<tonic::Response<AttachmentUploadResponse>, tonic::Status>
+    where
+        S: std::marker::Unpin + Stream<Item = Result<AttachmentStreamUpload, tonic::Status>>,
+    {
+        let mut stream = attachment_stream_upload_request.into_inner();
+
+        let mut upload_url = String::new();
+
+        let mut maybe_file: Option<Result<fs::File, tonic::Status>> = None;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            let (attachment, path) = chunk
+                .id
+                .ok_or_else(|| {
+                    tonic::Status::new(
+                        tonic::Code::InvalidArgument,
+                        format!("Failed to get function attachment with None as id. 🤷"),
+                    )
+                })
+                .and_then(|idd| self.get_attachment(&idd))?;
+
+            // Make sure we only open the file once and re-use the file handle for later writes.
+            // Since we get the path inside the chunk we got no other option but to open the file
+            // inside the scope
+            let file = match *maybe_file.get_or_insert_with(|| {
+                fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .open(&path)
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Internal,
+                            format!("Failed to open attachment file {}: {}", path.display(), e),
+                        )
+                    })
+            }) {
+                Ok(ref mut f) => Ok(f),
+                Err(ref mut e) => Err(e.clone()),
+            }?;
+
+            file.write(&chunk.content).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!(
+                        "Failed to save the attachment in {} 🐼: {}",
+                        path.display(),
+                        e
+                    ),
+                )
+            })?;
+
+            upload_url = attachment.url.clone();
+        }
+
+        Ok(tonic::Response::new(AttachmentUploadResponse {
+            url: upload_url,
+        }))
+    }
+
+    fn get_attachment(
+        &self,
+        id: &FunctionAttachmentId,
+    ) -> Result<(FunctionAttachment, PathBuf), tonic::Status> {
+        Uuid::parse_str(&id.id)
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!("failed to parse UUID from attachment id: {}", e),
+                )
+            })
+            .and_then(|attachment_id| {
+                self.function_attachments
+                    .read()
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Internal,
+                            format!("Failed to get write lock for function attachments: {}", e),
+                        )
+                    })
+                    .map(|function_attachments| (function_attachments, attachment_id))
+            })
+            .and_then(|(function_attachments, attachment_id)| {
+                function_attachments
+                    .get(&attachment_id)
+                    .ok_or_else(|| {
+                        tonic::Status::new(
+                            tonic::Code::NotFound,
+                            format!("failed to find attachment with id: {}", attachment_id),
+                        )
+                    })
+                    .and_then(|(attachment, path)| Ok((attachment.clone(), path.clone())))
+            })
+    }
+
+    fn get_function_descriptor(&self, f: &Function) -> Result<FunctionDescriptor, tonic::Status> {
+        let code = f
+            .code
+            .clone()
+            .map(|c| self.get_attachment(&c))
+            .map_or(Ok(None), |r| r.map(|(attach, _)| Some(attach.clone())))?;
+
+        let attachments = f
+            .attachments
+            .iter()
+            .map(|v| self.get_attachment(v).map(|(attach, _)| attach.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(FunctionDescriptor {
             function: Some(ProtoFunction {
                 id: Some(FunctionId {
                     value: f.id.to_string(),
@@ -51,13 +166,10 @@ impl From<&Function> for FunctionDescriptor {
                 outputs: f.outputs.clone(),
             }),
             execution_environment: Some(f.execution_environment.clone()),
-            code_url: f
-                .code_url
-                .as_ref()
-                .map(|u| u.to_string())
-                .unwrap_or_default(),
+            code,
             checksums: Some(f.checksums.clone()),
-        }
+            attachments,
+        })
     }
 }
 
@@ -135,8 +247,8 @@ impl FunctionsRegistry for FunctionsRegistryService {
                 .iter()
                 .skip(offset)
                 .take(limit)
-                .map(|f| (*f).into())
-                .collect(),
+                .filter_map(|f| self.get_function_descriptor(*f).ok())
+                .collect::<Vec<_>>(),
         }))
     }
 
@@ -168,7 +280,8 @@ impl FunctionsRegistry for FunctionsRegistryService {
                     )
                 })
             })
-            .map(|f| tonic::Response::new(f.into()))
+            .and_then(|f| self.get_function_descriptor(f))
+            .map(|fd| tonic::Response::new(fd))
     }
 
     async fn register(
@@ -206,7 +319,6 @@ impl FunctionsRegistry for FunctionsRegistryService {
         // remove function if name and version matches (after the -dev has been appended)
         functions.retain(|_, v| v.name != payload.name || v.version != version);
 
-        let id = Uuid::new_v4();
         let execution_environment = payload.execution_environment.ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
@@ -220,43 +332,26 @@ impl FunctionsRegistry for FunctionsRegistryService {
             )
         })?;
 
-        // TODO: A better storage mechanism _will_ be needed 🏩
-        let code_url = if payload.code.is_empty() {
-            None
-        } else {
-            let saved_code = NamedTempFile::new().map_err(|e| {
+        // validate attachments
+        payload
+            .attachment_ids
+            .iter()
+            .chain(payload.code.iter())
+            .fold(Ok(()), |r, id| match self.get_attachment(id) {
+                Ok(_) => r,
+                Err(e) => match r {
+                    Ok(_) => Err(format!("{} ({})", id.id, e.message())),
+                    Err(e2) => Err(format!("{}, {} ({})", e2, id.id, e.message())),
+                },
+            })
+            .map_err(|msg| {
                 tonic::Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to create temp file to save code in 😿: {}", e),
+                    tonic::Code::InvalidArgument,
+                    format!("Failed to get attachment for ids: [{}]", msg),
                 )
             })?;
 
-            fs::write(saved_code.path(), payload.code).map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Internal,
-                    format!(
-                        "Failed to save the code in {} 🐼: {}",
-                        saved_code.path().display(),
-                        e
-                    ),
-                )
-            })?;
-
-            let (_, path) = saved_code.keep().map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to persist temp file with code: {}", e),
-                )
-            })?;
-
-            Some(Url::from_file_path(&path).map_err(|_| {
-                tonic::Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to generate url for file path {}", path.display()),
-                )
-            })?)
-        };
-
+        let id = Uuid::new_v4();
         functions.insert(
             id.clone(),
             Function {
@@ -264,11 +359,12 @@ impl FunctionsRegistry for FunctionsRegistryService {
                 name: payload.name,
                 version,
                 execution_environment,
-                code_url,
                 tags: payload.tags,
                 inputs: payload.inputs,
                 outputs: payload.outputs,
                 checksums,
+                code: payload.code,
+                attachments: payload.attachment_ids,
             },
         );
 
@@ -276,12 +372,77 @@ impl FunctionsRegistry for FunctionsRegistryService {
             value: id.to_string(),
         }))
     }
+
+    async fn register_attachment(
+        &self,
+        register_attachment_request: tonic::Request<RegisterAttachmentRequest>,
+    ) -> Result<tonic::Response<FunctionAttachmentId>, tonic::Status> {
+        let payload = register_attachment_request.into_inner();
+        let mut function_attachments = self.function_attachments.write().map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("Failed to get write lock for function attachments: {}", e),
+            )
+        })?;
+
+        let saved_code = NamedTempFile::new().map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("Failed to create temp file to save code in 😿: {}", e),
+            )
+        })?;
+
+        let (_, path) = saved_code.keep().map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("Failed to persist temp file with code: {}", e),
+            )
+        })?;
+
+        let id = Uuid::new_v4();
+        function_attachments.insert(
+            id.clone(),
+            (
+                FunctionAttachment {
+                    id: Some(FunctionAttachmentId { id: id.to_string() }),
+                    name: payload.name,
+                    url: format!("file://{}", path.display()),
+                },
+                path,
+            ),
+        );
+
+        Ok(tonic::Response::new(FunctionAttachmentId {
+            id: id.to_string(),
+        }))
+    }
+
+    async fn upload_streamed_attachment(
+        &self,
+        attachment_stream_upload_request: tonic::Request<tonic::Streaming<AttachmentStreamUpload>>,
+    ) -> Result<tonic::Response<AttachmentUploadResponse>, tonic::Status> {
+        self.upload_stream_attachment(attachment_stream_upload_request)
+            .await
+    }
+
+    async fn upload_attachment_url(
+        &self,
+        _: tonic::Request<AttachmentUpload>,
+    ) -> Result<tonic::Response<AttachmentUploadResponse>, tonic::Status> {
+        Err(tonic::Status::new(
+            tonic::Code::Unimplemented,
+            format!(
+                "The Avery registry does not support uploading via URL. Use streaming upload instead.",
+            ),
+        ))
+    }
 }
 
 impl FunctionsRegistryService {
     pub fn new() -> Self {
         Self {
             functions: Arc::new(RwLock::new(HashMap::new())),
+            function_attachments: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }

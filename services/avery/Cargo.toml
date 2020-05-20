@@ -26,3 +26,4 @@ wasmer-wasi = "0.16"
 futures = "0.3"
 typetag = "0.1"
 gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
+async-stream = "0.2"

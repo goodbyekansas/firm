@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 
-use futures;
+use futures::{self, pin_mut};
+use url::Url;
+use uuid::Uuid;
 
 use gbk_protocols::{
     functions::{
-        functions_registry_server::FunctionsRegistry, ArgumentType, Checksums,
-        ExecutionEnvironment, FunctionId, FunctionInput, FunctionOutput, ListRequest,
-        OrderingDirection, OrderingKey, RegisterRequest,
+        functions_registry_server::FunctionsRegistry, ArgumentType, AttachmentStreamUpload,
+        Checksums, ExecutionEnvironment, FunctionAttachmentId, FunctionId, FunctionInput,
+        FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterAttachmentRequest,
+        RegisterRequest,
     },
     tonic,
 };
@@ -48,13 +51,14 @@ macro_rules! register_request {
                 name: "output_string".to_string(),
                 r#type: ArgumentType::String as i32,
             }],
-            code: vec![],
+            code: None,
             checksums,
             execution_environment: Some(ExecutionEnvironment {
                 name: "wasm".to_owned(),
                 entrypoint: "kanske".to_owned(),
                 args: vec![],
             }),
+            attachment_ids: vec![],
         })
     }};
 }
@@ -67,12 +71,13 @@ macro_rules! custom_register_request {
             tags: HashMap::with_capacity(0),
             inputs: vec![],
             outputs: vec![],
-            code: vec![],
+            code: None,
             checksums: Some(Checksums {
                 sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
                     .to_owned(),
             }),
             execution_environment: $execution_environment,
+            attachment_ids: vec![],
         })
     }};
 }
@@ -85,7 +90,7 @@ macro_rules! register_request_with_version {
             tags: HashMap::with_capacity(0),
             inputs: vec![],
             outputs: vec![],
-            code: vec![],
+            code: None,
             checksums: Some(Checksums {
                 sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
                     .to_owned(),
@@ -95,6 +100,7 @@ macro_rules! register_request_with_version {
                 entrypoint: "kanske".to_owned(),
                 args: vec![],
             }),
+            attachment_ids: vec![],
         })
     }};
 }
@@ -131,7 +137,7 @@ macro_rules! register_request_with_tags {
                 name: "output_string".to_string(),
                 r#type: ArgumentType::String as i32,
             }],
-            code: vec![],
+            code: None,
             checksums: Some(Checksums {
                 sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
             }),
@@ -140,6 +146,7 @@ macro_rules! register_request_with_tags {
                 args: vec![],
                 entrypoint: "kanske".to_owned(),
             }),
+            attachment_ids: vec![],
         })
     }};
 }
@@ -560,4 +567,133 @@ fn test_register_dev_version() {
         get_request.unwrap_err().code(),
         tonic::Code::NotFound
     ));
+}
+
+#[test]
+fn test_attachments() {
+    let fr = registry!();
+    let code_result = futures::executor::block_on(fr.register_attachment(tonic::Request::new(
+        RegisterAttachmentRequest {
+            name: String::from("code"),
+        },
+    )));
+    assert!(code_result.is_ok());
+    let code_attachment_id = code_result.unwrap().into_inner();
+
+    let attachment1 = futures::executor::block_on(fr.register_attachment(tonic::Request::new(
+        RegisterAttachmentRequest {
+            name: String::from("attachment1"),
+        },
+    )));
+    assert!(attachment1.is_ok());
+    let attachment1_id = attachment1.unwrap().into_inner();
+
+    let attachment2 = futures::executor::block_on(fr.register_attachment(tonic::Request::new(
+        RegisterAttachmentRequest {
+            name: String::from("attachment2"),
+        },
+    )));
+    assert!(attachment2.is_ok());
+    let attachment2_id = attachment2.unwrap().into_inner();
+
+    let attachment2_id_clone = attachment2_id.clone();
+    let outbound = async_stream::stream! {
+        for _ in 0u32..5u32 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            yield Ok(AttachmentStreamUpload {
+                id: Some(attachment2_id_clone.clone()),
+                content: "sune".as_bytes().to_vec(),
+            });
+        }
+    };
+    pin_mut!(outbound);
+    let upload_result = futures::executor::block_on(fr.upload_stream_attachment(
+        tonic::Request::new(outbound)
+    ));
+
+    assert!(upload_result.is_ok());
+
+    let rr = tonic::Request::new(RegisterRequest {
+        name: "name".to_owned(),
+        version: "0.1.0".to_owned(),
+        tags: HashMap::with_capacity(0),
+        inputs: vec![],
+        outputs: vec![],
+        code: Some(code_attachment_id.clone()),
+        checksums: Some(Checksums {
+            sha256: "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5".to_owned(),
+        }),
+        execution_environment: Some(ExecutionEnvironment {
+            name: "wasm".to_owned(),
+            entrypoint: "kanske".to_owned(),
+            args: vec![],
+        }),
+        attachment_ids: vec![attachment1_id, attachment2_id],
+    });
+
+    let register_result = futures::executor::block_on(fr.register(rr));
+
+    assert!(register_result.is_ok());
+
+    // confirm results are as expected from registration
+    let function_result = futures::executor::block_on(
+        fr.get(tonic::Request::new(register_result.unwrap().into_inner())),
+    );
+
+    assert!(function_result.is_ok());
+    let function = function_result.unwrap().into_inner();
+    let code = function.code.unwrap();
+    assert_eq!(function.attachments.len(), 2);
+    assert_eq!(code.name, "code");
+    assert_eq!(code.id, Some(code_attachment_id));
+
+    let code_url = Url::parse(&code.url);
+    assert!(code_url.is_ok());
+    let code_url = code_url.unwrap();
+    assert_eq!(code_url.scheme(), "file");
+    assert!(std::path::Path::new(code_url.path()).exists());
+
+    // Ensure content of attachment
+    let attach = function.attachments.iter().find(|a| a.name == "attachment2");
+    assert!(attach.is_some());
+
+    let file_content = Url::parse(&attach.unwrap().url).ok().and_then(|url| {
+        std::fs::read(url.path()).ok()
+    }).unwrap();
+    assert_eq!(file_content, "sunesunesunesunesune".as_bytes());
+
+    // non-registered attachment
+    let rr = tonic::Request::new(RegisterRequest {
+        name: "name".to_owned(),
+        version: "0.1.0".to_owned(),
+        tags: HashMap::with_capacity(0),
+        inputs: vec![],
+        outputs: vec![],
+        code: Some(FunctionAttachmentId {
+            id: Uuid::new_v4().to_string(),
+        }),
+        checksums: Some(Checksums {
+            sha256: "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5".to_owned(),
+        }),
+        execution_environment: Some(ExecutionEnvironment {
+            name: "wasm".to_owned(),
+            entrypoint: "kanske".to_owned(),
+            args: vec![],
+        }),
+        attachment_ids: vec![
+            FunctionAttachmentId {
+                id: Uuid::new_v4().to_string(),
+            },
+            FunctionAttachmentId {
+                id: String::from("not-a-valid-id"),
+            },
+        ],
+    });
+
+    let register_result = futures::executor::block_on(fr.register(rr));
+    assert!(register_result.is_err());
+    assert_eq!(
+        register_result.unwrap_err().code(),
+        tonic::Code::InvalidArgument
+    );
 }
