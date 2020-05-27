@@ -137,7 +137,7 @@ impl From<&FunctionManifest> for RegisterRequest {
                     r#type: ArgumentType::from(&output.r#type) as i32,
                 })
                 .collect(),
-            code: vec![],
+            code: None,
             execution_environment: Some(ProtoExecutionEnvironment {
                 name: fm.execution_environment.r#type.clone(),
                 args: fm
@@ -152,6 +152,7 @@ impl From<&FunctionManifest> for RegisterRequest {
                     .collect(),
                 entrypoint: fm.execution_environment.entrypoint.clone(),
             }),
+            attachment_ids: vec![],
         }
     }
 }
