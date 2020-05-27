@@ -6,6 +6,7 @@ mod sandbox;
 
 use std::{
     fs::OpenOptions,
+    path::Path,
     str,
     sync::{Arc, RwLock},
 };
@@ -22,7 +23,7 @@ use crate::executor::{ExecutorError, FunctionExecutor};
 use error::{ToErrorCode, WasiError};
 use gbk_protocols::functions::{
     execute_response::Result as ProtoResult, Checksums, ExecutionError, FunctionArgument,
-    FunctionResult, ReturnValue,
+    FunctionAttachment, FunctionResult, ReturnValue,
 };
 use sandbox::Sandbox;
 
@@ -32,14 +33,16 @@ fn execute_function(
     _entrypoint: &str,
     code: &[u8],
     arguments: &[FunctionArgument],
+    function_attachments: &[FunctionAttachment],
 ) -> Result<Vec<ReturnValue>, String> {
+    // TODO: Do something with attachments
     const ENTRY: &str = "_start";
     let module = compile(code).map_err(|e| format!("failed to compile wasm: {}", e))?;
 
     let wasi_version = get_wasi_version(&module, true).unwrap_or(wasmer_wasi::WasiVersion::Latest);
 
-    let sandbox = Arc::new(Sandbox::new());
-    let sandbox2 = Arc::clone(&sandbox);
+    let sandbox = Sandbox::new(Path::new("sandbox")).map_err(|e| e.to_string())?;
+    let attachment_sandbox = Sandbox::new(Path::new("attachments")).map_err(|e| e.to_string())?;
 
     info!(
         logger,
@@ -84,8 +87,20 @@ fn execute_function(
                 .write(true)
                 .create(true)
         })
+        .and_then(|state| {
+            state.preopen(|p| {
+                p.directory(attachment_sandbox.path())
+                    .alias("attachments")
+                    .read(true)
+                    .write(false)
+                    .create(false)
+            })
+        })
         .and_then(|state| state.build())
         .map_err(|e| format!("Failed to create wasi state: {:?}", e))?;
+
+    let sandboxes = [sandbox.clone(), attachment_sandbox.clone()];
+    let sandboxes2 = sandboxes.clone();
 
     // inject gbk specific functions in the wasm state
     let a = arguments.to_vec();
@@ -94,17 +109,21 @@ fn execute_function(
     let results = Arc::new(RwLock::new(v));
     let res = Arc::clone(&results);
     let res2 = Arc::clone(&results);
+    let function_attachments = function_attachments.to_vec();
 
     let start_process_logger = logger.new(o!("scope" => "start_process"));
     let run_process_logger = logger.new(o!("scope" => "run_process"));
     let gbk_imports = imports! {
         "gbk" => {
+            "map_attachment" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32| {
+                process::map_attachment(&function_attachments, &attachment_sandbox, ctx.memory(0), attachment_name, attachment_name_len).to_error_code()
+            }),
             "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
-                process::start_process(&start_process_logger, &sandbox, ctx.memory(0), s, len, pid_out).to_error_code()
+                process::start_process(&start_process_logger, &sandboxes, ctx.memory(0), s, len, pid_out).to_error_code()
             }),
 
             "run_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, exit_code_out: WasmPtr<i32, Item>| {
-                process::run_process(&run_process_logger, &sandbox2, ctx.memory(0), s, len, exit_code_out).to_error_code()
+                process::run_process(&run_process_logger, &sandboxes2, ctx.memory(0), s, len, exit_code_out).to_error_code()
             }),
 
             "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u64, Item>| {
@@ -181,6 +200,7 @@ impl FunctionExecutor for WasiExecutor {
         _checksums: &Checksums, // TODO: Use checksum
         _executor_arguments: &[FunctionArgument],
         function_arguments: &[FunctionArgument],
+        function_attachments: &[FunctionAttachment],
     ) -> Result<ProtoResult, ExecutorError> {
         // TODO: separate host and guest errors
         Ok(execute_function(
@@ -189,6 +209,7 @@ impl FunctionExecutor for WasiExecutor {
             entrypoint,
             code,
             function_arguments,
+            function_attachments,
         )
         .map_or_else(
             |e| ProtoResult::Error(ExecutionError { msg: e }),
@@ -231,8 +252,9 @@ mod tests {
                 sha256: "c455c4bc68c1afcdafa7c2f74a499810b0aa5d12f7a009d493789d595847af72"
                     .to_owned(),
             },
-            &vec![],
-            &vec![],
+            &[],
+            &[],
+            &[],
         );
 
         assert!(res.is_ok());

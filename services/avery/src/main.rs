@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let port: u32 = 1939;
     let addr = format!("[::]:{}", port).parse().unwrap();
-    let functions_registry_service = FunctionsRegistryService::new();
+    let functions_registry_service = FunctionsRegistryService::new(log.new(o!("service" => "registry")));
 
     let functions_service = FunctionsService::new(
         log.new(o!("service" => "functions")),

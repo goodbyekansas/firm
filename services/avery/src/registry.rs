@@ -11,6 +11,7 @@ use regex::Regex;
 use semver::{Version, VersionReq};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
+use slog::{Logger, warn, info};
 
 use gbk_protocols::{
     functions::{
@@ -23,10 +24,11 @@ use gbk_protocols::{
     tonic,
 };
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct FunctionsRegistryService {
     functions: Arc<RwLock<HashMap<Uuid, Function>>>,
     function_attachments: Arc<RwLock<HashMap<Uuid, (FunctionAttachment, PathBuf)>>>,
+    logger: Logger,
 }
 
 #[derive(Debug)]
@@ -44,6 +46,14 @@ struct Function {
 }
 
 impl FunctionsRegistryService {
+    pub fn new(logger: Logger) -> Self {
+        Self {
+            functions: Arc::new(RwLock::new(HashMap::new())),
+            function_attachments: Arc::new(RwLock::new(HashMap::new())),
+            logger,
+        }
+    }
+
     pub async fn upload_stream_attachment<S>(
         &self,
         attachment_stream_upload_request: tonic::Request<S>,
@@ -54,10 +64,24 @@ impl FunctionsRegistryService {
         let mut stream = attachment_stream_upload_request.into_inner();
 
         let mut upload_url = String::new();
-
-        let mut maybe_file: Option<Result<fs::File, tonic::Status>> = None;
+        let mut maybe_file: Option<(Result<fs::File, tonic::Status>, PathBuf)> = None;
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
+            let chunk = chunk.map_err(|e| {
+                warn!(self.logger, "Error reading attachment upload chunk: {}", e);
+                maybe_file
+                    .take()
+                    .map(|(_, path)| {
+                        std::fs::remove_file(&path).map_or_else(|e| {
+                            warn!(self.logger, "Failed to remove partially uploaded file \"{}\": {}", path.display(), e);
+                            ()
+                        }, |_| {
+                            info!(self.logger, "Removed partially uploaded file \"{}\"", path.display());
+                            ()
+                        })
+                    }).unwrap_or_default();
+                e
+            })?;
+
             let (attachment, path) = chunk
                 .id
                 .ok_or_else(|| {
@@ -72,19 +96,22 @@ impl FunctionsRegistryService {
             // Since we get the path inside the chunk we got no other option but to open the file
             // inside the scope
             let file = match *maybe_file.get_or_insert_with(|| {
-                fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .open(&path)
-                    .map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Internal,
-                            format!("Failed to open attachment file {}: {}", path.display(), e),
-                        )
-                    })
+                (
+                    fs::OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .open(&path)
+                        .map_err(|e| {
+                            tonic::Status::new(
+                                tonic::Code::Internal,
+                                format!("Failed to open attachment file {}: {}", path.display(), e),
+                            )
+                        }),
+                    path.clone(),
+                )
             }) {
-                Ok(ref mut f) => Ok(f),
-                Err(ref mut e) => Err(e.clone()),
+                (Ok(ref mut f), _) => Ok(f),
+                (Err(ref mut e), _) => Err(e.clone()),
             }?;
 
             file.write(&chunk.content).map_err(|e| {
@@ -407,6 +434,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
                     id: Some(FunctionAttachmentId { id: id.to_string() }),
                     name: payload.name,
                     url: format!("file://{}", path.display()),
+                    metadata: payload.metadata,
                 },
                 path,
             ),
@@ -435,15 +463,6 @@ impl FunctionsRegistry for FunctionsRegistryService {
                 "The Avery registry does not support uploading via URL. Use streaming upload instead.",
             ),
         ))
-    }
-}
-
-impl FunctionsRegistryService {
-    pub fn new() -> Self {
-        Self {
-            functions: Arc::new(RwLock::new(HashMap::new())),
-            function_attachments: Arc::new(RwLock::new(HashMap::new())),
-        }
     }
 }
 

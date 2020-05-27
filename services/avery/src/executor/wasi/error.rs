@@ -1,4 +1,4 @@
-use std::io;
+use std::{error::Error, io};
 
 use thiserror::Error;
 
@@ -6,6 +6,9 @@ use thiserror::Error;
 pub enum WasiError {
     #[error("Unknown: {0}")]
     Unknown(String),
+
+    #[error("Sandbox Error: {0}")]
+    SandboxError(String),
 
     #[error("{0}")]
     ConversionError(String),
@@ -33,6 +36,12 @@ pub enum WasiError {
 
     #[error("Failed to connect to address \"{0}\". IO Error: {1}")]
     FailedToConnect(String, io::Error),
+
+    #[error("Failed to map attachment \"{0}\": {1}")]
+    FailedToMapAttachment(String, Box<dyn Error>),
+
+    #[error("Failed to find attachment \"{0}\"")]
+    FailedToFindAttachment(String),
 }
 
 pub type WasiResult<T> = std::result::Result<T, WasiError>;
@@ -63,6 +72,9 @@ impl From<WasiError> for u32 {
             WasiError::FailedToStartProcess(_) => 8,
             WasiError::FailedToOpenFile(_) => 9,
             WasiError::FailedToConnect(..) => 10,
+            WasiError::FailedToMapAttachment(..) => 11,
+            WasiError::FailedToFindAttachment(_) => 12,
+            WasiError::SandboxError(_) => 13,
         }
     }
 }
