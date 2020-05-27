@@ -1,28 +1,36 @@
 #![deny(warnings)]
 
+mod formatting;
 mod manifest;
 
 // std
 use std::{
     collections::HashMap,
-    fmt::{self, Display},
+    error::Error,
+    future::Future,
+    io::{Read, Seek, SeekFrom},
     path::PathBuf,
 };
 
 // 3rd party
-use manifest::FunctionManifest;
-use structopt::StructOpt;
-use tokio::runtime;
-
-// internal
+use futures::future::{join, try_join_all};
 use gbk_protocols::{
     functions::{
-        functions_registry_client::FunctionsRegistryClient, ArgumentType, ExecutionEnvironment,
-        Function, FunctionDescriptor, FunctionId, FunctionInput, FunctionOutput, ListRequest,
-        OrderingDirection, OrderingKey, RegisterRequest,
+        functions_registry_client::FunctionsRegistryClient, AttachmentStreamUpload,
+        FunctionAttachmentId, ListRequest, OrderingDirection, OrderingKey,
+        RegisterAttachmentRequest, RegisterRequest,
     },
-    tonic,
+    tonic::{self, transport::Channel},
 };
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use rand::seq::SliceRandom;
+use rand::thread_rng;
+use structopt::StructOpt;
+use tokio::task;
+
+// internal
+use formatting::DisplayExt;
+use manifest::FunctionManifest;
 
 // arguments
 #[derive(StructOpt, Debug)]
@@ -41,6 +49,14 @@ struct LomaxArgs {
     cmd: Command,
 }
 
+fn parse_key_val(s: &str) -> Result<(String, PathBuf), Box<dyn Error>> {
+    let pos = s
+        .find('=')
+        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{}`", s))?;
+    let path: String = s[pos + 1..].parse()?;
+    Ok((s[..pos].parse()?, PathBuf::from(path)))
+}
+
 #[derive(StructOpt, Debug)]
 enum Command {
     List {
@@ -54,227 +70,120 @@ enum Command {
 
         #[structopt(parse(from_os_str))]
         manifest: PathBuf,
+
+        #[structopt(short = "a", parse(try_from_str = parse_key_val))]
+        attachments: Vec<(String, PathBuf)>,
     },
 }
 
-struct Displayer<'a, T> {
-    display: &'a T,
-}
-
-impl<T> std::ops::Deref for Displayer<'_, T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        self.display
-    }
-}
-
-trait DisplayExt<'a, T>
+async fn with_progressbars<F, U, R>(function: F) -> R
 where
-    T: prost::Message,
+    U: Future<Output = R>,
+    F: Fn(&MultiProgress) -> U,
 {
-    fn display(&'a self) -> Displayer<T>;
+    let multi_progress = MultiProgress::new();
+    join(
+        function(&multi_progress),
+        task::spawn_blocking(move || {
+            multi_progress.join().map_or_else(
+                |e| println!("Failed waiting for progress bar: {:?}", e),
+                |_| (),
+            )
+        }),
+    )
+    .await
+    .0
 }
 
-impl<'a, U> DisplayExt<'a, U> for U
-where
-    U: prost::Message,
-{
-    fn display(&'a self) -> Displayer<U> {
-        Displayer { display: self }
-    }
-}
+async fn upload_attachment(
+    name: &str,
+    path: &std::path::Path,
+    metadata: HashMap<String, String>,
+    mut client: FunctionsRegistryClient<Channel>,
+    progressbar: ProgressBar,
+) -> Result<FunctionAttachmentId, String> {
+    const VEHICLES: [&str; 12] = [
+        "🏇", "🏃", "🚙", "🚁", "🚕", "🚜", "🚌", "🚑", "🚚", "🚂", "🐌", "🚴",
+    ];
+    const CHUNK_SIZE: usize = 8192;
 
-// impl display of listed functions
-impl Display for Displayer<'_, FunctionDescriptor> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let exe_env = self
-            .execution_environment
-            .clone()
-            .unwrap_or(ExecutionEnvironment {
-                name: "n/a".to_string(),
-                args: vec![],
-                entrypoint: "n/a".to_string(),
-            });
+    let attachment = client
+        .register_attachment(tonic::Request::new(RegisterAttachmentRequest {
+            name: name.to_owned(),
+            metadata,
+        }))
+        .await
+        .map_err(|e| format!("Failed to register attachment \"{}\". Err: {}", name, e))?
+        .into_inner();
 
-        match &self.function {
-            Some(k) => {
-                let id_str =
-                    k.id.clone()
-                        .unwrap_or(FunctionId {
-                            value: "n/a".to_string(),
-                        })
-                        .value;
-
-                // on the cmd line each tab is 8 spaces
-                let t = "\t";
-                let t2 = "\t\t ";
-
-                // print everything
-                writeln!(f, "{}{}", t, &k.name)?;
-                writeln!(f, "{}id:      {}", t, id_str)?;
-                writeln!(f, "{}name:    {}", t, &k.name)?;
-                writeln!(f, "{}version: {}", t, &k.version)?;
-                // this will change to be more data
-                writeln!(f, "{}exeEnv:  {}", t, exe_env.name)?;
-                write!(f, "{}entry:   ", t)?;
-                if exe_env.entrypoint.is_empty() {
-                    writeln!(f, "n/a")?;
-                } else {
-                    writeln!(f, "{}", exe_env.entrypoint)?;
-                }
-                write!(f, "{}codeUrl: ", t)?;
-                if self.code_url.is_empty() {
-                    writeln!(f, "n/a")?;
-                } else {
-                    writeln!(f, "{}", self.code_url)?;
-                }
-                if k.inputs.is_empty() {
-                    writeln!(f, "{}inputs:  [n/a]", t)?;
-                } else {
-                    writeln!(f, "{}inputs:", t)?;
-                    k.inputs
-                        .clone()
-                        .into_iter()
-                        .map(|i| writeln!(f, "{}{}", t2, i.display()))
-                        .collect::<fmt::Result>()?;
-                }
-                if k.outputs.is_empty() {
-                    writeln!(f, "\toutputs: [n/a]")?;
-                } else {
-                    writeln!(f, "\toutputs:")?;
-                    k.outputs
-                        .clone()
-                        .into_iter()
-                        .map(|i| writeln!(f, "{}{}", t2, i.display()))
-                        .collect::<fmt::Result>()?;
-                }
-                if k.tags.is_empty() {
-                    writeln!(f, "\ttags:    [n/a]")
-                } else {
-                    writeln!(f, "\ttags:")?;
-                    k.tags
-                        .clone()
-                        .iter()
-                        .map(|(x, y)| writeln!(f, "{}{}:{}", t2, x, y))
-                        .collect()
-                }
-            }
-
-            None => writeln!(f, "function descriptor did not contain function 🤔"),
-        }
-    }
-}
-
-impl Display for Displayer<'_, Function> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let na = "n/a".to_string();
-        let id_str = self.id.clone().unwrap_or(FunctionId { value: na }).value;
-        writeln!(f, "\t{}", self.name)?;
-        writeln!(f, "\tid:      {}", id_str)?;
-        if self.inputs.is_empty() {
-            writeln!(f, "\tinputs:  n/a")?;
-        } else {
-            writeln!(f, "\tinputs:")?;
-            self.inputs
-                .clone()
-                .into_iter()
-                .map(|i| writeln!(f, "\t\t {}", i.display()))
-                .collect::<fmt::Result>()?;
-        }
-        if self.outputs.is_empty() {
-            writeln!(f, "\toutputs: n/a")?;
-        } else {
-            writeln!(f, "\toutputs:")?;
-            self.outputs
-                .clone()
-                .into_iter()
-                .map(|i| writeln!(f, "\t\t {}", i.display()))
-                .collect::<fmt::Result>()?;
-        }
-        if self.tags.is_empty() {
-            writeln!(f, "\ttags:    n/a")
-        } else {
-            writeln!(f, "\ttags:")?;
-            self.tags
-                .clone()
-                .iter()
-                .map(|(x, y)| writeln!(f, "\t\t {}:{}", x, y))
-                .collect()
-        }
-    }
-}
-
-impl Display for Displayer<'_, FunctionInput> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let required = if self.required {
-            "[required]"
-        } else {
-            "[optional]"
-        };
-        let default_value = if self.default_value.is_empty() {
-            "n/a"
-        } else {
-            &self.default_value
-        };
-
-        let tp = ArgumentType::from_i32(self.r#type)
-            .map(|at| match at {
-                ArgumentType::String => "[string ]",
-                ArgumentType::Bool => "[bool   ]",
-                ArgumentType::Int => "[int    ]",
-                ArgumentType::Float => "[float  ]",
-                ArgumentType::Bytes => "[bytes  ]",
-            })
-            .unwrap_or("[Invalid type ]");
-
-        write!(
-            f,
-            "{req_opt}:{ftype}:{name}: {default}",
-            name = self.name,
-            req_opt = required,
-            ftype = tp,
-            default = default_value,
+    let mut file = std::fs::File::open(&path).map_err(|e| {
+        format!(
+            "Failed to read attachment {} file at \"{}\": {}",
+            name,
+            &path.display(),
+            e
         )
-    }
+    })?;
+
+    let file_size = file
+        .seek(SeekFrom::End(0))
+        .and_then(|file_size| file.seek(SeekFrom::Start(0)).map(|_| file_size))
+        .map_err(|e| format!("Failed to get size of file \"{}\": {}", path.display(), e))?;
+
+    let mut rng = thread_rng();
+    progressbar.set_length(file_size);
+    progressbar.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg:.bold.green}\n{spinner:.green} [{elapsed_precise}] [{bar:.white.on_black/yellow}] {bytes}/{total_bytes} ({eta}, {bytes_per_sec})",
+            )
+            .progress_chars(&format!("-{}-", VEHICLES.choose(&mut rng).unwrap_or(&"💣"))),
+    );
+    progressbar.set_message(&format!("Uploading {}", name));
+    progressbar.set_position(0);
+
+    // generate an upload stream of chunks from the attachment file
+    let mut reader = std::io::BufReader::with_capacity(CHUNK_SIZE, file);
+    let attachment_id_clone = attachment.clone();
+    let cloned_name = name.to_owned();
+    let upload_stream = async_stream::stream! {
+        let mut read_bytes = CHUNK_SIZE;
+
+        let mut uploaded = 0u64;
+        while read_bytes == CHUNK_SIZE {
+            let mut buf = vec![0u8;CHUNK_SIZE];
+            read_bytes = reader.read(&mut buf).unwrap(); // TODO: Do not unwrap
+            buf.truncate(read_bytes);
+            uploaded += read_bytes as u64;
+
+            yield AttachmentStreamUpload {
+                id: Some(attachment_id_clone.clone()),
+                content: buf,
+            };
+
+            progressbar.set_position(uploaded);
+        }
+        progressbar.finish_with_message(&format!("Done uploading {}!", cloned_name));
+    };
+
+    // actually do the upload
+    client
+        .upload_streamed_attachment(tonic::Request::new(upload_stream))
+        .await
+        .map_err(|e| format!("Failed to upload {} attachment: {}", name, e))?;
+
+    Ok(attachment)
 }
 
-impl Display for Displayer<'_, FunctionOutput> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let tp = ArgumentType::from_i32(self.r#type)
-            .map(|at| match at {
-                ArgumentType::String => "[string ]",
-                ArgumentType::Bool => "[bool   ]",
-                ArgumentType::Int => "[int    ]",
-                ArgumentType::Float => "[float  ]",
-                ArgumentType::Bytes => "[bytes  ]",
-            })
-            .unwrap_or("[Invalid type ]");
-
-        write!(f, "[ensured ]:{ftype}:{name}", name = self.name, ftype = tp)
-    }
-}
-
-fn main() -> Result<(), u32> {
+#[tokio::main]
+async fn main() -> Result<(), u32> {
     // parse arguments
     let args = LomaxArgs::from_args();
     let address = format!("{}:{}", args.address, args.port);
 
-    // handle async stuff in a non-async way
-    let mut basic_rt = runtime::Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .map_err(|e| {
-            println!(
-                "Failed to create new runtime builder for async operations: {}",
-                e
-            );
-            1u32
-        })?;
-
     // call the client to connect and don't worry about async stuff
-    let mut client = basic_rt
-        .block_on(FunctionsRegistryClient::connect(address.clone()))
+    let mut client = FunctionsRegistryClient::connect(address.clone())
+        .await
         .map_err(|e| {
             println!("Failed to connect to Avery at \"{}\": {}", address, e);
             2u32
@@ -294,8 +203,9 @@ fn main() -> Result<(), u32> {
                 version_requirement: None,
             };
 
-            let list_response = basic_rt
-                .block_on(client.list(tonic::Request::new(list_request)))
+            let list_response = client
+                .list(tonic::Request::new(list_request))
+                .await
                 .map_err(|e| {
                     println!("Failed to list functions: {}", e);
                     3u32
@@ -308,7 +218,11 @@ fn main() -> Result<(), u32> {
                 .for_each(|f| println!("{}", f.display()))
         }
 
-        Command::Register { code, manifest } => {
+        Command::Register {
+            code,
+            manifest,
+            attachments,
+        } => {
             let manifest_path = manifest;
             let code_path = code;
 
@@ -322,17 +236,49 @@ fn main() -> Result<(), u32> {
             println!("Reading manifest file from: {}", manifest_path.display());
             let mut register_request: RegisterRequest = (&manifest).into();
             println!("Reading code file from: {}", code_path.display());
-            register_request.code = std::fs::read(code_path).map_err(|e| {
+
+            let code_attachment = with_progressbars(|mpb| {
+                upload_attachment(
+                    "code",
+                    &code_path,
+                    HashMap::new(),
+                    client.clone(),
+                    mpb.add(ProgressBar::new(128)),
+                )
+            })
+            .await
+            .map_err(|e| {
+                println!("Failed to upload code attachment: {}", e);
+                3u32
+            })?;
+
+            register_request.code = Some(code_attachment);
+            let attachments = with_progressbars(|mpb| {
+                try_join_all(attachments.iter().map(|(a, p)| {
+                    let client_clone = client.clone();
+                    upload_attachment(
+                        a,
+                        p,
+                        HashMap::new(),
+                        client_clone,
+                        mpb.add(ProgressBar::new(128)),
+                    )
+                }))
+            })
+            .await
+            .map_err(|e| {
                 println!(
-                    "Failed to read code for function {}: {}. Skipping.",
-                    manifest.name(),
+                    "Failed to upload attachments. At least one failed to upload: {}",
                     e
                 );
                 3u32
             })?;
 
-            let r = basic_rt
-                .block_on(client.register(tonic::Request::new(register_request)))
+            register_request.attachment_ids = attachments;
+
+            let r = client
+                .register(tonic::Request::new(register_request))
+                .await
                 .map_err(|e| {
                     println!(
                         "Failed to register function \"{}\". Err: {}",
