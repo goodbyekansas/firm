@@ -666,10 +666,10 @@ fn test_attachments() {
         .find(|a| a.name == "attachment2");
     assert!(attach.is_some());
 
-    let file_content = Url::parse(&attach.unwrap().url)
-        .ok()
-        .and_then(|url| std::fs::read(url.path()).ok())
+    let file_path = Url::parse(&attach.unwrap().url)
+        .map(|url| url.path().to_owned())
         .unwrap();
+    let file_content = std::fs::read(&file_path).unwrap();
     assert_eq!(file_content, "sunesunesunesunesune".as_bytes());
 
     // non-registered attachment
@@ -706,4 +706,8 @@ fn test_attachments() {
         register_result.unwrap_err().code(),
         tonic::Code::InvalidArgument
     );
+
+    assert!(std::path::Path::new(&file_path).exists());
+    std::mem::drop(fr);
+    assert!(!std::path::Path::new(&file_path).exists());
 }
