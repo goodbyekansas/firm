@@ -16,13 +16,15 @@ use crate::executor::wasi::WasiExecutor;
 use gbk_protocols::{
     functions::{
         execute_response::Result as ProtoResult, functions_registry_server::FunctionsRegistry,
-        ArgumentType, Checksums, FunctionArgument, FunctionArguments, FunctionDescriptor,
-        FunctionInput, FunctionOutput, FunctionResult, ListRequest, OrderingDirection, OrderingKey,
-        VersionRequirement,
+        ArgumentType, Checksums, FunctionArgument, FunctionArguments, FunctionAttachment,
+        FunctionAttachments, FunctionDescriptor, FunctionInput, FunctionOutput, FunctionResult,
+        ListRequest, OrderingDirection, OrderingKey, VersionRequirement,
     },
     tonic,
 };
+use ExecutorError::AttachmentReadError;
 
+// TODO: Should not take ref to code, executor_arguments, function_arguments and function_attachments
 pub trait FunctionExecutor: Debug {
     fn execute(
         &self,
@@ -32,13 +34,33 @@ pub trait FunctionExecutor: Debug {
         checksums: &Checksums,
         executor_arguments: &[FunctionArgument],
         function_arguments: &[FunctionArgument],
+        function_attachments: &[FunctionAttachment],
     ) -> Result<ProtoResult, ExecutorError>;
+}
+
+pub trait AttachmentDownload {
+    fn download(&self) -> Result<Vec<u8>, ExecutorError>;
+}
+
+/// Download function attachment from the given URL
+///
+/// TODO: This is a huge security hole ⛳️ and needs to be managed properly (gpg sign 🔏 things?)
+impl AttachmentDownload for FunctionAttachment {
+    fn download(&self) -> Result<Vec<u8>, ExecutorError> {
+        let url =
+            Url::parse(&self.url).map_err(|e| ExecutorError::InvalidCodeUrl(e.to_string()))?;
+        match url.scheme() {
+            "file" => fs::read(url.path())
+                .map_err(|e| AttachmentReadError(url.to_string(), e.to_string())),
+            s => Err(ExecutorError::UnsupportedTransport(s.to_owned())),
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct FunctionAdapter {
     executor: Box<dyn FunctionExecutor>,
-    function_descriptor: FunctionDescriptor,
+    inner_function_descriptor: FunctionDescriptor,
     logger: Logger,
 }
 
@@ -51,7 +73,7 @@ impl FunctionAdapter {
     ) -> Self {
         Self {
             executor,
-            function_descriptor,
+            inner_function_descriptor: function_descriptor,
             logger,
         }
     }
@@ -66,6 +88,7 @@ impl FunctionExecutor for FunctionAdapter {
         checksums: &Checksums, // TODO: Use checksum to validate code
         executor_arguments: &[FunctionArgument],
         function_arguments: &[FunctionArgument],
+        function_attachments: &[FunctionAttachment],
     ) -> Result<ProtoResult, ExecutorError> {
         let mut inner_function_arguments = vec![];
 
@@ -105,8 +128,21 @@ impl FunctionExecutor for FunctionAdapter {
             value: encoded_function_arguments,
         });
 
+        let proto_function_attachments = FunctionAttachments {
+            attachments: function_attachments.to_vec(),
+        };
+
+        let mut encoded_function_attachments =
+            Vec::with_capacity(proto_function_attachments.encoded_len());
+        proto_function_attachments.encode(&mut encoded_function_attachments)?;
+        inner_function_arguments.push(FunctionArgument {
+            name: "attachments".to_owned(),
+            r#type: ArgumentType::Bytes as i32,
+            value: encoded_function_attachments,
+        });
+
         let inner_function_name = self
-            .function_descriptor
+            .inner_function_descriptor
             .function
             .as_ref()
             .ok_or(ExecutorError::FunctionDescriptorMissingFunction)?
@@ -114,18 +150,18 @@ impl FunctionExecutor for FunctionAdapter {
             .clone();
 
         let inner_code = self
-            .function_descriptor
+            .inner_function_descriptor
             .code
             .as_ref()
-            .map_or_else(|| Ok(vec![]), |code| download_code(&code.url))?;
+            .map_or_else(|| Ok(vec![]), |code| code.download())?;
 
         let inner_checksums = self
-            .function_descriptor
+            .inner_function_descriptor
             .checksums
             .as_ref()
             .ok_or(ExecutorError::MissingChecksums)?;
         let inner_exe_env = self
-            .function_descriptor
+            .inner_function_descriptor
             .execution_environment
             .clone()
             .ok_or_else(|| {
@@ -139,6 +175,7 @@ impl FunctionExecutor for FunctionAdapter {
             &inner_checksums,
             &inner_exe_env.args,
             &inner_function_arguments,
+            &self.inner_function_descriptor.attachments,
         )
     }
 }
@@ -283,19 +320,6 @@ pub async fn lookup_executor<'a>(
         .fold(executor, |prev_executor, (fd, fd_logger)| {
             Box::new(FunctionAdapter::new(prev_executor, fd, fd_logger))
         }))
-}
-
-/// Download function code from the given URL
-///
-/// TODO: This is a huge security hole ⛳️ and needs to be managed properly (gpg sign 🔏 things?)
-pub fn download_code(url: &str) -> Result<Vec<u8>, ExecutorError> {
-    let url = Url::parse(url).map_err(|e| ExecutorError::InvalidCodeUrl(e.to_string()))?;
-    match url.scheme() {
-        "file" => fs::read(url.path())
-            .map_err(|e| ExecutorError::CodeReadError(url.to_string(), e.to_string())),
-
-        s => Err(ExecutorError::UnsupportedTransport(s.to_owned())),
-    }
 }
 
 fn validate_argument_type(arg_type: ArgumentType, argument_value: &[u8]) -> Result<(), String> {
@@ -495,7 +519,7 @@ pub enum ExecutorError {
     InvalidCodeUrl(String),
 
     #[error("Failed to read code from {0}: {1}")]
-    CodeReadError(String, String),
+    AttachmentReadError(String, String),
 
     #[error("Failed to find executor for execution environment \"{0}\"")]
     ExecutorNotFound(String),
@@ -579,7 +603,20 @@ mod tests {
 
     macro_rules! registry {
         () => {{
-            FunctionsRegistryService::new()
+            FunctionsRegistryService::new(null_logger!())
+        }};
+    }
+
+    macro_rules! attachment {
+        ($url:expr) => {{
+            FunctionAttachment {
+                name: "fakeAttachment".to_owned(),
+                url: $url.to_owned(),
+                id: Some(FunctionAttachmentId {
+                    id: "fakeId".to_owned(),
+                }),
+                metadata: HashMap::new(),
+            }
         }};
     }
 
@@ -792,17 +829,23 @@ mod tests {
     #[test]
     fn test_download() {
         // non-existent file
-        let r = download_code("file://this-file-does-not-exist");
+        let attachment = attachment!("file://this-file-does-not-exist");
+        let r = attachment.download();
         assert!(r.is_err());
-        assert!(matches!(r.unwrap_err(), ExecutorError::CodeReadError(..)));
+        assert!(matches!(
+            r.unwrap_err(),
+            ExecutorError::AttachmentReadError(..)
+        ));
 
         // invalid url
-        let r = download_code("this-is-not-url");
+        let attachment = attachment!("this-is-not-url");
+        let r = attachment.download();
         assert!(r.is_err());
         assert!(matches!(r.unwrap_err(), ExecutorError::InvalidCodeUrl(..)));
 
         // unsupported scheme
-        let r = download_code("unsupported://that-scheme.fabrikam.com");
+        let attachment = attachment!("unsupported://that-scheme.fabrikam.com");
+        let r = attachment.download();
         assert!(r.is_err());
         assert!(matches!(
             r.unwrap_err(),
@@ -813,7 +856,8 @@ mod tests {
         let mut tf = NamedTempFile::new().unwrap();
         let s = "some data 🖥️";
         write!(tf, "{}", s).unwrap();
-        let r = download_code(&format!("file://{}", tf.path().display()));
+        let attachment = attachment!(&format!("file://{}", tf.path().display()));
+        let r = attachment.download();
         assert!(r.is_ok());
         assert_eq!(s.as_bytes(), r.unwrap().as_slice());
     }
@@ -829,6 +873,7 @@ mod tests {
         checksums: RefCell<Checksums>,
         executor_arguments: RefCell<Vec<FunctionArgument>>,
         function_arguments: RefCell<Vec<FunctionArgument>>,
+        function_attachments: RefCell<Vec<FunctionAttachment>>,
     }
 
     impl FunctionExecutor for Rc<FakeExecutor> {
@@ -840,6 +885,7 @@ mod tests {
             checksums: &Checksums,
             executor_arguments: &[FunctionArgument],
             function_arguments: &[FunctionArgument],
+            function_attachments: &[FunctionAttachment],
         ) -> Result<ProtoResult, ExecutorError> {
             *self.function_name.borrow_mut() = function_name.to_owned();
             *self.entrypoint.borrow_mut() = entrypoint.to_owned();
@@ -847,6 +893,7 @@ mod tests {
             *self.checksums.borrow_mut() = checksums.clone();
             *self.executor_arguments.borrow_mut() = executor_arguments.to_vec();
             *self.function_arguments.borrow_mut() = function_arguments.to_vec();
+            *self.function_attachments.borrow_mut() = function_attachments.to_vec();
             Ok(ProtoResult::Ok(FunctionResult { values: Vec::new() }))
         }
     }
@@ -887,6 +934,7 @@ mod tests {
                     }),
                     name: "the-code".to_owned(),
                     url: format!("file://{}", tf.path().display()),
+                    metadata: HashMap::new(),
                 }),
                 attachments: vec![],
                 function: Some(Function {
@@ -909,6 +957,7 @@ mod tests {
         }];
         let code = "asd️".as_bytes();
         let entry = "entry";
+        let attachments = [attachment!("fake://")];
         let result = nested.execute(
             "test",
             entry.clone(),
@@ -916,6 +965,7 @@ mod tests {
             &checksums,
             &exe_env_args,
             &args,
+            &attachments,
         );
         // Test that code got passed
         assert!(result.is_ok());
@@ -923,7 +973,7 @@ mod tests {
 
         // Test that the argument we send in is passed through
         let fake_args = fake.function_arguments.clone().into_inner();
-        assert_eq!(fake_args.len(), 5);
+        assert_eq!(fake_args.len(), 6);
         assert_eq!(
             fake_args.iter().find(|v| v.name == "code").unwrap().value,
             code
@@ -939,6 +989,19 @@ mod tests {
         assert_eq!(
             fake_args.iter().find(|v| v.name == "sha256").unwrap().value,
             checksums.sha256.as_bytes()
+        );
+        let fa = FunctionAttachments {
+            attachments: attachments.to_vec(),
+        };
+        let mut buf = Vec::with_capacity(fa.encoded_len());
+        fa.encode(&mut buf).unwrap();
+        assert_eq!(
+            fake_args
+                .iter()
+                .find(|v| v.name == "attachments")
+                .unwrap()
+                .value,
+            buf
         );
         assert!(fake_args.iter().find(|v| v.name == "args").is_some());
         assert!(fake_args.iter().find(|v| v.name == "test-arg").is_none());
@@ -966,6 +1029,7 @@ mod tests {
                     }),
                     name: "the-code".to_owned(),
                     url: format!("file://{}", tf.path().display()),
+                    metadata: HashMap::new(),
                 }),
                 attachments: vec![],
                 function: Some(Function {
@@ -993,6 +1057,7 @@ mod tests {
             &checksums,
             &exe_env_args,
             &args,
+            &[],
         );
         assert!(result.is_ok());
         let fake_args = fake.function_arguments.clone().into_inner();

@@ -22,13 +22,16 @@ macro_rules! null_logger {
 
 macro_rules! functions_service {
     () => {{
-        FunctionsService::new(null_logger!(), FunctionsRegistryService::new())
+        FunctionsService::new(
+            null_logger!(),
+            FunctionsRegistryService::new(null_logger!()),
+        )
     }};
 }
 
 macro_rules! functions_service_with_functions {
     () => {{
-        let functions_registry_service = FunctionsRegistryService::new();
+        let functions_registry_service = FunctionsRegistryService::new(null_logger!());
         let checksums = Some(Checksums {
             sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
         });
@@ -98,7 +101,7 @@ macro_rules! functions_service_with_functions {
 
 macro_rules! functions_service_with_specified_functions {
     ($fns:expr) => {{
-        let functions_registry_service = FunctionsRegistryService::new();
+        let functions_registry_service = FunctionsRegistryService::new(null_logger!());
         $fns.iter().for_each(|f| {
             futures::executor::block_on(
                 functions_registry_service.register(tonic::Request::new(f.clone())),

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use futures::{self, pin_mut};
+use slog::o;
 use url::Url;
 use uuid::Uuid;
 
@@ -16,9 +17,15 @@ use gbk_protocols::{
 
 use avery::registry::FunctionsRegistryService;
 
+macro_rules! null_logger {
+    () => {{
+        slog::Logger::root(slog::Discard, o!())
+    }};
+}
+
 macro_rules! registry {
     () => {{
-        FunctionsRegistryService::new()
+        FunctionsRegistryService::new(null_logger!())
     }};
 }
 
@@ -607,9 +614,8 @@ fn test_attachments() {
         }
     };
     pin_mut!(outbound);
-    let upload_result = futures::executor::block_on(fr.upload_stream_attachment(
-        tonic::Request::new(outbound)
-    ));
+    let upload_result =
+        futures::executor::block_on(fr.upload_stream_attachment(tonic::Request::new(outbound)));
 
     assert!(upload_result.is_ok());
 
@@ -654,12 +660,16 @@ fn test_attachments() {
     assert!(std::path::Path::new(code_url.path()).exists());
 
     // Ensure content of attachment
-    let attach = function.attachments.iter().find(|a| a.name == "attachment2");
+    let attach = function
+        .attachments
+        .iter()
+        .find(|a| a.name == "attachment2");
     assert!(attach.is_some());
 
-    let file_content = Url::parse(&attach.unwrap().url).ok().and_then(|url| {
-        std::fs::read(url.path()).ok()
-    }).unwrap();
+    let file_content = Url::parse(&attach.unwrap().url)
+        .ok()
+        .and_then(|url| std::fs::read(url.path()).ok())
+        .unwrap();
     assert_eq!(file_content, "sunesunesunesunesune".as_bytes());
 
     // non-registered attachment

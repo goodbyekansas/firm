@@ -10,7 +10,7 @@ use slog::{o, Logger};
 
 // crate / internal includes
 use executor::{
-    download_code, get_execution_env_inputs, lookup_executor, validate_args, validate_results,
+    get_execution_env_inputs, lookup_executor, validate_args, validate_results, AttachmentDownload,
 };
 
 use registry::FunctionsRegistryService;
@@ -193,7 +193,7 @@ impl FunctionsServiceTrait for FunctionsService {
             let code = function_descriptor.code.map_or_else(
                 || Ok(vec![]),
                 |code| {
-                    download_code(&code.url).map_err(|e| {
+                    code.download().map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Internal,
                             format!(
@@ -214,6 +214,7 @@ impl FunctionsServiceTrait for FunctionsService {
                 &checksums,
                 &execution_environment.args,
                 &args,
+                &function_descriptor.attachments,
             );
             match res {
                 Ok(ProtoResult::Ok(r)) => validate_results(function.outputs.iter(), &r)

@@ -61,7 +61,7 @@ message FunctionDescriptor {
   FunctionAttachment code = 2;
   Function function = 3;
   Checksums checksums = 4;
-  repeated FunctionAttachment attachments = 9;
+  repeated FunctionAttachment attachments = 5;
 }
 
 message Function {
@@ -90,6 +90,11 @@ message FunctionAttachment {
   FunctionAttachmentId id = 1;
   string name = 2;
   string url = 3;
+  map<string, string> metadata = 4;
+}
+
+message FunctionAttachments {
+  repeated FunctionAttachment attachments = 1;
 }
 
 message FunctionAttachmentId {
@@ -159,7 +164,7 @@ message FunctionOutput {
 message FunctionArgument {
   string name = 1;
   ArgumentType type = 2;
-  bytes value = 3;
+  bytes value = 3; // TODO: Fix list of thigns. Maybe use one of repeated bytes or just bytes
 }
 
 message FunctionResult {
