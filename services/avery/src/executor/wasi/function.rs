@@ -4,7 +4,9 @@ use super::error::{WasiError, WasiResult};
 use prost::Message;
 use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
-use gbk_protocols::functions::{FunctionArgument, ReturnValue};
+use super::sandbox::Sandbox;
+use crate::executor::AttachmentDownload;
+use gbk_protocols::functions::{FunctionArgument, FunctionAttachment, ReturnValue};
 
 pub trait WasmPtrExt<'a> {
     fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]>;
@@ -18,6 +20,35 @@ impl<'a> WasmPtrExt<'a> for WasmPtr<u8, Array> {
                 .map(|cells| (&mut *(cells as *mut [Cell<u8>] as *mut Cell<[u8]>)).get_mut())
         }
     }
+}
+
+pub fn map_attachment(
+    attachments: &[FunctionAttachment],
+    sandbox: &Sandbox,
+    vm_memory: &Memory,
+    attachment_name: WasmPtr<u8, Array>,
+    attachment_name_len: u32,
+) -> WasiResult<()> {
+    let attachment_name = attachment_name
+        .get_utf8_string(vm_memory, attachment_name_len)
+        .ok_or_else(|| WasiError::FailedToReadStringPointer("attachment_name".to_owned()))?;
+
+    attachments
+        .iter()
+        .find(|a| a.name == attachment_name)
+        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_name.to_owned()))
+        .and_then(|a| {
+            a.download().map_err(|e| {
+                WasiError::FailedToMapAttachment(attachment_name.to_owned(), Box::new(e))
+            })
+        })
+        .and_then(|data| {
+            // TODO: Map attachment differently depending on metadata.
+            // We need to support mapping folders as well.
+            std::fs::write(sandbox.path().join(attachment_name), data).map_err(|e| {
+                WasiError::FailedToMapAttachment(attachment_name.to_owned(), Box::new(e))
+            })
+        })
 }
 
 pub fn get_input_len(

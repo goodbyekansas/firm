@@ -17,7 +17,7 @@ slog-term = "2"
 structopt = "0.3"
 tempfile = "3"
 thiserror = "1"
-tokio = { version = "0.2", features = ["rt-threaded", "time", "stream", "fs", "macros", "uds", "signal"] }
+tokio = { version = "0.2", features = ["rt-threaded", "time", "stream", "macros", "uds", "signal"] }
 toml = "0.5"
 url = "2"
 uuid = { version = "0.8", features = ["serde", "v4"] }

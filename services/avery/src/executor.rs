@@ -24,17 +24,26 @@ use gbk_protocols::{
 };
 use ExecutorError::AttachmentReadError;
 
-// TODO: Should not take ref to code, executor_arguments, function_arguments and function_attachments
+#[derive(Default, Debug)]
+pub struct ExecutorContext {
+    pub function_name: String,
+    pub entrypoint: String,
+    pub code: Vec<u8>,
+    pub checksums: Checksums, //TODO attachments should have checksums too
+    pub arguments: Vec<FunctionArgument>,
+}
+
+#[derive(Default, Debug)]
+pub struct FunctionContext {
+    pub arguments: Vec<FunctionArgument>,
+    pub attachments: Vec<FunctionAttachment>,
+}
+
 pub trait FunctionExecutor: Debug {
     fn execute(
         &self,
-        function_name: &str,
-        entrypoint: &str,
-        code: &[u8],
-        checksums: &Checksums,
-        executor_arguments: &[FunctionArgument],
-        function_arguments: &[FunctionArgument],
-        function_attachments: &[FunctionAttachment],
+        executor_context: ExecutorContext,
+        function_context: FunctionContext,
     ) -> Result<ProtoResult, ExecutorError>;
 }
 
@@ -82,13 +91,8 @@ impl FunctionAdapter {
 impl FunctionExecutor for FunctionAdapter {
     fn execute(
         &self,
-        _function_name: &str,
-        entrypoint: &str,
-        code: &[u8],
-        checksums: &Checksums, // TODO: Use checksum to validate code
-        executor_arguments: &[FunctionArgument],
-        function_arguments: &[FunctionArgument],
-        function_attachments: &[FunctionAttachment],
+        executor_context: ExecutorContext,
+        function_context: FunctionContext,
     ) -> Result<ProtoResult, ExecutorError> {
         let mut inner_function_arguments = vec![];
 
@@ -96,26 +100,26 @@ impl FunctionExecutor for FunctionAdapter {
         inner_function_arguments.push(FunctionArgument {
             name: "code".to_owned(),
             r#type: ArgumentType::Bytes as i32,
-            value: code.to_vec(),
+            value: executor_context.code,
         });
 
         inner_function_arguments.push(FunctionArgument {
             name: "entrypoint".to_owned(),
             r#type: ArgumentType::String as i32,
-            value: entrypoint.as_bytes().to_vec(),
+            value: executor_context.entrypoint.as_bytes().to_vec(),
         });
 
         inner_function_arguments.push(FunctionArgument {
             name: "sha256".to_owned(),
             r#type: ArgumentType::String as i32,
-            value: checksums.sha256.as_bytes().to_vec(),
+            value: executor_context.checksums.sha256.as_bytes().to_vec(),
         });
 
-        let mut manifest_executor_arguments = executor_arguments.to_vec();
+        let mut manifest_executor_arguments = executor_context.arguments;
         inner_function_arguments.append(&mut manifest_executor_arguments);
 
         let proto_function_arguments = FunctionArguments {
-            arguments: function_arguments.to_vec(),
+            arguments: function_context.arguments,
         };
 
         let mut encoded_function_arguments =
@@ -129,7 +133,7 @@ impl FunctionExecutor for FunctionAdapter {
         });
 
         let proto_function_attachments = FunctionAttachments {
-            attachments: function_attachments.to_vec(),
+            attachments: function_context.attachments,
         };
 
         let mut encoded_function_attachments =
@@ -158,7 +162,7 @@ impl FunctionExecutor for FunctionAdapter {
         let inner_checksums = self
             .inner_function_descriptor
             .checksums
-            .as_ref()
+            .clone()
             .ok_or(ExecutorError::MissingChecksums)?;
         let inner_exe_env = self
             .inner_function_descriptor
@@ -169,13 +173,17 @@ impl FunctionExecutor for FunctionAdapter {
             })?;
 
         self.executor.execute(
-            &inner_function_name,
-            &inner_exe_env.entrypoint,
-            &inner_code,
-            &inner_checksums,
-            &inner_exe_env.args,
-            &inner_function_arguments,
-            &self.inner_function_descriptor.attachments,
+            ExecutorContext {
+                function_name: inner_function_name,
+                entrypoint: inner_exe_env.entrypoint,
+                code: inner_code,
+                checksums: inner_checksums,
+                arguments: inner_exe_env.args,
+            },
+            FunctionContext {
+                arguments: inner_function_arguments,
+                attachments: self.inner_function_descriptor.attachments.clone(),
+            },
         )
     }
 }
@@ -867,33 +875,18 @@ mod tests {
 
     #[derive(Default, Debug)]
     pub struct FakeExecutor {
-        function_name: RefCell<String>,
-        entrypoint: RefCell<String>,
-        code: RefCell<Vec<u8>>,
-        checksums: RefCell<Checksums>,
-        executor_arguments: RefCell<Vec<FunctionArgument>>,
-        function_arguments: RefCell<Vec<FunctionArgument>>,
-        function_attachments: RefCell<Vec<FunctionAttachment>>,
+        executor_context: RefCell<ExecutorContext>,
+        function_context: RefCell<FunctionContext>,
     }
 
     impl FunctionExecutor for Rc<FakeExecutor> {
         fn execute(
             &self,
-            function_name: &str,
-            entrypoint: &str,
-            code: &[u8],
-            checksums: &Checksums,
-            executor_arguments: &[FunctionArgument],
-            function_arguments: &[FunctionArgument],
-            function_attachments: &[FunctionAttachment],
+            executor_context: ExecutorContext,
+            function_context: FunctionContext,
         ) -> Result<ProtoResult, ExecutorError> {
-            *self.function_name.borrow_mut() = function_name.to_owned();
-            *self.entrypoint.borrow_mut() = entrypoint.to_owned();
-            *self.code.borrow_mut() = code.to_vec();
-            *self.checksums.borrow_mut() = checksums.clone();
-            *self.executor_arguments.borrow_mut() = executor_arguments.to_vec();
-            *self.function_arguments.borrow_mut() = function_arguments.to_vec();
-            *self.function_attachments.borrow_mut() = function_attachments.to_vec();
+            *self.executor_context.borrow_mut() = executor_context;
+            *self.function_context.borrow_mut() = function_context;
             Ok(ProtoResult::Ok(FunctionResult { values: Vec::new() }))
         }
     }
@@ -908,7 +901,7 @@ mod tests {
         let mut tf = NamedTempFile::new().unwrap();
         let s = "some data 🖥️";
 
-        let exe_env_args = [FunctionArgument {
+        let exe_env_args = vec![FunctionArgument {
             name: "sune".to_owned(),
             r#type: ArgumentType::String as i32,
             value: "bune".as_bytes().to_vec(),
@@ -950,29 +943,36 @@ mod tests {
             },
             null_logger!(),
         );
-        let args = [FunctionArgument {
+        let args = vec![FunctionArgument {
             name: "test-arg".to_owned(),
             r#type: ArgumentType::String as i32,
             value: "test-value".as_bytes().to_vec(),
         }];
         let code = "asd️".as_bytes();
         let entry = "entry";
-        let attachments = [attachment!("fake://")];
+        let attachments = vec![attachment!("fake://")];
         let result = nested.execute(
-            "test",
-            entry.clone(),
-            code.clone(),
-            &checksums,
-            &exe_env_args,
-            &args,
-            &attachments,
+            ExecutorContext {
+                function_name: "test".to_owned(),
+                entrypoint: entry.to_owned(),
+                code: code.to_vec(),
+                checksums: checksums.clone(),
+                arguments: exe_env_args.clone(),
+            },
+            FunctionContext {
+                arguments: args,
+                attachments: attachments.clone(),
+            },
         );
         // Test that code got passed
         assert!(result.is_ok());
-        assert_eq!(s.as_bytes(), fake.code.clone().into_inner().as_slice());
+        assert_eq!(
+            s.as_bytes(),
+            fake.executor_context.borrow().code.clone().as_slice()
+        );
 
         // Test that the argument we send in is passed through
-        let fake_args = fake.function_arguments.clone().into_inner();
+        let fake_args = fake.function_context.borrow().arguments.clone();
         assert_eq!(fake_args.len(), 6);
         assert_eq!(
             fake_args.iter().find(|v| v.name == "code").unwrap().value,
@@ -990,9 +990,7 @@ mod tests {
             fake_args.iter().find(|v| v.name == "sha256").unwrap().value,
             checksums.sha256.as_bytes()
         );
-        let fa = FunctionAttachments {
-            attachments: attachments.to_vec(),
-        };
+        let fa = FunctionAttachments { attachments };
         let mut buf = Vec::with_capacity(fa.encoded_len());
         fa.encode(&mut buf).unwrap();
         assert_eq!(
@@ -1007,7 +1005,7 @@ mod tests {
         assert!(fake_args.iter().find(|v| v.name == "test-arg").is_none());
 
         // Test that we get the execution environment args we supplied earlier
-        let fake_exe_args = fake.executor_arguments.clone().into_inner();
+        let fake_exe_args = &fake.executor_context.borrow().arguments.clone();
         assert_eq!(fake_exe_args.len(), 0);
         assert_eq!(
             fake_args.iter().find(|v| v.name == "sune").unwrap().value,
@@ -1051,16 +1049,20 @@ mod tests {
             value: "test-value".as_bytes().to_vec(),
         }];
         let result = nested2.execute(
-            "test",
-            "entry",
-            "vec".as_bytes(),
-            &checksums,
-            &exe_env_args,
-            &args,
-            &[],
+            ExecutorContext {
+                function_name: "test".to_owned(),
+                entrypoint: "entry".to_owned(),
+                code: "vec".as_bytes().to_vec(),
+                checksums,
+                arguments: exe_env_args,
+            },
+            FunctionContext {
+                arguments: args,
+                attachments: vec![],
+            },
         );
         assert!(result.is_ok());
-        let fake_args = fake.function_arguments.clone().into_inner();
+        let fake_args = &fake.function_context.borrow().arguments.clone();
         assert_eq!(fake_args.iter().filter(|a| a.name == "code").count(), 1);
         assert_eq!(fake_args.iter().filter(|a| a.name == "sha256").count(), 1);
         assert_eq!(
