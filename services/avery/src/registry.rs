@@ -9,9 +9,9 @@ use std::{
 use futures::{Stream, StreamExt};
 use regex::Regex;
 use semver::{Version, VersionReq};
+use slog::{info, warn, Logger};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
-use slog::{Logger, warn, info};
 
 use gbk_protocols::{
     functions::{
@@ -45,6 +45,42 @@ struct Function {
     attachments: Vec<FunctionAttachmentId>,
 }
 
+impl Drop for FunctionsRegistryService {
+    fn drop(&mut self) {
+        match self.function_attachments.write() {
+            Err(e) => warn!(
+                self.logger,
+                "Failed to acquire write lock for cleaning up attachments: {}. \
+                            Attachments will be leaked (restart computer to clean up)",
+                e
+            ),
+            Ok(mut fas) => {
+                if !fas.is_empty() {
+                    info!(
+                        self.logger,
+                        "🧹 Shutting down registry, cleaning up attachments..."
+                    );
+                    fas.drain().for_each(|(_id, (att, att_path))| {
+                        fs::remove_file(&att_path).map_or_else(
+                            |e| {
+                                warn!(
+                                    self.logger,
+                                    "Failed to clean up attachment \"{}\" at \"{}\": {}",
+                                    att.name,
+                                    att_path.display(),
+                                    e
+                                )
+                            },
+                            |_| (),
+                        )
+                    });
+                    info!(self.logger, "🧹💨  Function attachments cleaned up");
+                }
+            }
+        }
+    }
+}
+
 impl FunctionsRegistryService {
     pub fn new(logger: Logger) -> Self {
         Self {
@@ -71,14 +107,27 @@ impl FunctionsRegistryService {
                 maybe_file
                     .take()
                     .map(|(_, path)| {
-                        std::fs::remove_file(&path).map_or_else(|e| {
-                            warn!(self.logger, "Failed to remove partially uploaded file \"{}\": {}", path.display(), e);
-                            ()
-                        }, |_| {
-                            info!(self.logger, "Removed partially uploaded file \"{}\"", path.display());
-                            ()
-                        })
-                    }).unwrap_or_default();
+                        std::fs::remove_file(&path).map_or_else(
+                            |e| {
+                                warn!(
+                                    self.logger,
+                                    "Failed to remove partially uploaded file \"{}\": {}",
+                                    path.display(),
+                                    e
+                                );
+                                ()
+                            },
+                            |_| {
+                                info!(
+                                    self.logger,
+                                    "Removed partially uploaded file \"{}\"",
+                                    path.display()
+                                );
+                                ()
+                            },
+                        )
+                    })
+                    .unwrap_or_default();
                 e
             })?;
 
@@ -344,6 +393,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
             .push(semver::Identifier::AlphaNumeric("dev".to_owned()));
 
         // remove function if name and version matches (after the -dev has been appended)
+        // TODO: Maybe remove corresponding attachments
         functions.retain(|_, v| v.name != payload.name || v.version != version);
 
         let execution_environment = payload.execution_environment.ok_or_else(|| {
