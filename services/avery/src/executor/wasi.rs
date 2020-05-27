@@ -19,11 +19,11 @@ use wasmer_wasi::{
     state::{HostFile, WasiState},
 };
 
-use crate::executor::{ExecutorError, FunctionExecutor};
+use crate::executor::{ExecutorContext, ExecutorError, FunctionContext, FunctionExecutor};
 use error::{ToErrorCode, WasiError};
 use gbk_protocols::functions::{
-    execute_response::Result as ProtoResult, Checksums, ExecutionError, FunctionArgument,
-    FunctionAttachment, FunctionResult, ReturnValue,
+    execute_response::Result as ProtoResult, ExecutionError, FunctionArgument, FunctionAttachment,
+    FunctionResult, ReturnValue,
 };
 use sandbox::Sandbox;
 
@@ -35,7 +35,6 @@ fn execute_function(
     arguments: &[FunctionArgument],
     function_attachments: &[FunctionAttachment],
 ) -> Result<Vec<ReturnValue>, String> {
-    // TODO: Do something with attachments
     const ENTRY: &str = "_start";
     let module = compile(code).map_err(|e| format!("failed to compile wasm: {}", e))?;
 
@@ -99,7 +98,7 @@ fn execute_function(
         .and_then(|state| state.build())
         .map_err(|e| format!("Failed to create wasi state: {:?}", e))?;
 
-    let sandboxes = [sandbox.clone(), attachment_sandbox.clone()];
+    let sandboxes = [sandbox, attachment_sandbox.clone()];
     let sandboxes2 = sandboxes.clone();
 
     // inject gbk specific functions in the wasm state
@@ -116,7 +115,7 @@ fn execute_function(
     let gbk_imports = imports! {
         "gbk" => {
             "map_attachment" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32| {
-                process::map_attachment(&function_attachments, &attachment_sandbox, ctx.memory(0), attachment_name, attachment_name_len).to_error_code()
+                function::map_attachment(&function_attachments, &attachment_sandbox, ctx.memory(0), attachment_name, attachment_name_len).to_error_code()
             }),
             "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
                 process::start_process(&start_process_logger, &sandboxes, ctx.memory(0), s, len, pid_out).to_error_code()
@@ -194,22 +193,18 @@ impl WasiExecutor {
 impl FunctionExecutor for WasiExecutor {
     fn execute(
         &self,
-        function_name: &str,
-        entrypoint: &str,
-        code: &[u8],
-        _checksums: &Checksums, // TODO: Use checksum
-        _executor_arguments: &[FunctionArgument],
-        function_arguments: &[FunctionArgument],
-        function_attachments: &[FunctionAttachment],
+        executor_context: ExecutorContext,
+        function_context: FunctionContext,
     ) -> Result<ProtoResult, ExecutorError> {
         // TODO: separate host and guest errors
         Ok(execute_function(
-            self.logger.new(o!("function" => function_name.to_owned())),
-            function_name,
-            entrypoint,
-            code,
-            function_arguments,
-            function_attachments,
+            self.logger
+                .new(o!("function" => executor_context.function_name.to_owned())),
+            &executor_context.function_name,
+            &executor_context.entrypoint,
+            &executor_context.code,
+            &function_context.arguments,
+            &function_context.attachments,
         )
         .map_or_else(
             |e| ProtoResult::Error(ExecutionError { msg: e }),
@@ -221,6 +216,7 @@ impl FunctionExecutor for WasiExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gbk_protocols::functions::Checksums;
 
     macro_rules! null_logger {
         () => {{
@@ -245,16 +241,20 @@ mod tests {
     fn test_execution() {
         let executor = WasiExecutor::new(null_logger!());
         let res = executor.execute(
-            "hello-world",
-            "could-be-anything",
-            include_bytes!("hello.wasm"),
-            &Checksums {
-                sha256: "c455c4bc68c1afcdafa7c2f74a499810b0aa5d12f7a009d493789d595847af72"
-                    .to_owned(),
+            ExecutorContext {
+                function_name: "hello-world".to_owned(),
+                entrypoint: "could-be-anything".to_owned(),
+                code: include_bytes!("hello.wasm").to_vec(),
+                checksums: Checksums {
+                    sha256: "c455c4bc68c1afcdafa7c2f74a499810b0aa5d12f7a009d493789d595847af72"
+                        .to_owned(),
+                },
+                arguments: vec![],
             },
-            &[],
-            &[],
-            &[],
+            FunctionContext {
+                arguments: vec![],
+                attachments: vec![],
+            },
         );
 
         assert!(res.is_ok());

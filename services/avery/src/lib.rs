@@ -11,6 +11,7 @@ use slog::{o, Logger};
 // crate / internal includes
 use executor::{
     get_execution_env_inputs, lookup_executor, validate_args, validate_results, AttachmentDownload,
+    ExecutorContext, FunctionContext,
 };
 
 use registry::FunctionsRegistryService;
@@ -208,13 +209,17 @@ impl FunctionsServiceTrait for FunctionsService {
             )?;
 
             let res = executor.execute(
-                &function.name,
-                &execution_environment.entrypoint,
-                &code,
-                &checksums,
-                &execution_environment.args,
-                &args,
-                &function_descriptor.attachments,
+                ExecutorContext {
+                    function_name: function.name.clone(),
+                    entrypoint: execution_environment.entrypoint,
+                    code,
+                    arguments: execution_environment.args,
+                    checksums,
+                },
+                FunctionContext {
+                    arguments: args,
+                    attachments: function_descriptor.attachments,
+                },
             );
             match res {
                 Ok(ProtoResult::Ok(r)) => validate_results(function.outputs.iter(), &r)
@@ -244,11 +249,7 @@ impl FunctionsServiceTrait for FunctionsService {
 
                 Err(e) => Err(tonic::Status::new(
                     tonic::Code::Internal,
-                    format!(
-                        "Failed to execute function {}: {}",
-                        function.name.clone(),
-                        e
-                    ),
+                    format!("Failed to execute function {}: {}", function.name, e),
                 )),
             }
         })

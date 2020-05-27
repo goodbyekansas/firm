@@ -116,6 +116,7 @@ message AttachmentUploadResponse {
 
 message RegisterAttachmentRequest {
   string name = 1;
+  map<string, string> metadata = 2;
 }
 
 message FunctionId {

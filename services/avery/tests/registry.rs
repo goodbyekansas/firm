@@ -582,6 +582,7 @@ fn test_attachments() {
     let code_result = futures::executor::block_on(fr.register_attachment(tonic::Request::new(
         RegisterAttachmentRequest {
             name: String::from("code"),
+            metadata: HashMap::new(),
         },
     )));
     assert!(code_result.is_ok());
@@ -590,6 +591,7 @@ fn test_attachments() {
     let attachment1 = futures::executor::block_on(fr.register_attachment(tonic::Request::new(
         RegisterAttachmentRequest {
             name: String::from("attachment1"),
+            metadata: HashMap::new(),
         },
     )));
     assert!(attachment1.is_ok());
@@ -598,6 +600,7 @@ fn test_attachments() {
     let attachment2 = futures::executor::block_on(fr.register_attachment(tonic::Request::new(
         RegisterAttachmentRequest {
             name: String::from("attachment2"),
+            metadata: HashMap::new(),
         },
     )));
     assert!(attachment2.is_ok());

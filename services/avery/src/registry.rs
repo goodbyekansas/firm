@@ -115,7 +115,6 @@ impl FunctionsRegistryService {
                                     path.display(),
                                     e
                                 );
-                                ()
                             },
                             |_| {
                                 info!(
@@ -123,7 +122,6 @@ impl FunctionsRegistryService {
                                     "Removed partially uploaded file \"{}\"",
                                     path.display()
                                 );
-                                ()
                             },
                         )
                     })
@@ -136,7 +134,7 @@ impl FunctionsRegistryService {
                 .ok_or_else(|| {
                     tonic::Status::new(
                         tonic::Code::InvalidArgument,
-                        format!("Failed to get function attachment with None as id. 🤷"),
+                        "Failed to get function attachment with None as id. 🤷".to_owned(),
                     )
                 })
                 .and_then(|idd| self.get_attachment(&idd))?;
@@ -222,12 +220,12 @@ impl FunctionsRegistryService {
             .code
             .clone()
             .map(|c| self.get_attachment(&c))
-            .map_or(Ok(None), |r| r.map(|(attach, _)| Some(attach.clone())))?;
+            .map_or(Ok(None), |r| r.map(|(attach, _)| Some(attach)))?;
 
         let attachments = f
             .attachments
             .iter()
-            .map(|v| self.get_attachment(v).map(|(attach, _)| attach.clone()))
+            .map(|v| self.get_attachment(v).map(|(attach, _)| attach))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(FunctionDescriptor {
@@ -357,7 +355,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
                 })
             })
             .and_then(|f| self.get_function_descriptor(f))
-            .map(|fd| tonic::Response::new(fd))
+            .map(tonic::Response::new)
     }
 
     async fn register(
@@ -393,7 +391,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
             .push(semver::Identifier::AlphaNumeric("dev".to_owned()));
 
         // remove function if name and version matches (after the -dev has been appended)
-        // TODO: Maybe remove corresponding attachments
+        // TODO: Remove corresponding attachments
         functions.retain(|_, v| v.name != payload.name || v.version != version);
 
         let execution_environment = payload.execution_environment.ok_or_else(|| {
@@ -509,9 +507,8 @@ impl FunctionsRegistry for FunctionsRegistryService {
     ) -> Result<tonic::Response<AttachmentUploadResponse>, tonic::Status> {
         Err(tonic::Status::new(
             tonic::Code::Unimplemented,
-            format!(
-                "The Avery registry does not support uploading via URL. Use streaming upload instead.",
-            ),
+            "The Avery registry does not support uploading via URL. Use streaming upload instead."
+                .to_owned(),
         ))
     }
 }
