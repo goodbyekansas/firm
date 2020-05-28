@@ -1,11 +1,9 @@
 [package]
-name = "gbk-protocols"
+name = "gbk-protocols-test-helpers"
 version = "0.1.0"
 authors = ["Goodbye Kansas Pipeline team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
 [dependencies]
-bytes = "0.5"
-prost = "0.6"
 tempfile = "3"
-@includeTonic@
+uuid = "0.8"

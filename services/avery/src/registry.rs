@@ -452,7 +452,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
             ));
         }
 
-        let checksum = payload.checksum.ok_or_else(|| {
+        let checksum = payload.checksums.ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
                 String::from("Checksum is required when registering attachment"),
