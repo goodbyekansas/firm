@@ -7,12 +7,14 @@ use uuid::Uuid;
 
 use gbk_protocols::{
     functions::{
-        functions_registry_server::FunctionsRegistry, ArgumentType, AttachmentStreamUpload,
-        Checksums, ExecutionEnvironment, FunctionAttachmentId, FunctionId, FunctionInput,
-        FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterAttachmentRequest,
-        RegisterRequest,
+        functions_registry_server::FunctionsRegistry, AttachmentStreamUpload, FunctionAttachmentId,
+        FunctionId, ListRequest, OrderingDirection, OrderingKey,
     },
     tonic,
+};
+
+use gbk_protocols_test_helpers::{
+    exec_env, list_request, register_attachment_request, register_request,
 };
 
 use avery::registry::FunctionsRegistryService;
@@ -29,213 +31,57 @@ macro_rules! registry {
     }};
 }
 
-macro_rules! register_request {
-    ($name: expr) => {{
-        let checksums = Some(Checksums {
-            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
-        });
-        tonic::Request::new(RegisterRequest {
-            name: $name.to_owned(),
-            version: "0.1.0".to_owned(),
-            tags: HashMap::with_capacity(0),
-            inputs: vec![
-                FunctionInput {
-                    name: "say".to_string(),
-                    required: true,
-                    r#type: ArgumentType::String as i32,
-                    default_value: String::new(),
-                    from_execution_environment: false,
-                },
-                FunctionInput {
-                    name: "count".to_string(),
-                    required: false,
-                    r#type: ArgumentType::Int as i32,
-                    default_value: 1.to_string(),
-                    from_execution_environment: false,
-                },
-            ],
-            outputs: vec![FunctionOutput {
-                name: "output_string".to_string(),
-                r#type: ArgumentType::String as i32,
-            }],
-            code: None,
-            checksums,
-            execution_environment: Some(ExecutionEnvironment {
-                name: "wasm".to_owned(),
-                entrypoint: "kanske".to_owned(),
-                args: vec![],
-            }),
-            attachment_ids: vec![],
-        })
-    }};
-}
-
-macro_rules! custom_register_request {
-    ($name:expr, $execution_environment:expr) => {{
-        tonic::Request::new(RegisterRequest {
-            name: $name.to_owned(),
-            version: "0.1.0".to_owned(),
-            tags: HashMap::with_capacity(0),
-            inputs: vec![],
-            outputs: vec![],
-            code: None,
-            checksums: Some(Checksums {
-                sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
-                    .to_owned(),
-            }),
-            execution_environment: $execution_environment,
-            attachment_ids: vec![],
-        })
-    }};
-}
-
-macro_rules! register_request_with_version {
-    ($name:expr, $version:expr) => {{
-        tonic::Request::new(RegisterRequest {
-            name: $name.to_owned(),
-            version: $version.to_owned(),
-            tags: HashMap::with_capacity(0),
-            inputs: vec![],
-            outputs: vec![],
-            code: None,
-            checksums: Some(Checksums {
-                sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
-                    .to_owned(),
-            }),
-            execution_environment: Some(ExecutionEnvironment {
-                name: "wasm".to_owned(),
-                entrypoint: "kanske".to_owned(),
-                args: vec![],
-            }),
-            attachment_ids: vec![],
-        })
-    }};
-}
-
-macro_rules! register_request_with_tags {
-    ($name: expr, $($key:expr => $value:expr),+) => {{
-
-        let mut m = ::std::collections::HashMap::new();
-            $(
-                m.insert($key.to_owned(), $value.to_owned());
-            )+
-
-        tonic::Request::new(RegisterRequest {
-            name: $name.to_owned(),
-            version: "0.1.0".to_owned(),
-            tags: m,
-            inputs: vec![
-                FunctionInput {
-                    name: "say".to_string(),
-                    required: true,
-                    r#type: ArgumentType::String as i32,
-                    default_value: String::new(),
-                    from_execution_environment: false,
-                },
-                FunctionInput {
-                    name: "count".to_string(),
-                    required: false,
-                    r#type: ArgumentType::Int as i32,
-                    default_value: 1.to_string(),
-                    from_execution_environment: false,
-                },
-            ],
-            outputs: vec![FunctionOutput {
-                name: "output_string".to_string(),
-                r#type: ArgumentType::String as i32,
-            }],
-            code: None,
-            checksums: Some(Checksums {
-                sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
-            }),
-            execution_environment: Some(ExecutionEnvironment {
-                name: "wasm".to_owned(),
-                args: vec![],
-                entrypoint: "kanske".to_owned(),
-            }),
-            attachment_ids: vec![],
-        })
-    }};
-}
-
 #[test]
 fn test_list_functions() {
     let fr = registry!();
 
     // Test empty
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: 100,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(list_request!())));
 
     assert!(list_request.is_ok());
     assert_eq!(0, list_request.unwrap().into_inner().functions.len());
 
     // Test with 3
-    futures::executor::block_on(fr.register(register_request!("random-1"))).unwrap();
-    futures::executor::block_on(fr.register(register_request!("function-1"))).unwrap();
-    futures::executor::block_on(fr.register(register_request!("function-dev-1"))).unwrap();
-    futures::executor::block_on(fr.register(register_request!("function-dev-2"))).unwrap();
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("random-1", "1.2.3"))),
+    )
+    .unwrap();
+    futures::executor::block_on(fr.register(tonic::Request::new(register_request!(
+        "function-1",
+        "6.6.6"
+    ))))
+    .unwrap();
+    futures::executor::block_on(fr.register(tonic::Request::new(register_request!(
+        "function-dev-1",
+        "100.100.100"
+    ))))
+    .unwrap();
+    futures::executor::block_on(fr.register(tonic::Request::new(register_request!(
+        "function-dev-2",
+        "127.0.1"
+    ))))
+    .unwrap();
 
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: 100,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(list_request!())));
 
     assert!(list_request.is_ok());
     assert_eq!(4, list_request.unwrap().into_inner().functions.len());
 
     // Test filtering by name
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "function".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: 100,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request =
+        futures::executor::block_on(fr.list(tonic::Request::new(list_request!("function"))));
 
     assert!(list_request.is_ok());
     assert_eq!(3, list_request.unwrap().into_inner().functions.len());
 
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "dev".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: 100,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request =
+        futures::executor::block_on(fr.list(tonic::Request::new(list_request!("dev"))));
 
     assert!(list_request.is_ok());
     assert_eq!(2, list_request.unwrap().into_inner().functions.len());
 
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "dev-2".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: 100,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request =
+        futures::executor::block_on(fr.list(tonic::Request::new(list_request!("dev-2"))));
     assert!(list_request.is_ok());
     assert_eq!(1, list_request.unwrap().into_inner().functions.len());
 }
@@ -244,43 +90,28 @@ fn test_list_functions() {
 fn test_list_tag_filtering() {
     let fr = registry!();
 
-    futures::executor::block_on(fr.register(register_request!("random-1"))).unwrap();
-    futures::executor::block_on(fr.register(register_request_with_tags!(
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("random-1", "5.87.1"))),
+    )
+    .unwrap();
+    futures::executor::block_on(fr.register(tonic::Request::new(register_request!(
         "matrix-1",
-        "a" => "neo",
-        "b" => "smith"
-    )))
+        "0.0.1",
+        exec_env!(),
+        {"a" => "neo", "b" => "smith"}
+    ))))
     .unwrap();
 
     // Test filtering without filtering
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: 100,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(list_request!())));
 
     assert!(list_request.is_ok());
     assert_eq!(2, list_request.unwrap().into_inner().functions.len());
 
     // Test filtering with tags
-    let mut tags_dict = HashMap::new();
-    tags_dict.insert("a".to_owned(), "neo".to_owned());
-    tags_dict.insert("b".to_owned(), "smith".to_owned());
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "".to_owned(),
-        tags_filter: tags_dict,
-        offset: 0,
-        limit: 100,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(
+        list_request!("", {"a" => "neo", "b" => "smith"}),
+    )));
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
@@ -297,50 +128,34 @@ fn test_offset_and_limit() {
     let count: usize = 10;
 
     for i in 0..count {
-        futures::executor::block_on(fr.register(register_request!(&format!("fn-{}", i)))).unwrap();
+        futures::executor::block_on(fr.register(tonic::Request::new(register_request!(
+            &format!("fn-{}", i),
+            "1.1.1"
+        ))))
+        .unwrap();
     }
 
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: (count * 2) as u32, // Limit above max
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request =
+        futures::executor::block_on(fr.list(tonic::Request::new(list_request!("", count * 2, {}))));
 
     assert!(list_request.is_ok());
     assert_eq!(count, list_request.unwrap().into_inner().functions.len());
 
     // do not take everything
     let limit: usize = 5;
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: limit as u32,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request =
+        futures::executor::block_on(fr.list(tonic::Request::new(list_request!("", limit, {}))));
 
     assert!(list_request.is_ok());
     assert_eq!(limit, list_request.unwrap().into_inner().functions.len());
 
     // Take last one
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: (count - 1) as u32,
-        limit: count as u32,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(list_request!(
+        "",
+        count,
+        count - 1,
+        {}
+    ))));
 
     assert!(list_request.is_ok());
     assert_eq!(1, list_request.unwrap().into_inner().functions.len());
@@ -351,26 +166,25 @@ fn test_sorting() {
     // yer a wizard harry
     let fr = registry!();
 
-    futures::executor::block_on(fr.register(register_request_with_version!("my-name-a", "1.0.0")))
-        .unwrap();
-    futures::executor::block_on(fr.register(register_request_with_version!("my-name-a", "1.0.1")))
-        .unwrap();
-    futures::executor::block_on(fr.register(register_request_with_version!("my-name-b", "1.0.2")))
-        .unwrap();
-    futures::executor::block_on(fr.register(register_request_with_version!("my-name-c", "1.1.0")))
-        .unwrap();
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("my-name-a", "1.0.0"))),
+    )
+    .unwrap();
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("my-name-a", "1.0.1"))),
+    )
+    .unwrap();
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("my-name-b", "1.0.2"))),
+    )
+    .unwrap();
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("my-name-c", "1.1.0"))),
+    )
+    .unwrap();
 
     // No filter specified
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
-        name_filter: "".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: 10,
-        exact_name_match: true,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(list_request!())));
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
@@ -434,14 +248,22 @@ fn test_sorting() {
 
     // testing swedish idioms
     let fr = registry!();
-    futures::executor::block_on(fr.register(register_request_with_version!("sune-a", "1.0.0")))
-        .unwrap();
-    futures::executor::block_on(fr.register(register_request_with_version!("sune-a", "2.1.0")))
-        .unwrap();
-    futures::executor::block_on(fr.register(register_request_with_version!("sune-b", "2.0.0")))
-        .unwrap();
-    futures::executor::block_on(fr.register(register_request_with_version!("sune-b", "1.1.0")))
-        .unwrap();
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("sune-a", "1.0.0"))),
+    )
+    .unwrap();
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("sune-a", "2.1.0"))),
+    )
+    .unwrap();
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("sune-b", "2.0.0"))),
+    )
+    .unwrap();
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("sune-b", "1.1.0"))),
+    )
+    .unwrap();
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
         name_filter: "sune".to_owned(),
         tags_filter: HashMap::new(),
@@ -487,9 +309,11 @@ fn test_get_function() {
     ));
 
     // Test actually getting a function
-    let f_id = futures::executor::block_on(fr.register(register_request!("func")))
-        .unwrap()
-        .into_inner();
+    let f_id = futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("func", "7.7.7"))),
+    )
+    .unwrap()
+    .into_inner();
     let get_request = futures::executor::block_on(fr.get(tonic::Request::new(f_id.clone())));
     assert!(get_request.is_ok());
 
@@ -510,8 +334,9 @@ fn test_get_function() {
 fn test_register_function() {
     // Register a function missing execution environment
     let fr = registry!();
-    let register_result =
-        futures::executor::block_on(fr.register(custom_register_request!("create-cake", None)));
+    let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
+        register_request!("create-cake", "0.0.1", None),
+    )));
 
     assert!(register_result.is_err());
     assert!(matches!(
@@ -520,13 +345,8 @@ fn test_register_function() {
     ));
 
     // Testing if we can register a valid function
-    let register_result = futures::executor::block_on(fr.register(custom_register_request!(
-        "my-name",
-        Some(ExecutionEnvironment {
-            name: "wassaa".to_owned(),
-            entrypoint: "my-entrypoint".to_owned(),
-            args: vec![],
-        })
+    let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
+        register_request!("my-name", "0.2.111111", exec_env!()),
     )));
     assert!(register_result.is_ok());
 }
@@ -534,13 +354,8 @@ fn test_register_function() {
 #[test]
 fn test_register_dev_version() {
     let fr = registry!();
-    let register_result = futures::executor::block_on(fr.register(custom_register_request!(
-        "my-name",
-        Some(ExecutionEnvironment {
-            name: "wassaa".to_owned(),
-            entrypoint: "my-entrypoint".to_owned(),
-            args: vec![],
-        })
+    let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
+        register_request!("my-name", "0.1.2", exec_env!()),
     )));
 
     assert!(register_result.is_ok());
@@ -556,13 +371,8 @@ fn test_register_dev_version() {
     // make sure that registering another function with the same name and version gives us a new
     // id. Deleting functions instead of replacing guarantees that functions are immutable
     let first_id = f.id.unwrap();
-    let register_result = futures::executor::block_on(fr.register(custom_register_request!(
-        "my-name",
-        Some(ExecutionEnvironment {
-            name: "wassaa".to_owned(),
-            entrypoint: "my-entrypoint".to_owned(),
-            args: vec![],
-        })
+    let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
+        register_request!("my-name", "0.1.2", exec_env!()),
     )));
 
     assert!(first_id != register_result.unwrap().into_inner());
@@ -579,29 +389,23 @@ fn test_register_dev_version() {
 #[test]
 fn test_attachments() {
     let fr = registry!();
-    let code_result = futures::executor::block_on(fr.register_attachment(tonic::Request::new(
-        RegisterAttachmentRequest {
-            name: String::from("code"),
-            metadata: HashMap::new(),
-        },
-    )));
+    let code_result = futures::executor::block_on(
+        fr.register_attachment(tonic::Request::new(register_attachment_request!("code"))),
+    );
     assert!(code_result.is_ok());
     let code_attachment_id = code_result.unwrap().into_inner();
 
     let attachment1 = futures::executor::block_on(fr.register_attachment(tonic::Request::new(
-        RegisterAttachmentRequest {
-            name: String::from("attachment1"),
-            metadata: HashMap::new(),
-        },
+        register_attachment_request!("attachment1"),
     )));
     assert!(attachment1.is_ok());
     let attachment1_id = attachment1.unwrap().into_inner();
 
     let attachment2 = futures::executor::block_on(fr.register_attachment(tonic::Request::new(
-        RegisterAttachmentRequest {
-            name: String::from("attachment2"),
-            metadata: HashMap::new(),
-        },
+        register_attachment_request!(
+            "attachment2",
+            "21db76ad585e9a0c64e7e2cf2bbae937c3601c263ff9639061349468e9217585"
+        ),
     )));
     assert!(attachment2.is_ok());
     let attachment2_id = attachment2.unwrap().into_inner();
@@ -609,7 +413,6 @@ fn test_attachments() {
     let attachment2_id_clone = attachment2_id.clone();
     let outbound = async_stream::stream! {
         for _ in 0u32..5u32 {
-            std::thread::sleep(std::time::Duration::from_millis(100));
             yield Ok(AttachmentStreamUpload {
                 id: Some(attachment2_id_clone.clone()),
                 content: "sune".as_bytes().to_vec(),
@@ -621,24 +424,14 @@ fn test_attachments() {
         futures::executor::block_on(fr.upload_stream_attachment(tonic::Request::new(outbound)));
 
     assert!(upload_result.is_ok());
-
-    let rr = tonic::Request::new(RegisterRequest {
-        name: "name".to_owned(),
-        version: "0.1.0".to_owned(),
-        tags: HashMap::with_capacity(0),
-        inputs: vec![],
-        outputs: vec![],
-        code: Some(code_attachment_id.clone()),
-        checksums: Some(Checksums {
-            sha256: "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5".to_owned(),
-        }),
-        execution_environment: Some(ExecutionEnvironment {
-            name: "wasm".to_owned(),
-            entrypoint: "kanske".to_owned(),
-            args: vec![],
-        }),
-        attachment_ids: vec![attachment1_id, attachment2_id],
-    });
+    let rr = tonic::Request::new(register_request!(
+        "name",
+        "0.1.0",
+        exec_env!(),
+        Some(code_attachment_id.clone()),
+        [attachment1_id.id, attachment2_id.id],
+        {}
+    ));
 
     let register_result = futures::executor::block_on(fr.register(rr));
 
@@ -676,32 +469,16 @@ fn test_attachments() {
     assert_eq!(file_content, "sunesunesunesunesune".as_bytes());
 
     // non-registered attachment
-    let rr = tonic::Request::new(RegisterRequest {
-        name: "name".to_owned(),
-        version: "0.1.0".to_owned(),
-        tags: HashMap::with_capacity(0),
-        inputs: vec![],
-        outputs: vec![],
-        code: Some(FunctionAttachmentId {
+    let rr = tonic::Request::new(register_request!(
+        "name",
+        "0.1.0",
+        exec_env!(),
+        Some(FunctionAttachmentId {
             id: Uuid::new_v4().to_string(),
         }),
-        checksums: Some(Checksums {
-            sha256: "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5".to_owned(),
-        }),
-        execution_environment: Some(ExecutionEnvironment {
-            name: "wasm".to_owned(),
-            entrypoint: "kanske".to_owned(),
-            args: vec![],
-        }),
-        attachment_ids: vec![
-            FunctionAttachmentId {
-                id: Uuid::new_v4().to_string(),
-            },
-            FunctionAttachmentId {
-                id: String::from("not-a-valid-id"),
-            },
-        ],
-    });
+        ["not-a-valid-id", "c5b60066-ce2b-4168-b0af-8c0678112ec1"],
+        {}
+    ));
 
     let register_result = futures::executor::block_on(fr.register(rr));
     assert!(register_result.is_err());

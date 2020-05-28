@@ -223,7 +223,7 @@ impl FunctionExecutor for WasiExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gbk_protocols::functions::Checksums;
+    use gbk_protocols_test_helpers::code_file;
 
     macro_rules! null_logger {
         () => {{
@@ -251,11 +251,10 @@ mod tests {
             ExecutorContext {
                 function_name: "hello-world".to_owned(),
                 entrypoint: "could-be-anything".to_owned(),
-                code: include_bytes!("hello.wasm").to_vec(),
-                checksums: Checksums {
-                    sha256: "c455c4bc68c1afcdafa7c2f74a499810b0aa5d12f7a009d493789d595847af72"
-                        .to_owned(),
-                },
+                code: Some(code_file!(
+                    include_bytes!("hello.wasm"),
+                    "c455c4bc68c1afcdafa7c2f74a499810b0aa5d12f7a009d493789d595847af72"
+                )),
                 arguments: vec![],
             },
             FunctionContext {

@@ -9,9 +9,13 @@ use gbk_protocols::{
         functions_registry_server::FunctionsRegistry,
         functions_server::Functions as FunctionsTrait, ArgumentType, Checksums, ExecuteRequest,
         ExecutionEnvironment, FunctionArgument, FunctionId, FunctionInput, FunctionOutput,
-        ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
+        RegisterAttachmentRequest, RegisterRequest,
     },
     tonic,
+};
+
+use gbk_protocols_test_helpers::{
+    exec_env, function_input, function_output, list_request, register_request,
 };
 
 macro_rules! null_logger {
@@ -32,9 +36,6 @@ macro_rules! functions_service {
 macro_rules! functions_service_with_functions {
     () => {{
         let functions_registry_service = FunctionsRegistryService::new(null_logger!());
-        let checksums = Some(Checksums {
-            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
-        });
         vec![
             RegisterRequest {
                 name: "hello-world".to_owned(),
@@ -43,7 +44,6 @@ macro_rules! functions_service_with_functions {
                 inputs: Vec::with_capacity(0),
                 outputs: Vec::with_capacity(0),
                 code: None,
-                checksums: checksums.clone(),
                 execution_environment: Some(ExecutionEnvironment {
                     name: "wasm".to_owned(),
                     entrypoint: "det du!".to_owned(),
@@ -76,7 +76,6 @@ macro_rules! functions_service_with_functions {
                     r#type: ArgumentType::String as i32,
                 }],
                 code: None,
-                checksums,
                 execution_environment: Some(ExecutionEnvironment {
                     name: "wasm".to_owned(),
                     entrypoint: "kanske".to_owned(),
@@ -99,39 +98,50 @@ macro_rules! functions_service_with_functions {
     }};
 }
 
-macro_rules! functions_service_with_specified_functions {
-    ($fns:expr) => {{
-        let functions_registry_service = FunctionsRegistryService::new(null_logger!());
+macro_rules! register_code_attachment {
+    ($service:expr) => {{
+        futures::executor::block_on(
+            $service.register_attachment(tonic::Request::new(RegisterAttachmentRequest {
+                name: "code".to_owned(),
+                metadata: HashMap::new(),
+                checksums: Some(Checksums {
+                    sha256: "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
+                        .to_owned(),
+                }),
+            })),
+        )
+        .unwrap()
+        .into_inner()
+    }};
+}
+
+macro_rules! register_functions {
+    ($service:expr, $fns:expr) => {{
         $fns.iter().for_each(|f| {
-            futures::executor::block_on(
-                functions_registry_service.register(tonic::Request::new(f.clone())),
-            )
-            .map_or_else(
-                |e| println!("Failed to register function \"{}\". Err: {}", f.name, e),
-                |_| (),
-            );
+            futures::executor::block_on($service.register(tonic::Request::new(f.clone())))
+                .map_or_else(
+                    |e| println!("Failed to register function \"{}\". Err: {}", f.name, e),
+                    |_| (),
+                );
         });
-        FunctionsService::new(null_logger!(), functions_registry_service)
+        FunctionsService::new(null_logger!(), $service)
     }};
 }
 
 macro_rules! first_function {
     ($service:expr) => {{
-        futures::executor::block_on($service.list(tonic::Request::new(ListRequest {
-            name_filter: String::from(""),
-            tags_filter: HashMap::new(),
-            offset: 0,
-            limit: 100,
-            exact_name_match: false,
-            version_requirement: None,
-            order_direction: OrderingDirection::Descending as i32,
-            order_by: OrderingKey::Name as i32,
-        })))
-        .unwrap()
-        .into_inner()
-        .functions
-        .first()
-        .unwrap()
+        futures::executor::block_on($service.list(tonic::Request::new(list_request!())))
+            .unwrap()
+            .into_inner()
+            .functions
+            .first()
+            .unwrap()
+    }};
+}
+
+macro_rules! registry_service {
+    () => {{
+        FunctionsRegistryService::new(null_logger!())
     }};
 }
 
@@ -139,32 +149,14 @@ macro_rules! first_function {
 fn test_list() {
     let svc = functions_service!();
 
-    let r = futures::executor::block_on(svc.list(tonic::Request::new(ListRequest {
-        name_filter: String::from(""),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: 100,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let r = futures::executor::block_on(svc.list(tonic::Request::new(list_request!())));
 
     assert!(r.is_ok());
     let fns = r.unwrap().into_inner();
     assert_eq!(0, fns.functions.len());
 
     let svc2 = functions_service_with_functions!();
-    let r = futures::executor::block_on(svc2.list(tonic::Request::new(ListRequest {
-        name_filter: String::from(""),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: 100,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let r = futures::executor::block_on(svc2.list(tonic::Request::new(list_request!())));
     assert!(r.is_ok());
     let fns = r.unwrap().into_inner();
     assert_eq!(2, fns.functions.len());
@@ -187,41 +179,21 @@ fn test_get() {
 
 #[test]
 fn test_execute() {
-    let svc = functions_service_with_specified_functions!(vec![RegisterRequest {
-        name: "say-hello-yourself".to_owned(),
-        version: "1.1.1".to_owned(),
-        tags: HashMap::with_capacity(0),
-        inputs: vec![
-            FunctionInput {
-                name: "say".to_string(),
-                required: true,
-                r#type: ArgumentType::String as i32,
-                default_value: String::new(),
-                from_execution_environment: false,
-            },
-            FunctionInput {
-                name: "count".to_string(),
-                required: false,
-                r#type: ArgumentType::Int as i32,
-                default_value: 1.to_string(),
-                from_execution_environment: false,
-            },
-        ],
-        outputs: vec![FunctionOutput {
-            name: "output_string".to_string(),
-            r#type: ArgumentType::String as i32,
-        }],
-        code: None,
-        checksums: Some(Checksums {
-            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
-        }),
-        execution_environment: Some(ExecutionEnvironment {
-            name: "wasi".to_owned(),
-            entrypoint: "kanske".to_owned(),
-            args: vec![],
-        }),
-        attachment_ids: vec![],
-    }]);
+    let sr = registry_service!();
+    let svc = register_functions!(
+        sr,
+        vec![register_request!(
+            "say-hello-yourself",
+            [
+                function_input!("say", true, ArgumentType::String),
+                function_input!("count", true, ArgumentType::Int)
+            ],
+            [function_output!("output_string", ArgumentType::String)],
+            {},
+            register_code_attachment!(sr),
+            exec_env!("wasi")
+        )]
+    );
 
     let correct_args = vec![
         FunctionArgument {
@@ -235,10 +207,12 @@ fn test_execute() {
             value: 3i64.to_le_bytes().to_vec(),
         },
     ];
-    let r = futures::executor::block_on(svc.execute(tonic::Request::new(ExecuteRequest {
-        function: first_function!(svc).id.clone(),
-        arguments: correct_args,
-    })));
+    let r = dbg!(futures::executor::block_on(svc.execute(
+        tonic::Request::new(ExecuteRequest {
+            function: first_function!(svc).id.clone(),
+            arguments: correct_args,
+        })
+    )));
     assert!(r.is_ok());
 
     let incorrect_args = vec![
@@ -263,90 +237,42 @@ fn test_execute() {
 
 #[test]
 fn test_execution_environment_inputs() {
-    let mut tags = HashMap::new();
-    tags.insert("type".to_owned(), "execution-environment".to_owned());
-    tags.insert("execution-environment".to_owned(), "kalle-bula".to_owned());
-    let checksums = Some(Checksums {
-        sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
-    });
+    let sr = registry_service!();
+    let svc = register_functions!(
+        sr,
+        vec![
+            register_request!(
+                "kalle-bula-execution-environment",
+                [
+                    function_input!("say", true, ArgumentType::String),
+                    function_input!("count", false, ArgumentType::Int)
+                ],
+                [function_output!("feff", ArgumentType::String)],
+                { "type" => "execution-environment", "execution-environment" => "kalle-bula"},
+                register_code_attachment!(sr),
+                exec_env!("wasi")
+            ),
+            register_request!(
+                "jockes-dank-method",
+                [function_input!("jockes-arg", true, ArgumentType::String)],
+                [function_output!("hass_string", ArgumentType::String)],
+                {},
+                register_code_attachment!(sr),
+                exec_env!("kalle-bula")
+            )
+        ]
+    );
 
-    let svc = functions_service_with_specified_functions!(vec![
-        RegisterRequest {
-            name: "kalle-bula-execution-environment".to_owned(),
-            version: "0.1.0".to_owned(),
-            tags,
-            inputs: vec![
-                FunctionInput {
-                    name: "say".to_string(),
-                    required: true,
-                    r#type: ArgumentType::String as i32,
-                    default_value: String::new(),
-                    from_execution_environment: false,
-                },
-                FunctionInput {
-                    name: "count".to_string(),
-                    required: false,
-                    r#type: ArgumentType::Int as i32,
-                    default_value: 1.to_string(),
-                    from_execution_environment: false,
-                },
-            ],
-            outputs: vec![FunctionOutput {
-                name: "feff".to_string(),
-                r#type: ArgumentType::String as i32,
-            }],
-            code: None,
-            checksums: checksums.clone(),
-            execution_environment: Some(ExecutionEnvironment {
-                name: "wasi".to_owned(),
-                entrypoint: "kanske".to_owned(),
-                args: vec![]
-            }),
-            attachment_ids: vec![],
-        },
-        RegisterRequest {
-            name: "jockes-dank-method".to_owned(),
-            version: "0.1.0".to_owned(),
-            tags: HashMap::new(),
-            inputs: vec![FunctionInput {
-                name: "jockes-arg".to_string(),
-                required: true,
-                r#type: ArgumentType::String as i32,
-                default_value: String::new(),
-                from_execution_environment: false,
-            },],
-            outputs: vec![FunctionOutput {
-                name: "hass_string".to_string(),
-                r#type: ArgumentType::String as i32,
-            }],
-            code: None,
-            checksums: checksums.clone(),
-            execution_environment: Some(ExecutionEnvironment {
-                name: "kalle-bula".to_owned(),
-                entrypoint: "kanske".to_owned(),
-                args: vec![],
-            }),
-            attachment_ids: vec![],
-        }
-    ]);
-
-    let list_request = futures::executor::block_on(svc.list(tonic::Request::new(ListRequest {
-        name_filter: "jockes-dank-method".to_owned(),
-        tags_filter: HashMap::new(),
-        offset: 0,
-        limit: 1,
-        exact_name_match: false,
-        version_requirement: None,
-        order_direction: OrderingDirection::Descending as i32,
-        order_by: OrderingKey::Name as i32,
-    })));
+    let list_request = futures::executor::block_on(
+        svc.list(tonic::Request::new(list_request!("jockes-dank-method"))),
+    );
 
     assert!(list_request.is_ok());
     let res = list_request.unwrap().into_inner();
     let function = res.functions.first().unwrap();
     assert_eq!(1, function.outputs.len());
     assert_eq!("hass_string", &function.outputs.first().unwrap().name);
-    assert_eq!(3, function.inputs.len());
+    assert_eq!(3, dbg!(&function.inputs).len());
     assert_eq!(
         1,
         function

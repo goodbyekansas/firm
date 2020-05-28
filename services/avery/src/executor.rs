@@ -588,14 +588,14 @@ pub enum ExecutorError {
 mod tests {
     use super::*;
 
-    use std::{collections::HashMap, io::Write};
-
-    use tempfile::NamedTempFile;
+    use std::collections::HashMap;
 
     use crate::registry::FunctionsRegistryService;
     use gbk_protocols::functions::{
-        Checksums, ExecutionEnvironment, Function, FunctionAttachment, FunctionAttachmentId,
-        FunctionId, RegisterRequest, ReturnValue,
+        ExecutionEnvironment, Function, FunctionId, RegisterRequest, ReturnValue,
+    };
+    use gbk_protocols_test_helpers::{
+        attachment_file, code_file, function_attachment, register_request,
     };
 
     macro_rules! null_logger {
@@ -607,53 +607,6 @@ mod tests {
     macro_rules! registry {
         () => {{
             FunctionsRegistryService::new(null_logger!())
-        }};
-    }
-
-    macro_rules! attachment {
-        ($url:expr) => {{
-            attachment!(
-                $url,
-                "FakeAttachment",
-                "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
-            )
-        }};
-
-        ($url:expr, $name:expr) => {{
-            attachment!(
-                $url,
-                $name,
-                "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
-            )
-        }};
-
-        ($url:expr, $name:expr, $sha256:expr) => {{
-            FunctionAttachment {
-                name: $name.to_owned(),
-                url: $url.to_owned(),
-                id: Some(FunctionAttachmentId {
-                    id: "fakeId".to_owned(),
-                }),
-                metadata: HashMap::new(),
-                checksums: Some(Checksums {
-                    sha256: $sha256.to_owned(),
-                }),
-            }
-        }};
-    }
-
-    macro_rules! code_file {
-        ($content:expr) => {{
-            code_file!(
-                $content,
-                "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
-            )
-        }};
-
-        ($content:expr, $sha256:expr) => {{
-            let mut tf = NamedTempFile::new().unwrap();
-            write!(tf, "{}", $content).unwrap();
-            attachment!(format!("file://{}", tf.path().display()), "code", $sha256)
         }};
     }
 
@@ -866,7 +819,7 @@ mod tests {
     #[test]
     fn test_download() {
         // non-existent file
-        let attachment = attachment!("file://this-file-does-not-exist");
+        let attachment = function_attachment!("file://this-file-does-not-exist");
         let r = attachment.download();
         assert!(r.is_err());
         assert!(matches!(
@@ -875,13 +828,13 @@ mod tests {
         ));
 
         // invalid url
-        let attachment = attachment!("this-is-not-url");
+        let attachment = function_attachment!("this-is-not-url");
         let r = attachment.download();
         assert!(r.is_err());
         assert!(matches!(r.unwrap_err(), ExecutorError::InvalidCodeUrl(..)));
 
         // unsupported scheme
-        let attachment = attachment!("unsupported://that-scheme.fabrikam.com");
+        let attachment = function_attachment!("unsupported://that-scheme.fabrikam.com");
         let r = attachment.download();
         assert!(r.is_err());
         assert!(matches!(
@@ -890,10 +843,8 @@ mod tests {
         ));
 
         // actual file
-        let mut tf = NamedTempFile::new().unwrap();
         let s = "some data 🖥️";
-        write!(tf, "{}", s).unwrap();
-        let attachment = attachment!(&format!("file://{}", tf.path().display()));
+        let attachment = attachment_file!(s.as_bytes(), "somename");
         let r = attachment.download();
         assert!(r.is_ok());
         assert_eq!(s.as_bytes(), r.unwrap().as_slice());
@@ -915,12 +866,13 @@ mod tests {
             executor_context: ExecutorContext,
             function_context: FunctionContext,
         ) -> Result<ProtoResult, ExecutorError> {
-            *self.executor_context.borrow_mut() = executor_context;
-            *self.function_context.borrow_mut() = function_context;
             *self.downloaded_code.borrow_mut() = executor_context
                 .code
+                .as_ref()
                 .map(|c| c.download().unwrap())
                 .unwrap_or_default();
+            *self.executor_context.borrow_mut() = executor_context;
+            *self.function_context.borrow_mut() = function_context;
             Ok(ProtoResult::Ok(FunctionResult { values: Vec::new() }))
         }
     }
@@ -950,7 +902,7 @@ mod tests {
                     entrypoint: "ingångspoäng 💯".to_owned(),
                     args: vec![],
                 }),
-                code: Some(code_file!(s, sha256)),
+                code: Some(code_file!(s.as_bytes(), sha256)),
                 attachments: vec![],
                 function: Some(Function {
                     id: Some(FunctionId {
@@ -972,12 +924,12 @@ mod tests {
             value: "test-value".as_bytes().to_vec(),
         }];
         let entry = "entry";
-        let attachments = vec![attachment!("fake://")];
+        let attachments = vec![function_attachment!("fake://")];
         let result = nested.execute(
             ExecutorContext {
                 function_name: "test".to_owned(),
                 entrypoint: entry.to_owned(),
-                code: Some(code_file!(code, sha256)),
+                code: Some(code_file!(code.as_bytes(), sha256)),
                 arguments: exe_env_args.clone(),
             },
             FunctionContext {
@@ -1038,7 +990,7 @@ mod tests {
                     entrypoint: "ingångspoäng 💯".to_owned(),
                     args: vec![],
                 }),
-                code: Some(code_file!(s)),
+                code: Some(code_file!(s.as_bytes())),
                 attachments: vec![],
                 function: Some(Function {
                     id: Some(FunctionId {
@@ -1062,7 +1014,7 @@ mod tests {
             ExecutorContext {
                 function_name: "test".to_owned(),
                 entrypoint: "entry".to_owned(),
-                code: Some(code_file!("vec")),
+                code: Some(code_file!("vec".as_bytes())),
                 arguments: exe_env_args,
             },
             FunctionContext {
@@ -1117,10 +1069,6 @@ mod tests {
             "execution-environment".to_owned(),
             "broken-chain-executor".to_owned(),
         );
-
-        let checksums = Some(Checksums {
-            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
-        });
 
         vec![
             RegisterRequest {
@@ -1222,53 +1170,37 @@ mod tests {
         broken_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
         broken_executor_tags.insert("execution-environment".to_owned(), "cc-exec".to_owned());
 
-        let checksums = Some(Checksums {
-            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
-        });
-
         vec![
-            RegisterRequest {
-                name: "aa-func".to_owned(),
-                execution_environment: Some(ExecutionEnvironment {
+            register_request!(
+                "aa-func",
+                "0.1.1",
+                ExecutionEnvironment {
                     name: "bb-exec".to_owned(),
                     entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
-                }),
-                code: None,
-                version: "0.1.1".to_owned(),
-                tags: wasi_executor_tags,
-                inputs: vec![],
-                outputs: vec![],
-                attachment_ids: vec![],
-            },
-            RegisterRequest {
-                name: "bb-func".to_owned(),
-                execution_environment: Some(ExecutionEnvironment {
+                },
+                { "type" => "execution-environment", "execution-environment" => "aa-exec" }
+            ),
+            register_request!(
+                "bb-func",
+                "0.1.5",
+                ExecutionEnvironment {
                     name: "cc-exec".to_owned(),
                     entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
-                }),
-                code: None,
-                version: "8.1.5".to_owned(),
-                tags: nested_executor_tags,
-                inputs: vec![],
-                outputs: vec![],
-                attachment_ids: vec![],
-            },
-            RegisterRequest {
-                name: "cc-func".to_owned(),
-                execution_environment: Some(ExecutionEnvironment {
-                    name: "aa-exec".to_owned(),
+                },
+                { "type" => "execution-environment", "execution-environment" => "bb-exec" }
+            ),
+            register_request!(
+                "cc-func",
+                "3.2.2",
+                ExecutionEnvironment {
+                    name: "bb-exec".to_owned(),
                     entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
-                }),
-                code: None,
-                version: "3.2.2".to_owned(),
-                tags: broken_executor_tags,
-                inputs: vec![],
-                outputs: vec![],
-                attachment_ids: vec![],
-            },
+                },
+                { "type" => "execution-environment", "execution-environment" => "cc-exec" }
+            ),
         ]
         .into_iter()
         .for_each(|rr| {

@@ -27,3 +27,6 @@ futures = "0.3"
 typetag = "0.1"
 gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
 async-stream = "0.2"
+
+[dev-dependencies]
+gbk-protocols-test-helpers = { path = "nix-deps/gbk-protocols-test-helpers" }
