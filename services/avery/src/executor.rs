@@ -16,9 +16,9 @@ use crate::executor::wasi::WasiExecutor;
 use gbk_protocols::{
     functions::{
         execute_response::Result as ProtoResult, functions_registry_server::FunctionsRegistry,
-        ArgumentType, Checksums, FunctionArgument, FunctionArguments, FunctionAttachment,
-        FunctionAttachments, FunctionDescriptor, FunctionInput, FunctionOutput, FunctionResult,
-        ListRequest, OrderingDirection, OrderingKey, VersionRequirement,
+        ArgumentType, FunctionArgument, FunctionArguments, FunctionAttachment, FunctionAttachments,
+        FunctionDescriptor, FunctionInput, FunctionOutput, FunctionResult, ListRequest,
+        OrderingDirection, OrderingKey, VersionRequirement,
     },
     tonic,
 };
@@ -28,8 +28,7 @@ use ExecutorError::AttachmentReadError;
 pub struct ExecutorContext {
     pub function_name: String,
     pub entrypoint: String,
-    pub code: Vec<u8>,
-    pub checksums: Checksums, //TODO attachments should have checksums too
+    pub code: Option<FunctionAttachment>,
     pub arguments: Vec<FunctionArgument>,
 }
 
@@ -96,23 +95,29 @@ impl FunctionExecutor for FunctionAdapter {
     ) -> Result<ProtoResult, ExecutorError> {
         let mut inner_function_arguments = vec![];
 
-        // inject executor arguments to function
-        inner_function_arguments.push(FunctionArgument {
-            name: "code".to_owned(),
-            r#type: ArgumentType::Bytes as i32,
-            value: executor_context.code,
-        });
+        // not having any code for the function is a valid case used for example to execute
+        // external functions (gcp, aws lambdas, etc)
+        if let Some(code) = executor_context.code {
+            let downloaded_code = code.download()?;
+
+            inner_function_arguments.push(FunctionArgument {
+                name: "code".to_owned(),
+                r#type: ArgumentType::Bytes as i32,
+                value: downloaded_code,
+            });
+
+            let checksums = code.checksums.ok_or(ExecutorError::MissingChecksums)?;
+            inner_function_arguments.push(FunctionArgument {
+                name: "sha256".to_owned(),
+                r#type: ArgumentType::String as i32,
+                value: checksums.sha256.as_bytes().to_vec(),
+            });
+        }
 
         inner_function_arguments.push(FunctionArgument {
             name: "entrypoint".to_owned(),
             r#type: ArgumentType::String as i32,
             value: executor_context.entrypoint.as_bytes().to_vec(),
-        });
-
-        inner_function_arguments.push(FunctionArgument {
-            name: "sha256".to_owned(),
-            r#type: ArgumentType::String as i32,
-            value: executor_context.checksums.sha256.as_bytes().to_vec(),
         });
 
         let mut manifest_executor_arguments = executor_context.arguments;
@@ -153,17 +158,6 @@ impl FunctionExecutor for FunctionAdapter {
             .name
             .clone();
 
-        let inner_code = self
-            .inner_function_descriptor
-            .code
-            .as_ref()
-            .map_or_else(|| Ok(vec![]), |code| code.download())?;
-
-        let inner_checksums = self
-            .inner_function_descriptor
-            .checksums
-            .clone()
-            .ok_or(ExecutorError::MissingChecksums)?;
         let inner_exe_env = self
             .inner_function_descriptor
             .execution_environment
@@ -176,8 +170,7 @@ impl FunctionExecutor for FunctionAdapter {
             ExecutorContext {
                 function_name: inner_function_name,
                 entrypoint: inner_exe_env.entrypoint,
-                code: inner_code,
-                checksums: inner_checksums,
+                code: self.inner_function_descriptor.code.clone(),
                 arguments: inner_exe_env.args,
             },
             FunctionContext {
@@ -586,6 +579,9 @@ pub enum ExecutorError {
 
     #[error("Failed to encode proto data: {0}")]
     EncodeError(#[from] prost::EncodeError),
+
+    #[error("Code is missing even though it is required for the \"{0}\" executor.")]
+    MissingCode(String),
 }
 
 #[cfg(test)]
@@ -595,12 +591,11 @@ mod tests {
     use std::{collections::HashMap, io::Write};
 
     use tempfile::NamedTempFile;
-    use uuid::Uuid;
 
     use crate::registry::FunctionsRegistryService;
     use gbk_protocols::functions::{
-        ExecutionEnvironment, Function, FunctionAttachment, FunctionAttachmentId, FunctionId,
-        RegisterRequest, ReturnValue,
+        Checksums, ExecutionEnvironment, Function, FunctionAttachment, FunctionAttachmentId,
+        FunctionId, RegisterRequest, ReturnValue,
     };
 
     macro_rules! null_logger {
@@ -617,14 +612,48 @@ mod tests {
 
     macro_rules! attachment {
         ($url:expr) => {{
+            attachment!(
+                $url,
+                "FakeAttachment",
+                "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
+            )
+        }};
+
+        ($url:expr, $name:expr) => {{
+            attachment!(
+                $url,
+                $name,
+                "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
+            )
+        }};
+
+        ($url:expr, $name:expr, $sha256:expr) => {{
             FunctionAttachment {
-                name: "fakeAttachment".to_owned(),
+                name: $name.to_owned(),
                 url: $url.to_owned(),
                 id: Some(FunctionAttachmentId {
                     id: "fakeId".to_owned(),
                 }),
                 metadata: HashMap::new(),
+                checksums: Some(Checksums {
+                    sha256: $sha256.to_owned(),
+                }),
             }
+        }};
+    }
+
+    macro_rules! code_file {
+        ($content:expr) => {{
+            code_file!(
+                $content,
+                "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
+            )
+        }};
+
+        ($content:expr, $sha256:expr) => {{
+            let mut tf = NamedTempFile::new().unwrap();
+            write!(tf, "{}", $content).unwrap();
+            attachment!(format!("file://{}", tf.path().display()), "code", $sha256)
         }};
     }
 
@@ -877,6 +906,7 @@ mod tests {
     pub struct FakeExecutor {
         executor_context: RefCell<ExecutorContext>,
         function_context: RefCell<FunctionContext>,
+        downloaded_code: RefCell<Vec<u8>>,
     }
 
     impl FunctionExecutor for Rc<FakeExecutor> {
@@ -887,6 +917,10 @@ mod tests {
         ) -> Result<ProtoResult, ExecutorError> {
             *self.executor_context.borrow_mut() = executor_context;
             *self.function_context.borrow_mut() = function_context;
+            *self.downloaded_code.borrow_mut() = executor_context
+                .code
+                .map(|c| c.download().unwrap())
+                .unwrap_or_default();
             Ok(ProtoResult::Ok(FunctionResult { values: Vec::new() }))
         }
     }
@@ -898,8 +932,7 @@ mod tests {
 
     #[test]
     fn test_nested_executor() {
-        let mut tf = NamedTempFile::new().unwrap();
-        let s = "some data 🖥️";
+        let fake = Rc::new(FakeExecutor::default());
 
         let exe_env_args = vec![FunctionArgument {
             name: "sune".to_owned(),
@@ -907,11 +940,8 @@ mod tests {
             value: "bune".as_bytes().to_vec(),
         }];
 
-        write!(tf, "{}", s).unwrap();
-        let checksums = Checksums {
-            sha256: "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29".to_owned(),
-        };
-        let fake = Rc::new(FakeExecutor::default());
+        let s = "some data 🖥️";
+        let sha256 = "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29";
         let nested = FunctionAdapter::new(
             Box::new(fake.clone()),
             FunctionDescriptor {
@@ -920,15 +950,7 @@ mod tests {
                     entrypoint: "ingångspoäng 💯".to_owned(),
                     args: vec![],
                 }),
-                checksums: Some(checksums.clone()),
-                code: Some(FunctionAttachment {
-                    id: Some(FunctionAttachmentId {
-                        id: Uuid::new_v4().to_string(),
-                    }),
-                    name: "the-code".to_owned(),
-                    url: format!("file://{}", tf.path().display()),
-                    metadata: HashMap::new(),
-                }),
+                code: Some(code_file!(s, sha256)),
                 attachments: vec![],
                 function: Some(Function {
                     id: Some(FunctionId {
@@ -943,20 +965,19 @@ mod tests {
             },
             null_logger!(),
         );
+        let code = "asd";
         let args = vec![FunctionArgument {
             name: "test-arg".to_owned(),
             r#type: ArgumentType::String as i32,
             value: "test-value".as_bytes().to_vec(),
         }];
-        let code = "asd️".as_bytes();
         let entry = "entry";
         let attachments = vec![attachment!("fake://")];
         let result = nested.execute(
             ExecutorContext {
                 function_name: "test".to_owned(),
                 entrypoint: entry.to_owned(),
-                code: code.to_vec(),
-                checksums: checksums.clone(),
+                code: Some(code_file!(code, sha256)),
                 arguments: exe_env_args.clone(),
             },
             FunctionContext {
@@ -966,17 +987,14 @@ mod tests {
         );
         // Test that code got passed
         assert!(result.is_ok());
-        assert_eq!(
-            s.as_bytes(),
-            fake.executor_context.borrow().code.clone().as_slice()
-        );
+        assert_eq!(s.as_bytes(), fake.downloaded_code.borrow().as_slice());
 
         // Test that the argument we send in is passed through
         let fake_args = fake.function_context.borrow().arguments.clone();
         assert_eq!(fake_args.len(), 6);
         assert_eq!(
             fake_args.iter().find(|v| v.name == "code").unwrap().value,
-            code
+            code.as_bytes()
         );
         assert_eq!(
             fake_args
@@ -988,7 +1006,7 @@ mod tests {
         );
         assert_eq!(
             fake_args.iter().find(|v| v.name == "sha256").unwrap().value,
-            checksums.sha256.as_bytes()
+            sha256.as_bytes()
         );
         let fa = FunctionAttachments { attachments };
         let mut buf = Vec::with_capacity(fa.encoded_len());
@@ -1020,15 +1038,7 @@ mod tests {
                     entrypoint: "ingångspoäng 💯".to_owned(),
                     args: vec![],
                 }),
-                checksums: Some(checksums.clone()),
-                code: Some(FunctionAttachment {
-                    id: Some(FunctionAttachmentId {
-                        id: Uuid::new_v4().to_string(),
-                    }),
-                    name: "the-code".to_owned(),
-                    url: format!("file://{}", tf.path().display()),
-                    metadata: HashMap::new(),
-                }),
+                code: Some(code_file!(s)),
                 attachments: vec![],
                 function: Some(Function {
                     id: Some(FunctionId {
@@ -1052,8 +1062,7 @@ mod tests {
             ExecutorContext {
                 function_name: "test".to_owned(),
                 entrypoint: "entry".to_owned(),
-                code: "vec".as_bytes().to_vec(),
-                checksums,
+                code: Some(code_file!("vec")),
                 arguments: exe_env_args,
             },
             FunctionContext {
@@ -1120,7 +1129,6 @@ mod tests {
                     entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
                 }),
-                checksums: checksums.clone(),
                 code: None,
                 name: "oran-func".to_owned(),
                 version: "0.1.1".to_owned(),
@@ -1135,7 +1143,6 @@ mod tests {
                     entrypoint: "oran hehurr".to_owned(),
                     args: vec![],
                 }),
-                checksums: checksums.clone(),
                 code: None,
                 name: "precious-granag".to_owned(),
                 version: "8.1.5".to_owned(),
@@ -1150,7 +1157,6 @@ mod tests {
                     entrypoint: "oran hehurr".to_owned(),
                     args: vec![],
                 }),
-                checksums,
                 code: None,
                 name: "precious-granag".to_owned(),
                 version: "3.2.2".to_owned(),
@@ -1228,7 +1234,6 @@ mod tests {
                     entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
                 }),
-                checksums: checksums.clone(),
                 code: None,
                 version: "0.1.1".to_owned(),
                 tags: wasi_executor_tags,
@@ -1243,7 +1248,6 @@ mod tests {
                     entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
                 }),
-                checksums: checksums.clone(),
                 code: None,
                 version: "8.1.5".to_owned(),
                 tags: nested_executor_tags,
@@ -1258,7 +1262,6 @@ mod tests {
                     entrypoint: "wasi.kexe".to_owned(),
                     args: vec![],
                 }),
-                checksums,
                 code: None,
                 version: "3.2.2".to_owned(),
                 tags: broken_executor_tags,

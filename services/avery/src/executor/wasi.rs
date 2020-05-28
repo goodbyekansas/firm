@@ -19,7 +19,9 @@ use wasmer_wasi::{
     state::{HostFile, WasiState},
 };
 
-use crate::executor::{ExecutorContext, ExecutorError, FunctionContext, FunctionExecutor};
+use crate::executor::{
+    AttachmentDownload, ExecutorContext, ExecutorError, FunctionContext, FunctionExecutor,
+};
 use error::{ToErrorCode, WasiError};
 use gbk_protocols::functions::{
     execute_response::Result as ProtoResult, ExecutionError, FunctionArgument, FunctionAttachment,
@@ -196,13 +198,18 @@ impl FunctionExecutor for WasiExecutor {
         executor_context: ExecutorContext,
         function_context: FunctionContext,
     ) -> Result<ProtoResult, ExecutorError> {
+        let code = executor_context
+            .code
+            .ok_or_else(|| ExecutorError::MissingCode("wasi".to_owned()))?;
+        let downloaded_code = code.download()?;
+
         // TODO: separate host and guest errors
         Ok(execute_function(
             self.logger
                 .new(o!("function" => executor_context.function_name.to_owned())),
             &executor_context.function_name,
             &executor_context.entrypoint,
-            &executor_context.code,
+            &downloaded_code,
             &function_context.arguments,
             &function_context.attachments,
         )

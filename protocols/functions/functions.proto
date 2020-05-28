@@ -60,7 +60,6 @@ message FunctionDescriptor {
   ExecutionEnvironment execution_environment = 1;
   FunctionAttachment code = 2;
   Function function = 3;
-  Checksums checksums = 4;
   repeated FunctionAttachment attachments = 5;
 }
 
@@ -82,7 +81,6 @@ message RegisterRequest {
   FunctionAttachmentId code = 5;
   ExecutionEnvironment execution_environment = 6;
   string version = 7;
-  Checksums checksums = 8;
   repeated FunctionAttachmentId attachment_ids = 9;
 }
 
@@ -91,6 +89,7 @@ message FunctionAttachment {
   string name = 2;
   string url = 3;
   map<string, string> metadata = 4;
+  Checksums checksums = 5;
 }
 
 message FunctionAttachments {
@@ -117,6 +116,7 @@ message AttachmentUploadResponse {
 message RegisterAttachmentRequest {
   string name = 1;
   map<string, string> metadata = 2;
+  Checksums checksum = 3; 
 }
 
 message FunctionId {

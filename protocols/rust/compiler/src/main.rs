@@ -22,13 +22,19 @@ struct Options {
     build_services: bool,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
     let options = Options::from_args();
-    fs::create_dir_all(&options.out_dir)?;
-    tonic_build::configure()
-        .out_dir(&options.out_dir)
-        .build_client(options.build_services)
-        .build_server(options.build_services)
-        .compile(&options.files, &options.includes)?;
-    Ok(())
+    match fs::create_dir_all(&options.out_dir).and_then(|_| {
+        tonic_build::configure()
+            .out_dir(&options.out_dir)
+            .build_client(options.build_services)
+            .build_server(options.build_services)
+            .compile(&options.files, &options.includes)
+    }) {
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+        _ => {}
+    };
 }
