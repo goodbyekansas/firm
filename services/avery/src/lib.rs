@@ -10,8 +10,8 @@ use slog::{o, Logger};
 
 // crate / internal includes
 use executor::{
-    get_execution_env_inputs, lookup_executor, validate_args, validate_results, AttachmentDownload,
-    ExecutorContext, FunctionContext,
+    get_execution_env_inputs, lookup_executor, validate_args, validate_results, ExecutorContext,
+    FunctionContext,
 };
 
 use registry::FunctionsRegistryService;
@@ -166,12 +166,6 @@ impl FunctionsServiceTrait for FunctionsService {
                     "Function descriptor did not contain any execution environment.",
                 )
             })?;
-        let checksums = function_descriptor.clone().checksums.ok_or_else(|| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                "Function descriptor did not contain any checksums.",
-            )
-        })?;
 
         // lookup executor and run
         let mut tags = HashMap::new();
@@ -189,32 +183,12 @@ impl FunctionsServiceTrait for FunctionsService {
             )
         })
         .and_then(|executor| {
-            // not having any code for the function is a valid case used for example to execute
-            // external functions (gcp, aws lambdas, etc)
-            let code = function_descriptor.code.map_or_else(
-                || Ok(vec![]),
-                |code| {
-                    code.download().map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Internal,
-                            format!(
-                                "Failed to download code 🖨️ for function \"{}\" from \"{}\": {}",
-                                function.name.clone(),
-                                &code.url,
-                                e
-                            ),
-                        )
-                    })
-                },
-            )?;
-
             let res = executor.execute(
                 ExecutorContext {
                     function_name: function.name.clone(),
                     entrypoint: execution_environment.entrypoint,
-                    code,
+                    code: function_descriptor.code.clone(),
                     arguments: execution_environment.args,
-                    checksums,
                 },
                 FunctionContext {
                     arguments: args,

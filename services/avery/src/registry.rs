@@ -16,7 +16,7 @@ use uuid::Uuid;
 use gbk_protocols::{
     functions::{
         functions_registry_server::FunctionsRegistry, AttachmentStreamUpload, AttachmentUpload,
-        AttachmentUploadResponse, Checksums, ExecutionEnvironment, Function as ProtoFunction,
+        AttachmentUploadResponse, ExecutionEnvironment, Function as ProtoFunction,
         FunctionAttachment, FunctionAttachmentId, FunctionDescriptor, FunctionId, FunctionInput,
         FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterAttachmentRequest,
         RegisterRequest, RegistryListResponse,
@@ -41,7 +41,6 @@ struct Function {
     outputs: Vec<FunctionOutput>,
     tags: HashMap<String, String>,
     code: Option<FunctionAttachmentId>,
-    checksums: Checksums,
     attachments: Vec<FunctionAttachmentId>,
 }
 
@@ -241,7 +240,6 @@ impl FunctionsRegistryService {
             }),
             execution_environment: Some(f.execution_environment.clone()),
             code,
-            checksums: Some(f.checksums.clone()),
             attachments,
         })
     }
@@ -400,12 +398,6 @@ impl FunctionsRegistry for FunctionsRegistryService {
                 String::from("Execution environment is required when registering function"),
             )
         })?;
-        let checksums = payload.checksums.ok_or_else(|| {
-            tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                String::from("Checksums is required when registering function"),
-            )
-        })?;
 
         // validate attachments
         payload
@@ -437,7 +429,6 @@ impl FunctionsRegistry for FunctionsRegistryService {
                 tags: payload.tags,
                 inputs: payload.inputs,
                 outputs: payload.outputs,
-                checksums,
                 code: payload.code,
                 attachments: payload.attachment_ids,
             },
@@ -453,6 +444,21 @@ impl FunctionsRegistry for FunctionsRegistryService {
         register_attachment_request: tonic::Request<RegisterAttachmentRequest>,
     ) -> Result<tonic::Response<FunctionAttachmentId>, tonic::Status> {
         let payload = register_attachment_request.into_inner();
+
+        if payload.name.is_empty() {
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                String::from("Name is required when registering attachment"),
+            ));
+        }
+
+        let checksum = payload.checksum.ok_or_else(|| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                String::from("Checksum is required when registering attachment"),
+            )
+        })?;
+
         let mut function_attachments = self.function_attachments.write().map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
@@ -483,6 +489,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
                     name: payload.name,
                     url: format!("file://{}", path.display()),
                     metadata: payload.metadata,
+                    checksums: Some(checksum),
                 },
                 path,
             ),
