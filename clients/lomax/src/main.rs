@@ -16,7 +16,7 @@ use std::{
 use futures::future::{join, try_join_all};
 use gbk_protocols::{
     functions::{
-        functions_registry_client::FunctionsRegistryClient, AttachmentStreamUpload,
+        functions_registry_client::FunctionsRegistryClient, AttachmentStreamUpload, Checksums,
         FunctionAttachmentId, ListRequest, OrderingDirection, OrderingKey,
         RegisterAttachmentRequest, RegisterRequest,
     },
@@ -111,6 +111,11 @@ async fn upload_attachment(
         .register_attachment(tonic::Request::new(RegisterAttachmentRequest {
             name: name.to_owned(),
             metadata,
+            // TODO: This is very much not correct 🐘
+            checksums: Some(Checksums {
+                sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    .to_owned(),
+            }),
         }))
         .await
         .map_err(|e| format!("Failed to register attachment \"{}\". Err: {}", name, e))?
