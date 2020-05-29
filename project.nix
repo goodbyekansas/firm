@@ -33,7 +33,7 @@ let
     };
     avery = project.declareComponent ./services/avery/avery.nix {
       protocols = protocols.rust.withServices;
-      protocolsTestHelpers = protocols.rust.testHelpers {protocols = protocols.rust.withServices;};
+      protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
     };
     bendini = project.declareComponent ./clients/bendini/bendini.nix {
       protocols = protocols.rust.withServices;

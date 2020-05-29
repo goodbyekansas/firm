@@ -8,6 +8,7 @@ use std::{
 
 use prost::Message;
 use semver::VersionReq;
+use sha2::{Digest, Sha256};
 use slog::{o, Logger};
 use thiserror::Error;
 use url::Url;
@@ -58,8 +59,35 @@ impl AttachmentDownload for FunctionAttachment {
         let url =
             Url::parse(&self.url).map_err(|e| ExecutorError::InvalidCodeUrl(e.to_string()))?;
         match url.scheme() {
-            "file" => fs::read(url.path())
-                .map_err(|e| AttachmentReadError(url.to_string(), e.to_string())),
+            "file" => {
+                let content = fs::read(url.path())
+                    .map_err(|e| AttachmentReadError(url.to_string(), e.to_string()))?;
+
+                // TODO: this should be generalized when we
+                // have other transports (like http(s))
+                // validate integrity
+                self.checksums
+                    .as_ref()
+                    .ok_or(ExecutorError::MissingChecksums)
+                    .and_then(|checksums| {
+                        let mut hasher = Sha256::new();
+                        hasher.input(&content);
+
+                        let checksum = hasher.result();
+
+                        if &checksum[..] != hex::decode(checksums.sha256.clone())?.as_slice() {
+                            Err(ExecutorError::ChecksumMismatch {
+                                attachment_name: self.name.clone(),
+                                wanted: checksums.sha256.clone(),
+                                got: hex::encode(checksum),
+                            })
+                        } else {
+                            Ok(())
+                        }
+                    })?;
+
+                Ok(content)
+            }
             s => Err(ExecutorError::UnsupportedTransport(s.to_owned())),
         }
     }
@@ -582,6 +610,18 @@ pub enum ExecutorError {
 
     #[error("Code is missing even though it is required for the \"{0}\" executor.")]
     MissingCode(String),
+
+    #[error(
+        "Checksum mismatch for attachment \"{attachment_name}\". Wanted: {wanted}, got: {got}"
+    )]
+    ChecksumMismatch {
+        attachment_name: String,
+        wanted: String,
+        got: String,
+    },
+
+    #[error("Failed to decode checksum to bytes: {0}")]
+    FailedToDecodeChecksum(#[from] hex::FromHexError),
 }
 
 #[cfg(test)]
@@ -893,7 +933,6 @@ mod tests {
         }];
 
         let s = "some data 🖥️";
-        let sha256 = "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29";
         let nested = FunctionAdapter::new(
             Box::new(fake.clone()),
             FunctionDescriptor {
@@ -902,7 +941,7 @@ mod tests {
                     entrypoint: "ingångspoäng 💯".to_owned(),
                     args: vec![],
                 }),
-                code: Some(code_file!(s.as_bytes(), sha256)),
+                code: Some(code_file!(s.as_bytes())),
                 attachments: vec![],
                 function: Some(Function {
                     id: Some(FunctionId {
@@ -929,7 +968,7 @@ mod tests {
             ExecutorContext {
                 function_name: "test".to_owned(),
                 entrypoint: entry.to_owned(),
-                code: Some(code_file!(code.as_bytes(), sha256)),
+                code: Some(code_file!(code.as_bytes())),
                 arguments: exe_env_args.clone(),
             },
             FunctionContext {
@@ -958,7 +997,7 @@ mod tests {
         );
         assert_eq!(
             fake_args.iter().find(|v| v.name == "sha256").unwrap().value,
-            sha256.as_bytes()
+            "688787d8ff144c502c7f5cffaafe2cc588d86079f9de88304c26b0cb99ce91c6".as_bytes()
         );
         let fa = FunctionAttachments { attachments };
         let mut buf = Vec::with_capacity(fa.encoded_len());

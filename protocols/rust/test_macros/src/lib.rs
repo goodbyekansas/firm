@@ -38,33 +38,25 @@ macro_rules! function_attachment {
 #[macro_export]
 macro_rules! code_file {
     ($content:expr) => {{
-        $crate::code_file!(
-            $content,
-            "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
-        )
-    }};
-
-    ($content:expr, $sha256:expr) => {{
-        $crate::attachment_file!($content, "code", $sha256)
+        $crate::attachment_file!($content, "code")
     }};
 }
 
 #[macro_export]
 macro_rules! attachment_file {
     ($content:expr, $name:expr) => {{
-        $crate::attachment_file!(
-            $content,
-            $name,
-            "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
-        )
-    }};
-
-    ($content:expr, $name:expr, $sha256:expr) => {{
         use std::io::Write;
         let tf = tempfile::NamedTempFile::new().unwrap();
         let (mut file, path) = tf.keep().unwrap();
         file.write_all($content).unwrap();
-        $crate::function_attachment!(format!("file://{}", path.display()), $name, $sha256)
+
+        use sha2::{Digest, Sha256};
+        let sha256 = Sha256::digest($content);
+        $crate::function_attachment!(
+            format!("file://{}", path.display()),
+            $name,
+            hex::encode(sha256)
+        )
     }};
 }
 
