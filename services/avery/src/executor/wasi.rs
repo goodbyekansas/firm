@@ -251,10 +251,7 @@ mod tests {
             ExecutorContext {
                 function_name: "hello-world".to_owned(),
                 entrypoint: "could-be-anything".to_owned(),
-                code: Some(code_file!(
-                    include_bytes!("hello.wasm"),
-                    "c455c4bc68c1afcdafa7c2f74a499810b0aa5d12f7a009d493789d595847af72"
-                )),
+                code: Some(code_file!(include_bytes!("hello.wasm"))),
                 arguments: vec![],
             },
             FunctionContext {

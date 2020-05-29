@@ -7,3 +7,5 @@ edition = "2018"
 [dependencies]
 tempfile = "3"
 uuid = "0.8"
+sha2 = "0.8"
+hex = "0.4"

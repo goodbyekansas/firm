@@ -404,7 +404,7 @@ fn test_attachments() {
     let attachment2 = futures::executor::block_on(fr.register_attachment(tonic::Request::new(
         register_attachment_request!(
             "attachment2",
-            "21db76ad585e9a0c64e7e2cf2bbae937c3601c263ff9639061349468e9217585"
+            "21db76ad585e9a0c64e7e2cf2bbae937c3601c263ff9639061349468e9217585" // actual sha256 of sune * 5
         ),
     )));
     assert!(attachment2.is_ok());
@@ -487,6 +487,35 @@ fn test_attachments() {
         tonic::Code::InvalidArgument
     );
 
+    // test invalid checksum
+    let invalid_attachment = futures::executor::block_on(fr.register_attachment(
+        tonic::Request::new(register_attachment_request!(
+            "invalid-attachment",
+            "31db76ad585e9a0c64e7e2cf2bbae937c3601c263ff9639061349468e9217585" // not actual sha256 of sune * 5
+        )),
+    ));
+    assert!(invalid_attachment.is_ok());
+    let invalid_attachment_id = invalid_attachment.unwrap().into_inner();
+
+    let invalid_attachment_id_clone = invalid_attachment_id.clone();
+    let outbound = async_stream::stream! {
+        for _ in 0u32..5u32 {
+            yield Ok(AttachmentStreamUpload {
+                id: Some(invalid_attachment_id_clone.clone()),
+                content: "sune".as_bytes().to_vec(),
+            });
+        }
+    };
+    pin_mut!(outbound);
+    let upload_result =
+        futures::executor::block_on(fr.upload_stream_attachment(tonic::Request::new(outbound)));
+    assert!(upload_result.is_err());
+    assert!(matches!(
+        upload_result.unwrap_err().code(),
+        tonic::Code::InvalidArgument
+    ));
+
+    // test cleanup of registry
     assert!(std::path::Path::new(&file_path).exists());
     std::mem::drop(fr);
     assert!(!std::path::Path::new(&file_path).exists());

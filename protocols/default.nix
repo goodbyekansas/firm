@@ -16,7 +16,7 @@ rec {
 
     testHelpers = { protocols ? onlyMessages }:
       project.declareComponent ./rust/test_macros/test_macros.nix {
-      inherit protocols;
-    };
+        inherit protocols;
+      };
   };
 }

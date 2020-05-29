@@ -105,7 +105,7 @@ macro_rules! register_code_attachment {
                 name: "code".to_owned(),
                 metadata: HashMap::new(),
                 checksums: Some(Checksums {
-                    sha256: "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
+                    sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" // file is empty
                         .to_owned(),
                 }),
             })),
@@ -207,12 +207,10 @@ fn test_execute() {
             value: 3i64.to_le_bytes().to_vec(),
         },
     ];
-    let r = dbg!(futures::executor::block_on(svc.execute(
-        tonic::Request::new(ExecuteRequest {
-            function: first_function!(svc).id.clone(),
-            arguments: correct_args,
-        })
-    )));
+    let r = futures::executor::block_on(svc.execute(tonic::Request::new(ExecuteRequest {
+        function: first_function!(svc).id.clone(),
+        arguments: correct_args,
+    })));
     assert!(r.is_ok());
 
     let incorrect_args = vec![
@@ -272,7 +270,7 @@ fn test_execution_environment_inputs() {
     let function = res.functions.first().unwrap();
     assert_eq!(1, function.outputs.len());
     assert_eq!("hass_string", &function.outputs.first().unwrap().name);
-    assert_eq!(3, dbg!(&function.inputs).len());
+    assert_eq!(3, function.inputs.len());
     assert_eq!(
         1,
         function

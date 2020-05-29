@@ -9,6 +9,7 @@ use std::{
 use futures::{Stream, StreamExt};
 use regex::Regex;
 use semver::{Version, VersionReq};
+use sha2::{Digest, Sha256};
 use slog::{info, warn, Logger};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
@@ -98,7 +99,8 @@ impl FunctionsRegistryService {
     {
         let mut stream = attachment_stream_upload_request.into_inner();
 
-        let mut upload_url = String::new();
+        let mut hasher = Sha256::new();
+        let mut maybe_attachment: Option<FunctionAttachment> = None;
         let mut maybe_file: Option<(Result<fs::File, tonic::Status>, PathBuf)> = None;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| {
@@ -160,6 +162,7 @@ impl FunctionsRegistryService {
                 (Err(ref mut e), _) => Err(e.clone()),
             }?;
 
+            hasher.input(&chunk.content);
             file.write(&chunk.content).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Internal,
@@ -171,11 +174,44 @@ impl FunctionsRegistryService {
                 )
             })?;
 
-            upload_url = attachment.url.clone();
+            maybe_attachment = maybe_attachment.or_else(|| Some(attachment.clone()));
         }
 
+        // validate integrity of uploaded file
+        let uploaded_content_checksum = hasher.result();
+        maybe_attachment
+            .as_ref()
+            .and_then(|a| a.checksums.as_ref())
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    "Attachment is missing checksums. This should have been validated when registering 🤷".to_string(),
+                )
+            })
+            .and_then(|checksums| {
+                if &uploaded_content_checksum[..]
+                    != hex::decode(&checksums.sha256)
+                        .unwrap_or_default()
+                        .as_slice()
+                {
+                    Err(tonic::Status::new(
+                        tonic::Code::InvalidArgument,
+                        format!(
+                            "Uploaded attachment checksum mismatch. Registered with: {}, got from uploaded content: {}",
+                            &checksums.sha256,
+                            hex::encode(uploaded_content_checksum)
+                        ),
+                    ))
+                } else {
+                    Ok(())
+                }
+            })?;
+
         Ok(tonic::Response::new(AttachmentUploadResponse {
-            url: upload_url,
+            url: maybe_attachment
+                .as_ref()
+                .map(|att| att.url.clone())
+                .unwrap_or_default(),
         }))
     }
 
@@ -504,6 +540,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
         &self,
         attachment_stream_upload_request: tonic::Request<tonic::Streaming<AttachmentStreamUpload>>,
     ) -> Result<tonic::Response<AttachmentUploadResponse>, tonic::Status> {
+        // TODO: use metadata for "global" upload data such as FunctionAttachmentId
         self.upload_stream_attachment(attachment_stream_upload_request)
             .await
     }
