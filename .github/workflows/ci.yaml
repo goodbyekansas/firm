@@ -26,6 +26,7 @@ jobs:
           protocols.python,
           protocols.rust.withServices,
           protocols.rustProtoCompiler,
+          protocols.rust.testHelpers,
         ]
 
     steps:
