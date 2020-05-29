@@ -8,9 +8,8 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use gbk_protocols::functions::{
-    ArgumentType, Checksums as ProtoChecksums, ExecutionEnvironment as ProtoExecutionEnvironment,
-    FunctionArgument, FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput,
-    RegisterRequest,
+    ArgumentType, ExecutionEnvironment as ProtoExecutionEnvironment, FunctionArgument,
+    FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput, RegisterRequest,
 };
 
 #[derive(Debug, Error)]
@@ -109,13 +108,13 @@ impl FunctionManifest {
     }
 }
 
+// TODO: This is wrong, code will become an attachment
+// also, we need to parse attachments + metadata from the manifest
+// and use manifest-relative filepaths
 impl From<&FunctionManifest> for RegisterRequest {
     fn from(fm: &FunctionManifest) -> Self {
         RegisterRequest {
             name: fm.name.clone(),
-            checksums: Some(ProtoChecksums {
-                sha256: fm.checksums.sha256.clone(),
-            }),
             version: fm.version.clone(),
             tags: fm.tags.clone(),
             inputs: fm
