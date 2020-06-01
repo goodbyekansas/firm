@@ -63,11 +63,15 @@ macro_rules! attachment_file {
 #[macro_export]
 macro_rules! function_input {
     ($name:expr, $required:expr, $argtype:path) => {{
+        $crate::function_input!($name, $required, $argtype, "")
+    }};
+
+    ($name:expr, $required:expr, $argtype:path, $default:expr) => {{
         gbk_protocols::functions::FunctionInput {
             name: String::from($name),
             required: $required,
             r#type: $argtype as i32,
-            default_value: String::new(),
+            default_value: String::from($default),
             from_execution_environment: false,
         }
     }};
@@ -149,7 +153,7 @@ macro_rules! exec_env {
     ($name:expr) => {{
         gbk_protocols::functions::ExecutionEnvironment {
             name: String::from($name),
-            entrypoint: "enter-here".to_owned(),
+            entrypoint: String::new(),
             args: vec![],
         }
     }};

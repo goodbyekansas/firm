@@ -8,8 +8,9 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use gbk_protocols::functions::{
-    ArgumentType, ExecutionEnvironment as ProtoExecutionEnvironment, FunctionArgument,
-    FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput, RegisterRequest,
+    ArgumentType, Checksums as ProtoChecksums, ExecutionEnvironment as ProtoExecutionEnvironment,
+    FunctionArgument, FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput,
+    RegisterAttachmentRequest, RegisterRequest,
 };
 
 #[derive(Debug, Error)]
@@ -19,6 +20,12 @@ pub enum ManifestError {
 
     #[error("Manifest file \"{path}\" could not be read: {io_error}")]
     ManifestFileReadError { path: PathBuf, io_error: io::Error },
+
+    #[error("Attachment file \"{path}\" could not be read: {io_error}")]
+    AttachmentFileReadError { path: PathBuf, io_error: io::Error },
+
+    #[error("Invalid manifest path: \"{0}\"")]
+    InvalidManifestPath(PathBuf),
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,7 +50,9 @@ enum FunctionArgumentType {
 pub struct FunctionManifest {
     name: String,
 
-    #[serde(default)]
+    #[serde(skip)]
+    path: PathBuf,
+
     version: String,
 
     #[serde(default)]
@@ -55,10 +64,21 @@ pub struct FunctionManifest {
     #[serde(rename = "execution-environment")]
     execution_environment: ExecutionEnvironment,
 
-    checksums: Checksums,
-
     #[serde(default)]
     tags: HashMap<String, String>,
+
+    #[serde(default)]
+    attachments: HashMap<String, Attachment>,
+
+    #[serde(default)]
+    code: Option<Attachment>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Attachment {
+    path: String,
+    metadata: HashMap<String, String>,
+    checksums: Checksums,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,9 +97,17 @@ struct FunctionOutput {
     r#type: FunctionArgumentType,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct Checksums {
     sha256: String,
+}
+
+impl From<&Checksums> for ProtoChecksums {
+    fn from(checksum: &Checksums) -> Self {
+        Self {
+            sha256: checksum.sha256.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,24 +121,91 @@ struct ExecutionEnvironment {
     args: HashMap<String, String>,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct AttachmentInfo {
+    pub path: PathBuf,
+    pub request: RegisterAttachmentRequest,
+}
+
 impl FunctionManifest {
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub fn parse<P: AsRef<Path>>(path: P) -> Result<Self, ManifestError> {
-        std::fs::read_to_string(path.as_ref())
+        let fullpath =
+            path.as_ref()
+                .canonicalize()
+                .map_err(|e| ManifestError::ManifestFileReadError {
+                    path: path.as_ref().to_path_buf(),
+                    io_error: e,
+                })?;
+        let mut manifest: Self = std::fs::read_to_string(&fullpath)
             .map_err(|e| ManifestError::ManifestFileReadError {
                 path: path.as_ref().to_path_buf(),
                 io_error: e,
             })
-            .and_then(|toml_content| toml::from_str(&toml_content).map_err(|e| e.into()))
+            .and_then(|toml_content| toml::from_str(&toml_content).map_err(|e| e.into()))?;
+
+        manifest.path = fullpath;
+        Ok(manifest)
+    }
+
+    pub fn code(&self) -> Result<Option<AttachmentInfo>, ManifestError> {
+        self.code
+            .as_ref()
+            .map(|code| {
+                let fullpath = self
+                    .path
+                    .parent()
+                    .ok_or_else(|| ManifestError::InvalidManifestPath(self.path.clone()))?
+                    .join(code.path.clone());
+                fullpath
+                    .canonicalize()
+                    .map(|absolute| AttachmentInfo {
+                        path: absolute,
+                        request: RegisterAttachmentRequest {
+                            name: "code".to_owned(),
+                            metadata: code.metadata.clone(),
+                            checksums: Some(ProtoChecksums::from(&code.checksums)),
+                        },
+                    })
+                    .map_err(|e| ManifestError::AttachmentFileReadError {
+                        path: fullpath.clone(),
+                        io_error: e,
+                    })
+            })
+            .transpose()
+    }
+
+    pub fn attachments(&self) -> Result<Vec<AttachmentInfo>, ManifestError> {
+        self.attachments
+            .iter()
+            .map(|(n, a)| {
+                self.path
+                    .join(a.path.clone())
+                    .canonicalize()
+                    .map(|absolute| AttachmentInfo {
+                        path: absolute,
+                        request: RegisterAttachmentRequest {
+                            name: n.clone(),
+                            metadata: a.metadata.clone(),
+                            checksums: Some(ProtoChecksums::from(&a.checksums)),
+                        },
+                    })
+                    .map_err(|e| ManifestError::AttachmentFileReadError {
+                        path: PathBuf::from(&a.path),
+                        io_error: e,
+                    })
+            })
+            .collect()
     }
 }
 
-// TODO: This is wrong, code will become an attachment
-// also, we need to parse attachments + metadata from the manifest
-// and use manifest-relative filepaths
 impl From<&FunctionManifest> for RegisterRequest {
     fn from(fm: &FunctionManifest) -> Self {
         RegisterRequest {
@@ -125,7 +220,7 @@ impl From<&FunctionManifest> for RegisterRequest {
                     required: input.required,
                     r#type: ArgumentType::from(&input.r#type) as i32,
                     default_value: input.default_value.clone(),
-                    from_execution_environment: false, // This is weird. This should only be set from avery
+                    from_execution_environment: false, // This is weird. This should only be set from the function registry
                 })
                 .collect(),
             outputs: fm
@@ -188,7 +283,11 @@ mod tests {
 
     use std::io::Write;
 
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
+
+    use gbk_protocols_test_helpers::{
+        exec_env, function_input, function_output, register_attachment_request,
+    };
 
     macro_rules! write_toml_to_tempfile {
         ($toml: expr) => {{
@@ -210,11 +309,9 @@ mod tests {
 
         let toml = r#"
         name = "start-blender"
+        version = "0.1.0"
         [execution-environment]
         type = "wasm"
-
-        [checksums]
-        sha256 = "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
         "#;
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
         assert!(r.is_ok());
@@ -230,9 +327,6 @@ mod tests {
 
         [execution-environment]
         type = "wasm"
-
-        [checksums]
-        sha256 = "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
         "#;
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
         assert!(r.is_err());
@@ -243,6 +337,8 @@ mod tests {
 
         let toml = r#"
         name = "start-blender"
+
+        version = "0.1.0"
 
         [inputs]
           [inputs.version]
@@ -257,9 +353,6 @@ mod tests {
 
         [execution-environment.args]
         sune = "bune"
-
-        [checksums]
-        sha256 = "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
         "#;
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
         assert!(r.is_ok());
@@ -271,5 +364,171 @@ mod tests {
             r.unwrap_err(),
             ManifestError::ManifestFileReadError{ .. }
         ));
+
+        // Test parsing code and attachments
+        let toml = r#"
+        name = "start-blender"
+        version = "0.1.0"
+        [execution-environment]
+        type = "wasm"
+
+        [code]
+        path = "code/path"
+        metadata = { is_code = "true" }
+        [code.checksums]
+        sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
+
+        [attachments.kalle]
+        path = "fabrikam/sune"
+        metadata = { someTag = "sune", cool = "chorizo korvén" }
+        [attachments.kalle.checksums]
+        sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
+
+        [attachments.oran]
+        path = "fabrikam/security"
+        metadata = { surname = "jonsson" }
+        [attachments.oran.checksums]
+        sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
+        "#;
+
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        assert!(&r.is_ok());
+        let val = r.unwrap();
+
+        assert!(val.code.is_some());
+        let code = val.code.unwrap();
+        assert_eq!(code.path, "code/path");
+        assert_eq!(code.metadata.get("is_code").unwrap(), "true");
+
+        assert_eq!(val.attachments.len(), 2);
+        let attachment = val.attachments.get("kalle").unwrap();
+
+        assert_eq!(attachment.path, "fabrikam/sune");
+        assert_eq!(attachment.metadata.get("someTag").unwrap(), "sune");
+        assert_eq!(attachment.metadata.get("cool").unwrap(), "chorizo korvén");
+
+        let attachment = val.attachments.get("oran").unwrap();
+        assert_eq!(attachment.path, "fabrikam/security");
+        assert_eq!(attachment.metadata.get("surname").unwrap(), "jonsson");
+    }
+
+    #[test]
+    fn test_register_request_conversion() {
+        // Test parsing code and attachments
+        let toml = r#"
+        name = "super-simple"
+        version = "0.1.0"
+        [execution-environment]
+        type = "wasm"
+        "#;
+
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        let rr = RegisterRequest::from(&r.unwrap());
+        assert_eq!(rr.name, "super-simple");
+        assert_eq!(rr.version, "0.1.0");
+
+        assert_eq!(rr.execution_environment, Some(exec_env!("wasm")));
+
+        let toml = r#"
+        name = "super-simple"
+        version = "0.1.0"
+        [execution-environment]
+        type = "wasm"
+        [inputs.korv]
+        type = "string"
+        required = true
+        [inputs.aaa]
+        type = "float"
+        default = "2.3"
+        [outputs.ost]
+        type = "int"
+        "#;
+
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        let rr = RegisterRequest::from(&r.unwrap());
+        assert_eq!(
+            rr.inputs.iter().find(|i| i.name == "korv").unwrap(),
+            &function_input!("korv", true, ArgumentType::String)
+        );
+        assert_eq!(
+            rr.inputs.iter().find(|i| i.name == "aaa").unwrap(),
+            &function_input!("aaa", false, ArgumentType::Float, "2.3")
+        );
+
+        assert_eq!(
+            rr.outputs.first().unwrap(),
+            &function_output!("ost", ArgumentType::Int)
+        );
+    }
+
+    #[test]
+    fn test_attachment_conversion() {
+        // Test parsing code and attachments
+        let tempd = TempDir::new().unwrap();
+        let codepath = tempd.path().join("code");
+        std::fs::write(&codepath, "").unwrap();
+        let fkalle = NamedTempFile::new().unwrap();
+        let foran = NamedTempFile::new().unwrap();
+
+        let toml = format!(
+            r#"
+        name = "start-blender"
+        version = "0.1.0"
+        [execution-environment]
+        type = "wasm"
+
+        [code]
+        path = "code"
+        metadata = {{ is_code = "true" }}
+        [code.checksums]
+        sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
+
+        [attachments.kalle]
+        path = "{}"
+        metadata = {{ someTag = "sune", cool = "chorizo korvén" }}
+        [attachments.kalle.checksums]
+        sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
+
+        [attachments.oran]
+        path = "{}"
+        metadata = {{ surname = "jonsson" }}
+        [attachments.oran.checksums]
+        sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
+        "#,
+            fkalle.path().display(),
+            foran.path().display(),
+        );
+
+        let tomlpath = tempd.path().join("manifest.toml");
+        std::fs::write(&tomlpath, toml).unwrap();
+        let r = FunctionManifest::parse(tomlpath).unwrap();
+        let attachments = r.attachments().unwrap();
+        assert_eq!(
+            r.code().unwrap().unwrap(),
+            AttachmentInfo {
+                path: codepath.canonicalize().unwrap(),
+                request: register_attachment_request!("code", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"is_code" => "true"})
+            }
+        );
+        assert_eq!(
+            attachments
+                .iter()
+                .find(|a| a.request.name == "kalle")
+                .unwrap(),
+            &AttachmentInfo {
+                path: fkalle.path().canonicalize().unwrap(),
+                request: register_attachment_request!("kalle", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"someTag" => "sune", "cool" => "chorizo korvén"})
+            }
+        );
+        assert_eq!(
+            attachments
+                .iter()
+                .find(|a| a.request.name == "oran")
+                .unwrap(),
+            &AttachmentInfo {
+                path: foran.path().canonicalize().unwrap(),
+                request: register_attachment_request!("oran", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"surname" => "jonsson"})
+            }
+        );
     }
 }
