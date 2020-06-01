@@ -13,35 +13,17 @@ let
       '';
     };
   };
+  # TODO investigate if code should be different from attachment, i.e: code vs manifest.attachments
   mkFunction = attrs@{ name, package, manifest, code, ... }:
     let
-      manifestContent = if builtins.isPath manifest then (builtins.fromTOML (builtins.readFile manifest)) else manifest;
-      manifestWithChecksum = manifestContent // {
-        checksums = {
-          sha256 = "$SHA256";
-        };
-        # TODO: In the future we must support signatures for functions as well
+      manifestGenerator = pkgs.callPackage ./manifest.nix {
+        inherit name code manifest;
+        attachments = manifest.attachments or {};
       };
-      packageWithManifest = package.overrideAttrs (
-        oldAttrs: {
-          buildInputs = oldAttrs.buildInputs or [ ] ++ [ pkgs.utillinux ];
-          manifestContent = builtins.toJSON manifestWithChecksum;
-          passAsFile = oldAttrs.passAsFile or [ ] ++ [ "manifestContent" ];
-          installPhase = ''
-            ${oldAttrs.installPhase or ""}
-            if [ -f $out/${code} ]; then
-              echo "📜 Creating output manifest..."
-              cat $manifestContentPath | \
-              SHA256=$(sha256sum $out/${code} | cut -d " " -f 1) ${pkgs.envsubst}/bin/envsubst | \
-              ${pkgs.remarshal}/bin/json2toml -o $out/manifest.toml
-            else
-              echo "ERROR: 💥 specified code does not exist..."
-              exit 1
-            fi
-          '';
-          inherit code;
-        }
-      );
+
+      packageWithManifest = package.overrideAttrs (oldAttrs: {
+        buildInputs = oldAttrs.buildInputs ++ [ manifestGenerator ];
+      });
     in
     base.mkComponent (
       attrs // {

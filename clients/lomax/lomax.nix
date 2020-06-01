@@ -2,5 +2,5 @@
 base.languages.rust.mkClient {
   name = "lomax";
   src = ./.;
-  rustDependencies = [ protocols protocolsTestHelpers];
+  rustDependencies = [ protocols protocolsTestHelpers ];
 }
