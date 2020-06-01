@@ -6,7 +6,6 @@ mod manifest;
 // std
 use std::{
     collections::HashMap,
-    error::Error,
     future::Future,
     io::{Read, Seek, SeekFrom},
     path::PathBuf,
@@ -16,9 +15,8 @@ use std::{
 use futures::future::{join, try_join_all};
 use gbk_protocols::{
     functions::{
-        functions_registry_client::FunctionsRegistryClient, AttachmentStreamUpload, Checksums,
-        FunctionAttachmentId, ListRequest, OrderingDirection, OrderingKey,
-        RegisterAttachmentRequest, RegisterRequest,
+        functions_registry_client::FunctionsRegistryClient, AttachmentStreamUpload,
+        FunctionAttachmentId, ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
     },
     tonic::{self, transport::Channel},
 };
@@ -30,7 +28,7 @@ use tokio::task;
 
 // internal
 use formatting::DisplayExt;
-use manifest::FunctionManifest;
+use manifest::{AttachmentInfo, FunctionManifest};
 
 // arguments
 #[derive(StructOpt, Debug)]
@@ -49,14 +47,6 @@ struct LomaxArgs {
     cmd: Command,
 }
 
-fn parse_key_val(s: &str) -> Result<(String, PathBuf), Box<dyn Error>> {
-    let pos = s
-        .find('=')
-        .ok_or_else(|| format!("invalid KEY=value: no `=` found in `{}`", s))?;
-    let path: String = s[pos + 1..].parse()?;
-    Ok((s[..pos].parse()?, PathBuf::from(path)))
-}
-
 #[derive(StructOpt, Debug)]
 enum Command {
     List {
@@ -66,13 +56,7 @@ enum Command {
 
     Register {
         #[structopt(parse(from_os_str))]
-        code: PathBuf,
-
-        #[structopt(parse(from_os_str))]
         manifest: PathBuf,
-
-        #[structopt(short = "a", parse(try_from_str = parse_key_val))]
-        attachments: Vec<(String, PathBuf)>,
     },
 }
 
@@ -96,9 +80,7 @@ where
 }
 
 async fn upload_attachment(
-    name: &str,
-    path: &std::path::Path,
-    metadata: HashMap<String, String>,
+    attachment: &AttachmentInfo,
     mut client: FunctionsRegistryClient<Channel>,
     progressbar: ProgressBar,
 ) -> Result<FunctionAttachmentId, String> {
@@ -107,25 +89,22 @@ async fn upload_attachment(
     ];
     const CHUNK_SIZE: usize = 8192;
 
-    let attachment = client
-        .register_attachment(tonic::Request::new(RegisterAttachmentRequest {
-            name: name.to_owned(),
-            metadata,
-            // TODO: This is very much not correct 🐘
-            checksums: Some(Checksums {
-                sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                    .to_owned(),
-            }),
-        }))
+    let registered_attachment = client
+        .register_attachment(tonic::Request::new(attachment.request.clone()))
         .await
-        .map_err(|e| format!("Failed to register attachment \"{}\". Err: {}", name, e))?
+        .map_err(|e| {
+            format!(
+                "Failed to register attachment \"{}\". Err: {}",
+                attachment.request.name, e
+            )
+        })?
         .into_inner();
 
-    let mut file = std::fs::File::open(&path).map_err(|e| {
+    let mut file = std::fs::File::open(&attachment.path).map_err(|e| {
         format!(
             "Failed to read attachment {} file at \"{}\": {}",
-            name,
-            &path.display(),
+            attachment.request.name,
+            &attachment.path.display(),
             e
         )
     })?;
@@ -133,7 +112,13 @@ async fn upload_attachment(
     let file_size = file
         .seek(SeekFrom::End(0))
         .and_then(|file_size| file.seek(SeekFrom::Start(0)).map(|_| file_size))
-        .map_err(|e| format!("Failed to get size of file \"{}\": {}", path.display(), e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to get size of file \"{}\": {}",
+                attachment.path.display(),
+                e
+            )
+        })?;
 
     let mut rng = thread_rng();
     progressbar.set_length(file_size);
@@ -144,13 +129,13 @@ async fn upload_attachment(
             )
             .progress_chars(&format!("-{}-", VEHICLES.choose(&mut rng).unwrap_or(&"💣"))),
     );
-    progressbar.set_message(&format!("Uploading {}", name));
+    progressbar.set_message(&format!("Uploading {}", attachment.request.name));
     progressbar.set_position(0);
 
     // generate an upload stream of chunks from the attachment file
     let mut reader = std::io::BufReader::with_capacity(CHUNK_SIZE, file);
-    let attachment_id_clone = attachment.clone();
-    let cloned_name = name.to_owned();
+    let attachment_id_clone = registered_attachment.clone();
+    let cloned_name = attachment.request.name.to_owned();
     let upload_stream = async_stream::stream! {
         let mut read_bytes = CHUNK_SIZE;
 
@@ -175,9 +160,14 @@ async fn upload_attachment(
     client
         .upload_streamed_attachment(tonic::Request::new(upload_stream))
         .await
-        .map_err(|e| format!("Failed to upload {} attachment: {}", name, e))?;
+        .map_err(|e| {
+            format!(
+                "Failed to upload {} attachment: {}",
+                attachment.request.name, e
+            )
+        })?;
 
-    Ok(attachment)
+    Ok(registered_attachment)
 }
 
 #[tokio::main]
@@ -223,13 +213,8 @@ async fn main() -> Result<(), u32> {
                 .for_each(|f| println!("{}", f.display()))
         }
 
-        Command::Register {
-            code,
-            manifest,
-            attachments,
-        } => {
+        Command::Register { manifest } => {
             let manifest_path = manifest;
-            let code_path = code;
 
             let manifest = FunctionManifest::parse(&manifest_path).map_err(|e| {
                 println!("\"{}\".", e);
@@ -240,34 +225,36 @@ async fn main() -> Result<(), u32> {
 
             println!("Reading manifest file from: {}", manifest_path.display());
             let mut register_request: RegisterRequest = (&manifest).into();
-            println!("Reading code file from: {}", code_path.display());
-
-            let code_attachment = with_progressbars(|mpb| {
-                upload_attachment(
-                    "code",
-                    &code_path,
-                    HashMap::new(),
-                    client.clone(),
-                    mpb.add(ProgressBar::new(128)),
-                )
-            })
-            .await
-            .map_err(|e| {
-                println!("Failed to upload code attachment: {}", e);
+            let code = manifest.code().map_err(|e| {
+                println!("Failed to parse code from the manifest: {}", e);
                 3u32
             })?;
 
-            register_request.code = Some(code_attachment);
+            // Code is optional. Functions could have their code located in gcp or other places
+            // there is no need for the function to contain the code in that case.
+            if let Some(code) = code {
+                println!("Uploading code file from: {}", code.path.display());
+
+                let code_attachment = with_progressbars(|mpb| {
+                    upload_attachment(&code, client.clone(), mpb.add(ProgressBar::new(128)))
+                })
+                .await
+                .map_err(|e| {
+                    println!("Failed to upload code attachment: {}", e);
+                    3u32
+                })?;
+                register_request.code = Some(code_attachment);
+            }
+
+            let attachments = manifest.attachments().map_err(|e| {
+                println!("Failed to parse attachments from the manifest: {}", e);
+                3u32
+            })?;
+
             let attachments = with_progressbars(|mpb| {
-                try_join_all(attachments.iter().map(|(a, p)| {
+                try_join_all(attachments.iter().map(|a| {
                     let client_clone = client.clone();
-                    upload_attachment(
-                        a,
-                        p,
-                        HashMap::new(),
-                        client_clone,
-                        mpb.add(ProgressBar::new(128)),
-                    )
+                    upload_attachment(a, client_clone, mpb.add(ProgressBar::new(128)))
                 }))
             })
             .await

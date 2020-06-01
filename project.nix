@@ -40,6 +40,7 @@ let
     };
     lomax = project.declareComponent ./clients/lomax/lomax.nix {
       protocols = protocols.rust.withServices;
+      protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
     };
 
     osPackaging = project.declareComponent ./deployment/os-packaging.nix {
