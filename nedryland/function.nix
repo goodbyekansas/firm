@@ -18,7 +18,7 @@ let
     let
       manifestGenerator = pkgs.callPackage ./manifest.nix {
         inherit name code manifest;
-        attachments = manifest.attachments or {};
+        attachments = manifest.attachments or { };
       };
 
       packageWithManifest = package.overrideAttrs (oldAttrs: {
