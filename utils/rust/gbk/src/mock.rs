@@ -8,6 +8,42 @@ use gbk_protocols::functions::{FunctionArgument, ReturnValue, StartProcessReques
 use lazy_static::lazy_static;
 use prost::Message;
 
+/// Get attachment path len
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
+pub unsafe fn get_attachment_path_len(
+    attachment_name_ptr: *const u8,
+    attachment_name_len: usize,
+    path_len: *mut u64,
+) -> u32 {
+    MockResultRegistry::execute_get_attachment_path_len(
+        attachment_name_ptr,
+        attachment_name_len,
+        path_len,
+    )
+}
+
+/// Map attachment
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
+pub unsafe fn map_attachment(
+    attachment_name_ptr: *const u8,
+    attachment_name_len: usize,
+    path_ptr: *mut u8,
+    path_buffer_len: usize,
+) -> u32 {
+    MockResultRegistry::execute_map_attachment(
+        attachment_name_ptr,
+        attachment_name_len,
+        path_ptr,
+        path_buffer_len,
+    )
+}
+
 /// Start host process
 ///
 /// # Safety
@@ -86,6 +122,8 @@ type MockCallbacks<T> = HashMap<ThreadId, Box<T>>;
 
 #[derive(Default)]
 pub struct MockResultRegistry {
+    get_attachment_path_len_closure: MockCallbacks<dyn Fn(&str) -> Result<u64, u32> + Send>,
+    map_attachment_closure: MockCallbacks<dyn Fn(&str) -> Result<String, u32> + Send>,
     start_host_process_closure:
         MockCallbacks<dyn Fn(StartProcessRequest) -> Result<u64, u32> + Send>,
     run_host_process_closure: MockCallbacks<dyn Fn(StartProcessRequest) -> Result<i32, u32> + Send>,
@@ -99,6 +137,86 @@ pub struct MockResultRegistry {
 }
 
 impl MockResultRegistry {
+    pub fn set_get_attachment_path_len_impl<F>(closure: F)
+    where
+        F: Fn(&str) -> Result<u64, u32> + 'static + Send,
+    {
+        MOCK_RESULT_REGISTRY
+            .lock()
+            .unwrap()
+            .get_attachment_path_len_closure
+            .insert(thread::current().id(), Box::new(closure));
+    }
+
+    fn execute_get_attachment_path_len(
+        attachment_name_ptr: *const u8,
+        attachment_name_len: usize,
+        path_len: *mut u64,
+    ) -> u32 {
+        let attachment_name = unsafe {
+            let slice = std::slice::from_raw_parts(attachment_name_ptr, attachment_name_len);
+            std::str::from_utf8(slice).unwrap()
+        };
+        MOCK_RESULT_REGISTRY
+            .lock()
+            .unwrap()
+            .get_attachment_path_len_closure
+            .get(&thread::current().id())
+            .map_or_else(
+                || 1,
+                |c| match c(attachment_name) {
+                    Ok(ex) => {
+                        unsafe {
+                            *path_len = ex;
+                        }
+                        0
+                    }
+                    Err(e) => e,
+                },
+            )
+    }
+
+    pub fn set_map_attachment_impl<F>(closure: F)
+    where
+        F: Fn(&str) -> Result<String, u32> + 'static + Send,
+    {
+        MOCK_RESULT_REGISTRY
+            .lock()
+            .unwrap()
+            .map_attachment_closure
+            .insert(thread::current().id(), Box::new(closure));
+    }
+
+    fn execute_map_attachment(
+        attachment_name_ptr: *const u8,
+        attachment_name_len: usize,
+        path_ptr: *mut u8,
+        path_buffer_len: usize,
+    ) -> u32 {
+        let attachment_name = unsafe {
+            let slice = std::slice::from_raw_parts(attachment_name_ptr, attachment_name_len);
+            std::str::from_utf8(slice).unwrap()
+        };
+
+        MOCK_RESULT_REGISTRY
+            .lock()
+            .unwrap()
+            .map_attachment_closure
+            .get(&thread::current().id())
+            .map_or_else(
+                || 1,
+                |c| match c(attachment_name) {
+                    Ok(att_path) => {
+                        let buff =
+                            unsafe { std::slice::from_raw_parts_mut(path_ptr, path_buffer_len) };
+                        buff.clone_from_slice(att_path.as_bytes());
+                        0
+                    }
+                    Err(e) => e,
+                },
+            )
+    }
+
     pub fn set_start_host_process_impl<F>(closure: F)
     where
         F: Fn(StartProcessRequest) -> Result<u64, u32> + 'static + Send,
