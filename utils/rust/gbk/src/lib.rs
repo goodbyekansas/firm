@@ -61,6 +61,34 @@ macro_rules! host_call {
     };
 }
 
+pub fn get_attachment_path<S: AsRef<str> + std::fmt::Display>(
+    attachment_name: S,
+) -> Result<String, Error> {
+    let mut attachment_path_bytes_len: u64 = 0;
+    host_call!(raw::get_attachment_path_len(
+        attachment_name.as_ref().as_ptr(),
+        attachment_name.as_ref().as_bytes().len(),
+        &mut attachment_path_bytes_len as *mut u64
+    ))?;
+
+    let mut attachment_path_buffer = Vec::with_capacity(attachment_path_bytes_len as usize);
+    host_call!(raw::map_attachment(
+        attachment_name.as_ref().as_ptr(),
+        attachment_name.as_ref().as_bytes().len(),
+        attachment_path_buffer.as_mut_ptr(),
+        attachment_path_bytes_len as usize,
+    ))?;
+    unsafe { attachment_path_buffer.set_len(attachment_path_bytes_len as usize) };
+
+    String::from_utf8(attachment_path_buffer).map_err(|_| Error::ConversionError())
+}
+
+// TODO: This method should call a method called
+// map_attachment that does not return anything.
+pub fn map_attachment<S: AsRef<str> + std::fmt::Display>(attachment_name: S) -> Result<(), Error> {
+    get_attachment_path(attachment_name).map(|_| ())
+}
+
 pub fn start_host_process<S1: AsRef<str>, S2: AsRef<str>>(
     name: S1,
     args: &[S2],
@@ -416,6 +444,68 @@ mod tests {
     use super::*;
     use gbk_protocols::functions::FunctionArguments;
     use mock::MockResultRegistry;
+
+    #[test]
+    fn test_get_attachment_path() {
+        let attachment_name = "attachment_0";
+        let attachment_path = format!("attachments/{}", attachment_name);
+        let attachment_len = attachment_path.as_bytes().len();
+
+        MockResultRegistry::set_get_attachment_path_len_impl(move |att| {
+            assert_eq!(attachment_name, att);
+            Ok(attachment_len as u64)
+        });
+
+        let attachment_path2 = attachment_path.clone();
+        MockResultRegistry::set_map_attachment_impl(move |att| {
+            assert_eq!(attachment_name, att);
+            Ok(attachment_path2.clone())
+        });
+
+        let res = get_attachment_path(attachment_name);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), attachment_path);
+
+        MockResultRegistry::set_map_attachment_impl(|_| Err(11));
+        let res = get_attachment_path(attachment_name);
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), Error::HostError(11)));
+
+        MockResultRegistry::set_get_attachment_path_len_impl(|_| Err(10));
+        let res = get_attachment_path(attachment_name);
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), Error::HostError(10)));
+    }
+
+    #[test]
+    fn test_map_attachment() {
+        let attachment_name = "attachment_0";
+        let attachment_path = format!("attachments/{}", attachment_name);
+        let attachment_len = attachment_path.as_bytes().len();
+
+        MockResultRegistry::set_get_attachment_path_len_impl(move |att| {
+            assert_eq!(attachment_name, att);
+            Ok(attachment_len as u64)
+        });
+
+        MockResultRegistry::set_map_attachment_impl(move |att| {
+            assert_eq!(attachment_name, att);
+            Ok(attachment_path.clone())
+        });
+
+        let res = map_attachment(attachment_name);
+        assert!(res.is_ok());
+
+        MockResultRegistry::set_map_attachment_impl(|_| Err(11));
+        let res = map_attachment(attachment_name);
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), Error::HostError(11)));
+
+        MockResultRegistry::set_get_attachment_path_len_impl(|_| Err(10));
+        let res = map_attachment(attachment_name);
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), Error::HostError(10)));
+    }
 
     #[test]
     fn test_start_host_process() {
