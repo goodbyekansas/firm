@@ -155,17 +155,25 @@ impl FunctionManifest {
         Ok(manifest)
     }
 
+    fn get_attachment_path(&self, attachment: &Attachment) -> Result<PathBuf, ManifestError> {
+        let fullpath = self
+            .path
+            .parent()
+            .ok_or_else(|| ManifestError::InvalidManifestPath(self.path.clone()))?
+            .join(attachment.path.clone());
+        Ok(fullpath
+            .canonicalize()
+            .map_err(|e| ManifestError::AttachmentFileReadError {
+                path: fullpath.clone(),
+                io_error: e,
+            })?)
+    }
+
     pub fn code(&self) -> Result<Option<AttachmentInfo>, ManifestError> {
         self.code
             .as_ref()
             .map(|code| {
-                let fullpath = self
-                    .path
-                    .parent()
-                    .ok_or_else(|| ManifestError::InvalidManifestPath(self.path.clone()))?
-                    .join(code.path.clone());
-                fullpath
-                    .canonicalize()
+                self.get_attachment_path(&code)
                     .map(|absolute| AttachmentInfo {
                         path: absolute,
                         request: RegisterAttachmentRequest {
@@ -173,10 +181,6 @@ impl FunctionManifest {
                             metadata: code.metadata.clone(),
                             checksums: Some(ProtoChecksums::from(&code.checksums)),
                         },
-                    })
-                    .map_err(|e| ManifestError::AttachmentFileReadError {
-                        path: fullpath.clone(),
-                        io_error: e,
                     })
             })
             .transpose()
@@ -186,21 +190,14 @@ impl FunctionManifest {
         self.attachments
             .iter()
             .map(|(n, a)| {
-                self.path
-                    .join(a.path.clone())
-                    .canonicalize()
-                    .map(|absolute| AttachmentInfo {
-                        path: absolute,
-                        request: RegisterAttachmentRequest {
-                            name: n.clone(),
-                            metadata: a.metadata.clone(),
-                            checksums: Some(ProtoChecksums::from(&a.checksums)),
-                        },
-                    })
-                    .map_err(|e| ManifestError::AttachmentFileReadError {
-                        path: PathBuf::from(&a.path),
-                        io_error: e,
-                    })
+                self.get_attachment_path(&a).map(|absolute| AttachmentInfo {
+                    path: absolute,
+                    request: RegisterAttachmentRequest {
+                        name: n.clone(),
+                        metadata: a.metadata.clone(),
+                        checksums: Some(ProtoChecksums::from(&a.checksums)),
+                    },
+                })
             })
             .collect()
     }
