@@ -36,23 +36,14 @@ generateManifest() {
     declare -x "sha256_$(($i+1))=$checksum"
 
     # copy files
-    att=$(realpath "${attachmentPaths[$i]}")
-    extension="$(sed 's/^\w\+.//' <<< $(basename $att))"
-    
-    if [ -z "$extension" ];
-    then
-        targetFileName="${attachmentNames[$i]}"
-    else
-        targetFileName="${attachmentNames[$i]}.$extension"
-    fi
+    source_path=$(realpath "${attachmentPaths[$i]}")
+    target_path="$out/attachments/${attachmentNames[$i]}"
+    echo "copying $att to installation $target_path"
 
-    targetpath="$out/attachments/$targetFileName"
-    echo "copying $att to installation $targetpath"
-
-    cp $att $targetpath
+    cp $source_path $target_path
 
     # declare replacable for the file name in the manifest
-    declare -x "attachment_$(($i+1))=attachments/$targetFileName"
+    declare -x "attachment_$(($i+1))=attachments/${attachmentNames[$i]}"
 
   done
   substituteAll @out@/manifest.toml $out/manifest.toml
