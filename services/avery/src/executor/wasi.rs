@@ -116,8 +116,20 @@ fn execute_function(
     let run_process_logger = logger.new(o!("scope" => "run_process"));
     let gbk_imports = imports! {
         "gbk" => {
-            "map_attachment" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32| {
-                function::map_attachment(&function_attachments, &attachment_sandbox, ctx.memory(0), attachment_name, attachment_name_len).to_error_code()
+            "get_attachment_path_len" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_len: WasmPtr<u64, Item>| {
+                function::get_attachment_path_len(ctx.memory(0),
+                                                  attachment_name,
+                                                  attachment_name_len,
+                                                  path_len).to_error_code()
+            }),
+            "map_attachment" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
+                function::map_attachment(&function_attachments,
+                                         &attachment_sandbox,
+                                         ctx.memory(0),
+                                         attachment_name,
+                                         attachment_name_len,
+                                         path_ptr,
+                                         path_buffer_len).to_error_code()
             }),
             "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
                 process::start_process(&start_process_logger, &sandboxes, ctx.memory(0), s, len, pid_out).to_error_code()

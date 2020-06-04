@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::{cell::Cell, path::Path};
 
 use super::error::{WasiError, WasiResult};
 use prost::Message;
@@ -22,32 +22,89 @@ impl<'a> WasmPtrExt<'a> for WasmPtr<u8, Array> {
     }
 }
 
+pub fn get_attachment_path_len(
+    vm_memory: &Memory,
+    attachment_name: WasmPtr<u8, Array>,
+    attachment_name_len: u32,
+    path_len: WasmPtr<u64, Item>,
+) -> WasiResult<()> {
+    let attachment_name = attachment_name
+        .get_utf8_string(vm_memory, attachment_name_len)
+        .ok_or_else(|| WasiError::FailedToReadStringPointer("attachment_name".to_owned()))?;
+
+    let path = Path::new("attachments").join(attachment_name);
+    let path = path.to_str().ok_or_else(|| {
+        WasiError::ConversionError(format!(
+            "Failed to join path with attachment with name \"{}\"",
+            attachment_name
+        ))
+    })?;
+    let len = path.as_bytes().len();
+    println!(
+        "getting attachment path length of \"{}\", len: {}",
+        path, len
+    ); // TODO: REMOVE
+    unsafe {
+        path_len
+            .deref_mut(vm_memory)
+            .ok_or_else(WasiError::FailedToDerefPointer)
+            .map(|c| {
+                c.set(len as u64);
+            })
+    }
+}
+
 pub fn map_attachment(
     attachments: &[FunctionAttachment],
     sandbox: &Sandbox,
     vm_memory: &Memory,
     attachment_name: WasmPtr<u8, Array>,
     attachment_name_len: u32,
+    path_ptr: WasmPtr<u8, Array>,
+    path_buffer_len: u32,
 ) -> WasiResult<()> {
     let attachment_name = attachment_name
         .get_utf8_string(vm_memory, attachment_name_len)
         .ok_or_else(|| WasiError::FailedToReadStringPointer("attachment_name".to_owned()))?;
 
-    attachments
-        .iter()
-        .find(|a| a.name == attachment_name)
-        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_name.to_owned()))
-        .and_then(|a| {
-            a.download().map_err(|e| {
-                WasiError::FailedToMapAttachment(attachment_name.to_owned(), Box::new(e))
+    let sandbox_attachment_path = sandbox.path().join(attachment_name);
+    if !sandbox_attachment_path.exists() {
+        attachments
+            .iter()
+            .find(|a| a.name == attachment_name)
+            .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_name.to_owned()))
+            .and_then(|a| {
+                a.download().map_err(|e| {
+                    WasiError::FailedToMapAttachment(attachment_name.to_owned(), Box::new(e))
+                })
             })
+            .and_then(|data| {
+                // TODO: Map attachment differently depending on metadata.
+                // We need to support mapping folders as well.
+                std::fs::write(sandbox_attachment_path, data).map_err(|e| {
+                    WasiError::FailedToMapAttachment(attachment_name.to_owned(), Box::new(e))
+                })
+            })?;
+    }
+
+    let attachment_path = Path::new("attachments").join(attachment_name);
+    let attachment_path = attachment_path.to_str().ok_or_else(|| {
+        WasiError::ConversionError(format!(
+            "Failed to join path with attachment with name \"{}\"",
+            attachment_name
+        ))
+    })?;
+
+    path_ptr
+        .as_byte_array_mut(&vm_memory, path_buffer_len as usize)
+        .ok_or_else(|| {
+            WasiError::ConversionError(
+                "Failed to convert provided input path buffer to mut byte array.".to_owned(),
+            )
         })
-        .and_then(|data| {
-            // TODO: Map attachment differently depending on metadata.
-            // We need to support mapping folders as well.
-            std::fs::write(sandbox.path().join(attachment_name), data).map_err(|e| {
-                WasiError::FailedToMapAttachment(attachment_name.to_owned(), Box::new(e))
-            })
+        .and_then(|buff| {
+            buff.clone_from_slice(attachment_path.as_bytes());
+            Ok(())
         })
 }
 
