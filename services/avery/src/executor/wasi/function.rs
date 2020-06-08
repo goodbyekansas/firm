@@ -23,27 +23,35 @@ impl<'a> WasmPtrExt<'a> for WasmPtr<u8, Array> {
 }
 
 pub fn get_attachment_path_len(
+    attachments: &[FunctionAttachment],
     vm_memory: &Memory,
     attachment_name: WasmPtr<u8, Array>,
     attachment_name_len: u32,
     path_len: WasmPtr<u64, Item>,
 ) -> WasiResult<()> {
-    let attachment_name = attachment_name
+    let attachment_key = attachment_name
         .get_utf8_string(vm_memory, attachment_name_len)
         .ok_or_else(|| WasiError::FailedToReadStringPointer("attachment_name".to_owned()))?;
 
-    let path = Path::new("attachments").join(attachment_name);
+    let attachment_data = attachments
+        .iter()
+        .find(|a| a.name == attachment_key)
+        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
+
+    let attachment_filename = if attachment_data.filename.is_empty() {
+        attachment_key
+    } else {
+        &attachment_data.filename
+    };
+
+    let path = Path::new("attachments").join(attachment_filename);
     let path = path.to_str().ok_or_else(|| {
         WasiError::ConversionError(format!(
             "Failed to join path with attachment with name \"{}\"",
-            attachment_name
+            attachment_filename
         ))
     })?;
     let len = path.as_bytes().len();
-    println!(
-        "getting attachment path length of \"{}\", len: {}",
-        path, len
-    ); // TODO: REMOVE
     unsafe {
         path_len
             .deref_mut(vm_memory)
@@ -63,35 +71,41 @@ pub fn map_attachment(
     path_ptr: WasmPtr<u8, Array>,
     path_buffer_len: u32,
 ) -> WasiResult<()> {
-    let attachment_name = attachment_name
+    let attachment_key = attachment_name
         .get_utf8_string(vm_memory, attachment_name_len)
         .ok_or_else(|| WasiError::FailedToReadStringPointer("attachment_name".to_owned()))?;
 
-    let sandbox_attachment_path = sandbox.path().join(attachment_name);
+    let attachment_data = attachments
+        .iter()
+        .find(|a| a.name == attachment_key)
+        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
+
+    let attachment_filename = if attachment_data.filename.is_empty() {
+        attachment_key
+    } else {
+        &attachment_data.filename
+    };
+
+    let sandbox_attachment_path = sandbox.path().join(attachment_filename);
+
     if !sandbox_attachment_path.exists() {
-        attachments
-            .iter()
-            .find(|a| a.name == attachment_name)
-            .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_name.to_owned()))
-            .and_then(|a| {
-                a.download().map_err(|e| {
-                    WasiError::FailedToMapAttachment(attachment_name.to_owned(), Box::new(e))
-                })
-            })
+        attachment_data
+            .download()
+            .map_err(|e| WasiError::FailedToMapAttachment(attachment_key.to_owned(), Box::new(e)))
             .and_then(|data| {
                 // TODO: Map attachment differently depending on metadata.
                 // We need to support mapping folders as well.
                 std::fs::write(sandbox_attachment_path, data).map_err(|e| {
-                    WasiError::FailedToMapAttachment(attachment_name.to_owned(), Box::new(e))
+                    WasiError::FailedToMapAttachment(attachment_key.to_owned(), Box::new(e))
                 })
             })?;
     }
 
-    let attachment_path = Path::new("attachments").join(attachment_name);
+    let attachment_path = Path::new("attachments").join(attachment_filename);
     let attachment_path = attachment_path.to_str().ok_or_else(|| {
         WasiError::ConversionError(format!(
             "Failed to join path with attachment with name \"{}\"",
-            attachment_name
+            attachment_filename
         ))
     })?;
 
@@ -196,6 +210,9 @@ pub fn set_error(vm_memory: &Memory, msg: WasmPtr<u8, Array>, msglen: u32) -> Wa
 mod tests {
     use super::*;
     use gbk_protocols::functions::ArgumentType;
+    use gbk_protocols_test_helpers::function_attachment;
+
+    use tempfile::Builder;
     use wasmer_runtime::memory::Memory;
     use wasmer_runtime::{types::MemoryDescriptor, units::Pages};
 
@@ -488,5 +505,223 @@ mod tests {
 
         assert!(res.is_ok());
         assert_eq!(return_value, res.unwrap());
+    }
+
+    #[test]
+    fn test_map_attachment() {
+        let file = Builder::new()
+            .prefix("my-temporary-note")
+            .suffix(".txt")
+            .tempfile()
+            .unwrap();
+        let file_path = file.path();
+        std::fs::write(file_path, "hejhej").unwrap();
+        let mem = create_mem!();
+        let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
+        let fa = [function_attachment!(
+            format!("file://{}", file_path.display()),
+            "sune",
+            "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe",
+            "bune.txt"
+        )];
+        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let attachment_name = "sune".to_owned();
+        let attachment_bytes = attachment_name.as_bytes();
+        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
+        let attachment_bytes_len = attachment_bytes.len() as u32;
+        let path_ptr = WasmPtr::new(attachment_bytes_len);
+        let expected_path = "attachments/bune.txt";
+        let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
+        // Test that we get the expected file path
+        let res = map_attachment(
+            &fa,
+            &sandbox,
+            &mem,
+            attachment_name_ptr,
+            attachment_bytes_len,
+            path_ptr,
+            expected_path_bytes_len,
+        );
+        assert!(res.is_ok());
+        let return_path = path_ptr
+            .deref(&mem, 0, expected_path_bytes_len)
+            .unwrap()
+            .iter()
+            .map(|c| c.get())
+            .collect::<Vec<u8>>();
+        let return_path = std::str::from_utf8(&return_path).unwrap();
+
+        assert_eq!(return_path, expected_path);
+
+        // Test attachment with no filename specified
+        let mem = create_mem!();
+        let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
+        let fa = [function_attachment!(
+            format!("file://{}", file_path.display()),
+            "sune",
+            "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
+        )];
+        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let attachment_name = "sune".to_owned();
+        let attachment_bytes = attachment_name.as_bytes();
+        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
+        let attachment_bytes_len = attachment_bytes.len() as u32;
+        let path_ptr = WasmPtr::new(attachment_bytes_len);
+        let expected_path = "attachments/sune";
+        let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
+        let res = map_attachment(
+            &fa,
+            &sandbox,
+            &mem,
+            attachment_name_ptr,
+            attachment_bytes_len,
+            path_ptr,
+            expected_path_bytes_len,
+        );
+        assert!(res.is_ok());
+        let return_path = path_ptr
+            .deref(&mem, 0, expected_path_bytes_len)
+            .unwrap()
+            .iter()
+            .map(|c| c.get())
+            .collect::<Vec<u8>>();
+        let return_path = std::str::from_utf8(&return_path).unwrap();
+        assert_eq!(return_path, expected_path);
+
+        // Test non existing attachment
+        let mem = create_mem!();
+        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let attachment_name = "not-a-thing".to_owned();
+        let attachment_bytes = attachment_name.as_bytes();
+        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
+        let res = map_attachment(
+            &fa,
+            &sandbox,
+            &mem,
+            attachment_name_ptr,
+            attachment_bytes_len,
+            path_ptr,
+            expected_path_bytes_len,
+        );
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            WasiError::FailedToFindAttachment(_)
+        ));
+
+        // Test bad attachment name
+        let mem = create_mem!();
+        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let res = map_attachment(
+            &fa,
+            &sandbox,
+            &mem,
+            attachment_name_ptr,
+            (mem.size().bytes().0 + 1) as u32,
+            path_ptr,
+            expected_path_bytes_len,
+        );
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            WasiError::FailedToReadStringPointer(_)
+        ));
+
+        // Test bad attachment transport
+        let mem = create_mem!();
+        let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
+        let fa = [function_attachment!(
+            "fule://din-mamma",
+            "sune",
+            "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
+        )];
+        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let attachment_name = "sune".to_owned();
+        let attachment_bytes = attachment_name.as_bytes();
+        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
+        let attachment_bytes_len = attachment_bytes.len() as u32;
+        let path_ptr = WasmPtr::new(attachment_bytes_len);
+        let expected_path = "attachments/sune";
+        let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
+        let res = map_attachment(
+            &fa,
+            &sandbox,
+            &mem,
+            attachment_name_ptr,
+            attachment_bytes_len,
+            path_ptr,
+            expected_path_bytes_len,
+        );
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            WasiError::FailedToMapAttachment(..)
+        ));
+    }
+
+    #[test]
+    fn test_get_attachment_path_len() {
+        let mem = create_mem!();
+        let fa = [function_attachment!(
+            "file://doesnt-matter",
+            "sune",
+            "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe",
+            "rune.txt"
+        )];
+        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let attachment_name = "sune".to_owned();
+        let attachment_bytes = attachment_name.as_bytes();
+        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
+        let attachment_bytes_len = attachment_bytes.len() as u32;
+        let path_len_ptr: WasmPtr<u64, Item> = WasmPtr::new(attachment_bytes_len);
+        let res = get_attachment_path_len(
+            &fa,
+            &mem,
+            attachment_name_ptr,
+            attachment_bytes_len,
+            path_len_ptr,
+        );
+        assert!(res.is_ok());
+        let path_len: u64 = path_len_ptr
+            .deref(&mem)
+            .map(|cell| cell.get() as u64)
+            .unwrap();
+        assert_eq!(path_len, "attachments/rune.txt".as_bytes().len() as u64);
+
+        // Test non existing attachment
+        let mem = create_mem!();
+        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let attachment_name = "not-a-thing".to_owned();
+        let attachment_bytes = attachment_name.as_bytes();
+        let path_len_ptr: WasmPtr<u64, Item> = WasmPtr::new(0);
+        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
+        let res = get_attachment_path_len(
+            &fa,
+            &mem,
+            attachment_name_ptr,
+            attachment_bytes_len,
+            path_len_ptr,
+        );
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            WasiError::FailedToFindAttachment(_)
+        ));
+
+        // Test bad attachment name
+        let mem = create_mem!();
+        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
+        let res = get_attachment_path_len(
+            &fa,
+            &mem,
+            attachment_name_ptr,
+            (mem.size().bytes().0 + 1) as u32,
+            path_len_ptr,
+        );
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            WasiError::FailedToReadStringPointer(_)
+        ));
     }
 }

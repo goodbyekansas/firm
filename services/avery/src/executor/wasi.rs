@@ -110,20 +110,22 @@ fn execute_function(
     let results = Arc::new(RwLock::new(v));
     let res = Arc::clone(&results);
     let res2 = Arc::clone(&results);
-    let function_attachments = function_attachments.to_vec();
+    let function_attachments = Arc::new(function_attachments.to_vec());
+    let function_attachments2 = Arc::clone(&function_attachments);
 
     let start_process_logger = logger.new(o!("scope" => "start_process"));
     let run_process_logger = logger.new(o!("scope" => "run_process"));
     let gbk_imports = imports! {
         "gbk" => {
             "get_attachment_path_len" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_len: WasmPtr<u64, Item>| {
-                function::get_attachment_path_len(ctx.memory(0),
+                function::get_attachment_path_len(&function_attachments,
+                                                  ctx.memory(0),
                                                   attachment_name,
                                                   attachment_name_len,
                                                   path_len).to_error_code()
             }),
             "map_attachment" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
-                function::map_attachment(&function_attachments,
+                function::map_attachment(&function_attachments2,
                                          &attachment_sandbox,
                                          ctx.memory(0),
                                          attachment_name,

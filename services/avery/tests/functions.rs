@@ -7,15 +7,16 @@ use avery::{registry::FunctionsRegistryService, FunctionsService};
 use gbk_protocols::{
     functions::{
         functions_registry_server::FunctionsRegistry,
-        functions_server::Functions as FunctionsTrait, ArgumentType, Checksums, ExecuteRequest,
+        functions_server::Functions as FunctionsTrait, ArgumentType, ExecuteRequest,
         ExecutionEnvironment, FunctionArgument, FunctionId, FunctionInput, FunctionOutput,
-        RegisterAttachmentRequest, RegisterRequest,
+        RegisterRequest,
     },
     tonic,
 };
 
 use gbk_protocols_test_helpers::{
-    exec_env, function_input, function_output, list_request, register_request,
+    exec_env, function_input, function_output, list_request, register_attachment_request,
+    register_request,
 };
 
 macro_rules! null_logger {
@@ -101,14 +102,7 @@ macro_rules! functions_service_with_functions {
 macro_rules! register_code_attachment {
     ($service:expr) => {{
         futures::executor::block_on(
-            $service.register_attachment(tonic::Request::new(RegisterAttachmentRequest {
-                name: "code".to_owned(),
-                metadata: HashMap::new(),
-                checksums: Some(Checksums {
-                    sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" // file is empty
-                        .to_owned(),
-                }),
-            })),
+            $service.register_attachment(tonic::Request::new(register_attachment_request!("code"))),
         )
         .unwrap()
         .into_inner()

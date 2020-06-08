@@ -21,6 +21,10 @@ macro_rules! function_attachment {
     }};
 
     ($url:expr, $name:expr, $sha256:expr) => {{
+        $crate::function_attachment!($url, $name, $sha256, "")
+    }};
+
+    ($url:expr, $name:expr, $sha256:expr, $filename:expr) => {{
         gbk_protocols::functions::FunctionAttachment {
             name: $name.to_owned(),
             url: $url.to_owned(),
@@ -31,6 +35,7 @@ macro_rules! function_attachment {
             checksums: Some(gbk_protocols::functions::Checksums {
                 sha256: $sha256.to_owned(),
             }),
+            filename: $filename.to_owned(),
         }
     }};
 }
@@ -162,7 +167,7 @@ macro_rules! exec_env {
 #[macro_export]
 macro_rules! register_attachment_request {
     ($name:expr) => {{
-        $crate::register_attachment_request!($name, "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29", {})
+        $crate::register_attachment_request!($name, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", {})
     }};
 
     ($name:expr, $sha256:expr) => {{
@@ -177,7 +182,8 @@ macro_rules! register_attachment_request {
         gbk_protocols::functions::RegisterAttachmentRequest {
             name: String::from($name),
             metadata: m,
-            checksums: Some(gbk_protocols::functions::Checksums { sha256: String::from($sha256) })
+            checksums: Some(gbk_protocols::functions::Checksums { sha256: String::from($sha256) }),
+            filename: "".to_owned(),
         }
     }};
 }
