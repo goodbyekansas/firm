@@ -90,6 +90,7 @@ message FunctionAttachment {
   string url = 3;
   map<string, string> metadata = 4;
   Checksums checksums = 5;
+  string filename = 6;
 }
 
 message FunctionAttachments {
@@ -117,6 +118,7 @@ message RegisterAttachmentRequest {
   string name = 1;
   map<string, string> metadata = 2;
   Checksums checksums = 3;
+  string filename = 4;
 }
 
 message FunctionId {

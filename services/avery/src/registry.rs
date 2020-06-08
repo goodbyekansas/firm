@@ -456,7 +456,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
 
         let id = Uuid::new_v4();
         functions.insert(
-            id.clone(),
+            id,
             Function {
                 id,
                 name: payload.name,
@@ -518,7 +518,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
 
         let id = Uuid::new_v4();
         function_attachments.insert(
-            id.clone(),
+            id,
             (
                 FunctionAttachment {
                     id: Some(FunctionAttachmentId { id: id.to_string() }),
@@ -526,6 +526,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
                     url: format!("file://{}", path.display()),
                     metadata: payload.metadata,
                     checksums: Some(checksum),
+                    filename: payload.filename,
                 },
                 path,
             ),
