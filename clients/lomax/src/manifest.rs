@@ -79,6 +79,7 @@ struct Attachment {
     path: String,
     metadata: HashMap<String, String>,
     checksums: Checksums,
+    filename: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,6 +181,7 @@ impl FunctionManifest {
                             name: "code".to_owned(),
                             metadata: code.metadata.clone(),
                             checksums: Some(ProtoChecksums::from(&code.checksums)),
+                            filename: "".to_owned(),
                         },
                     })
             })
@@ -196,6 +198,7 @@ impl FunctionManifest {
                         name: n.clone(),
                         metadata: a.metadata.clone(),
                         checksums: Some(ProtoChecksums::from(&a.checksums)),
+                        filename: a.filename.as_ref().unwrap_or(&"".to_owned()).clone(),
                     },
                 })
             })
@@ -377,6 +380,7 @@ mod tests {
 
         [attachments.kalle]
         path = "fabrikam/sune"
+        filename = "kalle.tar.gz"
         metadata = { someTag = "sune", cool = "chorizo korvén" }
         [attachments.kalle.checksums]
         sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
@@ -403,10 +407,13 @@ mod tests {
         assert_eq!(attachment.path, "fabrikam/sune");
         assert_eq!(attachment.metadata.get("someTag").unwrap(), "sune");
         assert_eq!(attachment.metadata.get("cool").unwrap(), "chorizo korvén");
+        assert!(attachment.filename.is_some());
+        assert_eq!(attachment.filename.as_ref().unwrap(), "kalle.tar.gz");
 
         let attachment = val.attachments.get("oran").unwrap();
         assert_eq!(attachment.path, "fabrikam/security");
         assert_eq!(attachment.metadata.get("surname").unwrap(), "jonsson");
+        assert!(attachment.filename.is_none());
     }
 
     #[test]
