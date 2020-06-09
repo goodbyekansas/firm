@@ -19,9 +19,9 @@ impl Sandbox {
                 .map_err(|e| {
                     WasiError::SandboxError(format!("Failed to create sandbox temp folder: {}", e))
                 })?,
-            regex: Regex::new(&format!(r"(^|[=\s;:]){}(\b)", map_dir.display())).map_err(|e| {
-                WasiError::SandboxError(format!("Failed to create regex for sandbox: {}", e))
-            })?,
+            regex: Regex::new(&format!(r#"(^|[=\s;:"]){}(\b)"#, map_dir.display())).map_err(
+                |e| WasiError::SandboxError(format!("Failed to create regex for sandbox: {}", e)),
+            )?,
         })
     }
 
@@ -81,5 +81,15 @@ mod tests {
             format!("sandboxno;{}/yes", sandbox.path().display()),
             sandbox.map("sandboxno;sandbox/yes")
         );
+
+        let attachmentbox = Sandbox::new(Path::new("attachments")).unwrap();
+        assert_eq!(
+            format!(
+                "\'from start_blender import main;main.main(\"{}/menu-json\");\'",
+                attachmentbox.path().display()
+            ),
+            attachmentbox
+                .map("\'from start_blender import main;main.main(\"attachments/menu-json\");\'")
+        )
     }
 }
