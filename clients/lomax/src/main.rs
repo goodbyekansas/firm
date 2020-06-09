@@ -214,7 +214,11 @@ async fn main() -> Result<(), u32> {
         }
 
         Command::Register { manifest } => {
-            let manifest_path = manifest;
+            let manifest_path = if manifest.is_dir() {
+                manifest.join("manifest.toml")
+            } else {
+                manifest
+            };
 
             let manifest = FunctionManifest::parse(&manifest_path).map_err(|e| {
                 println!("\"{}\".", e);
