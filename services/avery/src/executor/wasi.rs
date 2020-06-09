@@ -50,6 +50,11 @@ fn execute_function(
         "using sandbox directory: {}",
         sandbox.path().display()
     );
+    info!(
+        logger,
+        "using sandbox attachments directory: {}",
+        attachment_sandbox.path().display()
+    );
 
     // create stdout and stderr
     let stdout = OpenOptions::new()
