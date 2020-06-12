@@ -190,10 +190,7 @@ impl FunctionsServiceTrait for FunctionsService {
                     code: function_descriptor.code.clone(),
                     arguments: execution_environment.args,
                 },
-                FunctionContext {
-                    arguments: args,
-                    attachments: function_descriptor.attachments,
-                },
+                FunctionContext::new(args, function_descriptor.attachments),
             );
             match res {
                 Ok(ProtoResult::Ok(r)) => validate_results(function.outputs.iter(), &r)

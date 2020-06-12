@@ -24,7 +24,7 @@ use crate::executor::{
 };
 use error::{ToErrorCode, WasiError};
 use gbk_protocols::functions::{
-    execute_response::Result as ProtoResult, ExecutionError, FunctionArgument, FunctionAttachment,
+    execute_response::Result as ProtoResult, ExecutionError,
     FunctionResult, ReturnValue,
 };
 use sandbox::Sandbox;
@@ -34,8 +34,7 @@ fn execute_function(
     function_name: &str,
     _entrypoint: &str,
     code: &[u8],
-    arguments: &[FunctionArgument],
-    function_attachments: &[FunctionAttachment],
+    function_context: FunctionContext
 ) -> Result<Vec<ReturnValue>, String> {
     const ENTRY: &str = "_start";
     let module = compile(code).map_err(|e| format!("failed to compile wasm: {}", e))?;
@@ -109,28 +108,30 @@ fn execute_function(
     let sandboxes2 = sandboxes.clone();
 
     // inject gbk specific functions in the wasm state
-    let a = arguments.to_vec();
-    let a2 = arguments.to_vec();
     let v: Vec<Result<ReturnValue, String>> = Vec::new();
     let results = Arc::new(RwLock::new(v));
     let res = Arc::clone(&results);
     let res2 = Arc::clone(&results);
-    let function_attachments = Arc::new(function_attachments.to_vec());
-    let function_attachments2 = Arc::clone(&function_attachments);
+    let attachment_sandbox = Arc::new(attachment_sandbox);
+
+    let fc0 = Arc::new(function_context);
+    let fc1 = Arc::clone(&fc0);
+    let fc2 = Arc::clone(&fc0);
+    let fc3 = Arc::clone(&fc0);
 
     let start_process_logger = logger.new(o!("scope" => "start_process"));
     let run_process_logger = logger.new(o!("scope" => "run_process"));
     let gbk_imports = imports! {
         "gbk" => {
             "get_attachment_path_len" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_len: WasmPtr<u64, Item>| {
-                function::get_attachment_path_len(&function_attachments,
+                function::get_attachment_path_len(&fc0,
                                                   ctx.memory(0),
                                                   attachment_name,
                                                   attachment_name_len,
                                                   path_len).to_error_code()
             }),
             "map_attachment" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
-                function::map_attachment(&function_attachments2,
+                function::map_attachment(&fc1,
                                          &attachment_sandbox,
                                          ctx.memory(0),
                                          attachment_name,
@@ -147,11 +148,11 @@ fn execute_function(
             }),
 
             "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u64, Item>| {
-                function::get_input_len(ctx.memory(0), key, keylen, value, &a).to_error_code()
+                function::get_input_len(ctx.memory(0), key, keylen, value, &fc2).to_error_code()
             }),
 
             "get_input" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u8, Array>, valuelen: u32| {
-                function::get_input(ctx.memory(0), key, keylen, value, valuelen, &a2).to_error_code()
+                function::get_input(ctx.memory(0), key, keylen, value, valuelen, &fc3).to_error_code()
             }),
 
             "set_output" => func!(move |ctx: &mut Ctx, val: WasmPtr<u8, Array>, vallen: u32| {
@@ -229,8 +230,7 @@ impl FunctionExecutor for WasiExecutor {
             &executor_context.function_name,
             &executor_context.entrypoint,
             &downloaded_code,
-            &function_context.arguments,
-            &function_context.attachments,
+            function_context,
         )
         .map_or_else(
             |e| ProtoResult::Error(ExecutionError { msg: e }),
@@ -273,10 +273,7 @@ mod tests {
                 code: Some(code_file!(include_bytes!("hello.wasm"))),
                 arguments: vec![],
             },
-            FunctionContext {
-                arguments: vec![],
-                attachments: vec![],
-            },
+            FunctionContext::new(vec![], vec![]),
         );
 
         assert!(res.is_ok());

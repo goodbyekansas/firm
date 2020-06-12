@@ -13,7 +13,7 @@ use prost::Message;
 use thiserror::Error;
 
 pub use gbk_protocols::functions::ReturnValue;
-use gbk_protocols::functions::{ArgumentType, FunctionArgument, StartProcessRequest};
+use gbk_protocols::functions::{ArgumentType, FunctionArgument, StartProcessRequest, FunctionAttachment};
 
 #[cfg(all(not(test), not(feature = "mock")))]
 mod raw;
@@ -53,6 +53,9 @@ pub enum Error {
 
     #[error("Failed to find input \"{0}\"")]
     FailedToFindInput(String),
+
+    #[error("Failed to find attachment \"{0}\"")]
+    FailedToFindAttachment(String),
 }
 
 macro_rules! host_call {
@@ -61,9 +64,9 @@ macro_rules! host_call {
     };
 }
 
-pub fn get_attachment_path<S: AsRef<str> + std::fmt::Display>(
+pub fn map_attachment<S: AsRef<str> + std::fmt::Display>(
     attachment_name: S,
-) -> Result<String, Error> {
+) -> Result<PathBuf, Error> {
     let mut attachment_path_bytes_len: u64 = 0;
     host_call!(raw::get_attachment_path_len(
         attachment_name.as_ref().as_ptr(),
@@ -80,13 +83,7 @@ pub fn get_attachment_path<S: AsRef<str> + std::fmt::Display>(
     ))?;
     unsafe { attachment_path_buffer.set_len(attachment_path_bytes_len as usize) };
 
-    String::from_utf8(attachment_path_buffer).map_err(|_| Error::ConversionError())
-}
-
-// TODO: This method should call a method called
-// map_attachment that does not return anything.
-pub fn map_attachment<S: AsRef<str> + std::fmt::Display>(attachment_name: S) -> Result<(), Error> {
-    get_attachment_path(attachment_name).map(|_| ())
+    PathBuf::from(String::from_utf8(attachment_path_buffer).map_err(|_| Error::ConversionError())?)
 }
 
 pub fn start_host_process<S1: AsRef<str>, S2: AsRef<str>>(
@@ -327,7 +324,7 @@ pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
 
 pub mod execution_environment {
 
-    use gbk_protocols::functions::{FunctionArgument, FunctionArguments};
+    use gbk_protocols::functions::{FunctionArgument, FunctionArguments, FunctionAttachment, FunctionAttachments};
     use prost::Message;
 
     use crate::{get_input, Error, FromFunctionArgument};
@@ -340,6 +337,7 @@ pub mod execution_environment {
         sha256: String,
         entrypoint: String,
         args: Vec<FunctionArgument>,
+        pub attachments: Vec<FunctionAttachment>, // TODO should not be pub
     }
 
     impl ExecutionEnvironmentArgs {
@@ -354,6 +352,11 @@ pub mod execution_environment {
                         FunctionArguments::decode(a.as_slice()).map_err(|e| e.into())
                     })?
                     .arguments,
+                attachments: get_input("attachments")
+                .and_then(|a: Vec<u8>| {
+                    FunctionAttachments::decode(a.as_slice()).map_err(|e| e.into())
+                })?
+                .attachments,
             })
         }
 
@@ -389,6 +392,10 @@ pub mod execution_environment {
                 .iter()
                 .find(|a| a.name == key.as_ref())
                 .ok_or_else(|| Error::FailedToFindInput(key.as_ref().to_owned()))
+        }
+
+        pub fn get_attachment_descriptor<S: AsRef<str>>(&self, name: S) -> Result<FunctionAttachment, Error>{
+            self.attachments.iter().find(|a| a.name = name.as_ref()).ok_or_else(|| Error::FailedToFindAttachment(name.as_ref().to_owned()))?;
         }
     }
 }

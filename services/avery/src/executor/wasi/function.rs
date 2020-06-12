@@ -5,8 +5,8 @@ use prost::Message;
 use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
 use super::sandbox::Sandbox;
-use crate::executor::AttachmentDownload;
-use gbk_protocols::functions::{FunctionArgument, FunctionAttachment, ReturnValue};
+use crate::executor::{FunctionContext, AttachmentDownload};
+use gbk_protocols::functions::ReturnValue;
 
 pub trait WasmPtrExt<'a> {
     fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]>;
@@ -23,7 +23,7 @@ impl<'a> WasmPtrExt<'a> for WasmPtr<u8, Array> {
 }
 
 pub fn get_attachment_path_len(
-    attachments: &[FunctionAttachment],
+    function_context: &FunctionContext,
     vm_memory: &Memory,
     attachment_name: WasmPtr<u8, Array>,
     attachment_name_len: u32,
@@ -33,10 +33,7 @@ pub fn get_attachment_path_len(
         .get_utf8_string(vm_memory, attachment_name_len)
         .ok_or_else(|| WasiError::FailedToReadStringPointer("attachment_name".to_owned()))?;
 
-    let attachment_data = attachments
-        .iter()
-        .find(|a| a.name == attachment_key)
-        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
+    let attachment_data = function_context.get_attachment(attachment_key).ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
 
     let attachment_filename = if attachment_data.filename.is_empty() {
         attachment_key
@@ -63,7 +60,7 @@ pub fn get_attachment_path_len(
 }
 
 pub fn map_attachment(
-    attachments: &[FunctionAttachment],
+    function_context: &FunctionContext,
     sandbox: &Sandbox,
     vm_memory: &Memory,
     attachment_name: WasmPtr<u8, Array>,
@@ -75,9 +72,7 @@ pub fn map_attachment(
         .get_utf8_string(vm_memory, attachment_name_len)
         .ok_or_else(|| WasiError::FailedToReadStringPointer("attachment_name".to_owned()))?;
 
-    let attachment_data = attachments
-        .iter()
-        .find(|a| a.name == attachment_key)
+    let attachment_data = function_context.get_attachment(attachment_key)
         .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
 
     let attachment_filename = if attachment_data.filename.is_empty() {
@@ -127,15 +122,13 @@ pub fn get_input_len(
     key: WasmPtr<u8, Array>,
     keylen: u32,
     value: WasmPtr<u64, Item>,
-    arguments: &[FunctionArgument],
+    function_context: &FunctionContext,
 ) -> WasiResult<()> {
     let key = key
         .get_utf8_string(vm_memory, keylen)
         .ok_or_else(|| WasiError::FailedToReadStringPointer("key".to_owned()))?;
 
-    arguments
-        .iter()
-        .find(|a| a.name == key)
+    function_context.get_argument(key)
         .ok_or_else(|| WasiError::FailedToFindKey(key.to_string()))
         .and_then(|a| {
             let len = a.encoded_len();
@@ -156,15 +149,13 @@ pub fn get_input(
     keylen: u32,
     value: WasmPtr<u8, Array>,
     valuelen: u32,
-    arguments: &[FunctionArgument],
+    function_context: &FunctionContext,
 ) -> WasiResult<()> {
     let key = key
         .get_utf8_string(vm_memory, keylen)
         .ok_or_else(|| WasiError::FailedToReadStringPointer("key".to_owned()))?;
 
-    arguments
-        .iter()
-        .find(|a| a.name == key)
+    function_context.get_argument(key)
         .ok_or_else(|| WasiError::FailedToFindKey(key.to_string()))
         .and_then(|a| {
             value
@@ -209,7 +200,7 @@ pub fn set_error(vm_memory: &Memory, msg: WasmPtr<u8, Array>, msglen: u32) -> Wa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gbk_protocols::functions::ArgumentType;
+    use gbk_protocols::functions::{ArgumentType, FunctionArgument};
     use gbk_protocols_test_helpers::function_attachment;
 
     use tempfile::Builder;
@@ -246,11 +237,11 @@ mod tests {
             key_ptr,
             5 as u32,
             val,
-            &[FunctionArgument {
+            &FunctionContext::new(vec![FunctionArgument {
                 name: "chorizo korvén".to_owned(),
                 r#type: ArgumentType::Bytes as i32,
                 value: vec![1, 2, 3],
-            }],
+            }], vec![]),
         );
 
         assert!(res.is_err());
@@ -273,11 +264,11 @@ mod tests {
             key_ptr,
             arg_name.len() as u32,
             val,
-            &[FunctionArgument {
+            &FunctionContext::new(vec![FunctionArgument {
                 name: "chorizo korvén".to_owned(),
                 r#type: ArgumentType::Bytes as i32,
                 value: vec![1, 2, 3],
-            }],
+            }], vec![]),
         );
 
         assert!(res.is_err());
@@ -302,7 +293,7 @@ mod tests {
             key_ptr,
             arg_name.len() as u32,
             val,
-            &[function_argument.clone()],
+            &FunctionContext::new(vec![function_argument.clone()], vec![]),
         );
         assert!(res.is_ok());
 
@@ -328,7 +319,7 @@ mod tests {
             key_ptr,
             arg_name.len() as u32,
             val,
-            &[function_argument.clone()],
+            &FunctionContext::new(vec![function_argument.clone()], vec![]),
         );
 
         assert!(res.is_err());
@@ -345,7 +336,7 @@ mod tests {
         let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(std::u32::MAX);
         let value_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
 
-        let res = get_input(&mem, key_ptr, 5 as u32, value_ptr, 0 as u32, &vec![]);
+        let res = get_input(&mem, key_ptr, 5 as u32, value_ptr, 0 as u32, &FunctionContext::default());
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
@@ -364,7 +355,7 @@ mod tests {
             key_name.len() as u32,
             WasmPtr::new(0),
             0 as u32,
-            &vec![],
+            &FunctionContext::new(vec![], vec![]),
         );
 
         assert!(res.is_err());
@@ -388,7 +379,7 @@ mod tests {
             key_name.len() as u32,
             WasmPtr::new(std::u32::MAX),
             1 as u32,
-            &vec![function_argument],
+            &FunctionContext::new(vec![function_argument], vec![]),
         );
 
         assert!(res.is_err());
@@ -418,7 +409,7 @@ mod tests {
             key_name.len() as u32,
             value_ptr,
             (encoded_len - 1) as u32,
-            &vec![function_argument],
+            &FunctionContext::new(vec![function_argument], vec![]),
         );
 
         assert!(res.is_err());
@@ -451,7 +442,7 @@ mod tests {
             key_name.len() as u32,
             value_ptr,
             encoded_len as u32,
-            &vec![function_argument],
+            &FunctionContext::new(vec![function_argument], vec![]),
         );
 
         assert!(res.is_ok());
@@ -518,12 +509,13 @@ mod tests {
         std::fs::write(file_path, "hejhej").unwrap();
         let mem = create_mem!();
         let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
-        let fa = [function_attachment!(
+        let fc = FunctionContext::new(vec![], vec![function_attachment!(
             format!("file://{}", file_path.display()),
             "sune",
             "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe",
             "bune.txt"
-        )];
+        )]);
+
         let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
         let attachment_name = "sune".to_owned();
         let attachment_bytes = attachment_name.as_bytes();
@@ -534,7 +526,7 @@ mod tests {
         let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
         // Test that we get the expected file path
         let res = map_attachment(
-            &fa,
+            &fc,
             &sandbox,
             &mem,
             attachment_name_ptr,
@@ -556,11 +548,11 @@ mod tests {
         // Test attachment with no filename specified
         let mem = create_mem!();
         let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
-        let fa = [function_attachment!(
+        let fc = FunctionContext::new(vec![], vec![function_attachment!(
             format!("file://{}", file_path.display()),
             "sune",
             "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
-        )];
+        )]);
         let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
         let attachment_name = "sune".to_owned();
         let attachment_bytes = attachment_name.as_bytes();
@@ -570,7 +562,7 @@ mod tests {
         let expected_path = "attachments/sune";
         let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
         let res = map_attachment(
-            &fa,
+            &fc,
             &sandbox,
             &mem,
             attachment_name_ptr,
@@ -595,7 +587,7 @@ mod tests {
         let attachment_bytes = attachment_name.as_bytes();
         write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
         let res = map_attachment(
-            &fa,
+            &fc,
             &sandbox,
             &mem,
             attachment_name_ptr,
@@ -613,7 +605,7 @@ mod tests {
         let mem = create_mem!();
         let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
         let res = map_attachment(
-            &fa,
+            &fc,
             &sandbox,
             &mem,
             attachment_name_ptr,
@@ -630,11 +622,11 @@ mod tests {
         // Test bad attachment transport
         let mem = create_mem!();
         let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
-        let fa = [function_attachment!(
+        let fc = FunctionContext::new(vec![], vec![function_attachment!(
             "fule://din-mamma",
             "sune",
             "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
-        )];
+        )]);
         let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
         let attachment_name = "sune".to_owned();
         let attachment_bytes = attachment_name.as_bytes();
@@ -644,7 +636,7 @@ mod tests {
         let expected_path = "attachments/sune";
         let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
         let res = map_attachment(
-            &fa,
+            &fc,
             &sandbox,
             &mem,
             attachment_name_ptr,
@@ -662,12 +654,13 @@ mod tests {
     #[test]
     fn test_get_attachment_path_len() {
         let mem = create_mem!();
-        let fa = [function_attachment!(
+        let fc = FunctionContext::new(vec![], vec![function_attachment!(
             "file://doesnt-matter",
             "sune",
             "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe",
             "rune.txt"
-        )];
+        )]);
+
         let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
         let attachment_name = "sune".to_owned();
         let attachment_bytes = attachment_name.as_bytes();
@@ -675,7 +668,7 @@ mod tests {
         let attachment_bytes_len = attachment_bytes.len() as u32;
         let path_len_ptr: WasmPtr<u64, Item> = WasmPtr::new(attachment_bytes_len);
         let res = get_attachment_path_len(
-            &fa,
+            &fc,
             &mem,
             attachment_name_ptr,
             attachment_bytes_len,
@@ -696,12 +689,13 @@ mod tests {
         let path_len_ptr: WasmPtr<u64, Item> = WasmPtr::new(0);
         write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
         let res = get_attachment_path_len(
-            &fa,
+            &fc,
             &mem,
             attachment_name_ptr,
             attachment_bytes_len,
             path_len_ptr,
         );
+
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
@@ -712,7 +706,7 @@ mod tests {
         let mem = create_mem!();
         let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
         let res = get_attachment_path_len(
-            &fa,
+            &fc,
             &mem,
             attachment_name_ptr,
             (mem.size().bytes().0 + 1) as u32,
