@@ -168,8 +168,8 @@ impl FunctionsServiceTrait for FunctionsService {
             })?;
 
         // lookup executor and run
-        let mut tags = HashMap::new();
-        tags.insert("type".to_owned(), "execution-environment".to_owned());
+        let mut metadata = HashMap::new();
+        metadata.insert("type".to_owned(), "execution-environment".to_owned());
         lookup_executor(
             self.log.new(o!()),
             &execution_environment.name,

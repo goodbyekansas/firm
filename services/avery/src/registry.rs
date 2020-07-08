@@ -40,7 +40,7 @@ struct Function {
     execution_environment: ExecutionEnvironment,
     inputs: Vec<FunctionInput>,
     outputs: Vec<FunctionOutput>,
-    tags: HashMap<String, String>,
+    metadata: HashMap<String, String>,
     code: Option<FunctionAttachmentId>,
     attachments: Vec<FunctionAttachmentId>,
 }
@@ -270,7 +270,7 @@ impl FunctionsRegistryService {
                 }),
                 name: f.name.clone(),
                 version: f.version.to_string(),
-                tags: f.tags.clone(),
+                metadata: f.metadata.clone(),
                 inputs: f.inputs.clone(),
                 outputs: f.outputs.clone(),
             }),
@@ -295,10 +295,10 @@ impl FunctionsRegistry for FunctionsRegistryService {
         })?;
 
         let payload = list_request.into_inner();
-        let required_tags = if payload.tags_filter.is_empty() {
+        let required_metadata = if payload.metadata_filter.is_empty() {
             None
         } else {
-            Some(payload.tags_filter.clone())
+            Some(payload.metadata_filter.clone())
         };
         let offset: usize = payload.offset as usize;
         let limit: usize = payload.limit as usize;
@@ -321,9 +321,9 @@ impl FunctionsRegistry for FunctionsRegistryService {
                     && version_req
                         .as_ref()
                         .map_or(true, |ver_req| ver_req.matches(&func.version))
-                    && required_tags.as_ref().map_or(true, |filters| {
+                    && required_metadata.as_ref().map_or(true, |filters| {
                         filters.iter().all(|filter| {
-                            func.tags
+                            func.metadata
                                 .iter()
                                 .any(|(k, v)| filter.0 == k && filter.1 == v)
                         })
@@ -462,7 +462,7 @@ impl FunctionsRegistry for FunctionsRegistryService {
                 name: payload.name,
                 version,
                 execution_environment,
-                tags: payload.tags,
+                metadata: payload.metadata,
                 inputs: payload.inputs,
                 outputs: payload.outputs,
                 code: payload.code,

@@ -100,11 +100,11 @@ impl Display for Displayer<'_, FunctionDescriptor> {
                         .map(|i| writeln!(f, "{}{}", t2, i.display()))
                         .collect::<fmt::Result>()?;
                 }
-                if k.tags.is_empty() {
-                    writeln!(f, "\ttags:    [n/a]")
+                if k.metadata.is_empty() {
+                    writeln!(f, "\tmetadata:    [n/a]")
                 } else {
-                    writeln!(f, "\ttags:")?;
-                    k.tags
+                    writeln!(f, "\tmetadata:")?;
+                    k.metadata
                         .clone()
                         .iter()
                         .map(|(x, y)| writeln!(f, "{}{}:{}", t2, x, y))
@@ -143,11 +143,11 @@ impl Display for Displayer<'_, Function> {
                 .map(|i| writeln!(f, "\t\t {}", i.display()))
                 .collect::<fmt::Result>()?;
         }
-        if self.tags.is_empty() {
-            writeln!(f, "\ttags:    n/a")
+        if self.metadata.is_empty() {
+            writeln!(f, "\tmetadata:    n/a")
         } else {
-            writeln!(f, "\ttags:")?;
-            self.tags
+            writeln!(f, "\tmetadata:")?;
+            self.metadata
                 .clone()
                 .iter()
                 .map(|(x, y)| writeln!(f, "\t\t {}:{}", x, y))

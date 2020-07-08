@@ -189,7 +189,7 @@ async fn main() -> Result<(), u32> {
             println!("Listing functions");
             let list_request = ListRequest {
                 name_filter: String::new(),
-                tags_filter: HashMap::new(),
+                metadata_filter: HashMap::new(),
                 limit: 25,
                 offset: 0,
                 exact_name_match: false,
