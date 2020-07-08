@@ -369,6 +369,7 @@ fn run() -> Result<(), BendiniError> {
                 let list_request = ListRequest {
                     name_filter: String::new(),
                     metadata_filter: HashMap::new(),
+                    metadata_key_filter: vec![],
                     exact_name_match: false,
                     order_by: OrderingKey::Name as i32,
                     order_direction: OrderingDirection::Ascending as i32,
@@ -405,6 +406,7 @@ fn run() -> Result<(), BendiniError> {
                 let list_request = ListRequest {
                     name_filter: String::new(),
                     metadata_filter: HashMap::new(),
+                    metadata_key_filter: vec![],
                     exact_name_match: false,
                     order_by: OrderingKey::Name as i32,
                     order_direction: OrderingDirection::Ascending as i32,
@@ -452,6 +454,7 @@ fn run() -> Result<(), BendiniError> {
                         .block_on(client.list(Request::new(ListRequest {
                             name_filter: function_name.to_owned(),
                             metadata_filter: HashMap::new(),
+                            metadata_key_filter: vec![],
                             offset: 0,
                             limit: 1,
                             exact_name_match: true,

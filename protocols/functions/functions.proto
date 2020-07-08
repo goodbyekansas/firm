@@ -35,6 +35,7 @@ message ListRequest {
   VersionRequirement version_requirement = 6;
   OrderingDirection order_direction = 7;
   OrderingKey order_by = 8;
+  repeated string metadata_key_filter = 9;
 }
 
 message GetLatestVersionRequest {

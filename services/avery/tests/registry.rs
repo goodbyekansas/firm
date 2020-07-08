@@ -123,6 +123,68 @@ fn test_list_metadata_filtering() {
 }
 
 #[test]
+fn test_list_metadata_key_filtering() {
+    let fr = registry!();
+
+    futures::executor::block_on(
+        fr.register(tonic::Request::new(register_request!("random-1", "5.87.1"))),
+    )
+    .unwrap();
+    futures::executor::block_on(fr.register(tonic::Request::new(register_request!(
+        "words",
+        "0.1.0",
+        exec_env!(),
+        {"potato" => "foot", "fish" => "green"}
+    ))))
+    .unwrap();
+
+    // Test filtering without filtering
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(list_request!())));
+
+    assert!(list_request.is_ok());
+    assert_eq!(2, list_request.unwrap().into_inner().functions.len());
+
+    // Test filtering with metadata
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(list_request!(
+        "",
+        {},
+        [format!("potato")]
+    ))));
+
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(1, functions.len());
+    assert_eq!(
+        "words",
+        functions.first().unwrap().function.as_ref().unwrap().name
+    );
+
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(list_request!(
+        "",
+        {},
+        ["fish".to_owned()]
+    ))));
+
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(1, functions.len());
+    assert_eq!(
+        "words",
+        functions.first().unwrap().function.as_ref().unwrap().name
+    );
+
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(list_request!(
+        "",
+        {},
+        ["foot".to_owned()]
+    ))));
+
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(0, functions.len());
+}
+
+#[test]
 fn test_offset_and_limit() {
     let fr = registry!();
     let count: usize = 10;
@@ -198,6 +260,7 @@ fn test_sorting() {
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
         name_filter: "my-name-a".to_owned(),
         metadata_filter: HashMap::new(),
+        metadata_key_filter: vec![],
         offset: 0,
         limit: 10,
         exact_name_match: true,
@@ -224,6 +287,7 @@ fn test_sorting() {
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
         name_filter: "my-name-a".to_owned(),
         metadata_filter: HashMap::new(),
+        metadata_key_filter: vec![],
         offset: 0,
         limit: 10,
         exact_name_match: true,
@@ -267,6 +331,7 @@ fn test_sorting() {
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
         name_filter: "sune".to_owned(),
         metadata_filter: HashMap::new(),
+        metadata_key_filter: vec![],
         offset: 0,
         limit: 10,
         exact_name_match: false,
