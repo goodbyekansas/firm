@@ -300,6 +300,11 @@ impl FunctionsRegistry for FunctionsRegistryService {
         } else {
             Some(payload.metadata_filter.clone())
         };
+        let required_metadata_keys = if payload.metadata_key_filter.is_empty() {
+            None
+        } else {
+            Some(payload.metadata_key_filter.clone())
+        };
         let offset: usize = payload.offset as usize;
         let limit: usize = payload.limit as usize;
         let version_req = payload
@@ -327,6 +332,9 @@ impl FunctionsRegistry for FunctionsRegistryService {
                                 .iter()
                                 .any(|(k, v)| filter.0 == k && filter.1 == v)
                         })
+                    })
+                    && required_metadata_keys.as_ref().map_or(true, |keys| {
+                        keys.iter().all(|key| func.metadata.contains_key(key))
                     })
             })
             .collect::<Vec<&Function>>();

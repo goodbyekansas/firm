@@ -202,11 +202,20 @@ macro_rules! list_request {
         $crate::list_request!($name, 100, 0, {$($key => $value),*})
     }};
 
+    ($name:expr, {$($key:expr => $value:expr),*}, [$($key_only:expr),*]) => {{
+        $crate::list_request!($name, 100, 0, {$($key => $value),*}, [$($key_only),*])
+    }};
+
     ($name:expr, $limit:expr, {$($key:expr => $value:expr),*}) => {{
         $crate::list_request!($name, $limit, 0, {$($key => $value),*})
     }};
 
     ($name:expr, $limit:expr, $offset:expr, {$($key:expr => $value:expr),*}) => {{
+        $crate::list_request!($name, $limit, $offset, {$($key => $value),*}, [])
+    }};
+
+    ($name:expr, $limit:expr, $offset:expr, {$($key:expr => $value:expr),*}, [$($only_key:expr),*]) =>
+    {{
         let mut metadata = ::std::collections::HashMap::new();
         $(
             metadata.insert(String::from($key), String::from($value));
@@ -214,6 +223,7 @@ macro_rules! list_request {
         gbk_protocols::functions::ListRequest {
             name_filter: String::from($name),
             metadata_filter: metadata,
+            metadata_key_filter: vec![$($only_key),*],
             offset: $offset as u32,
             limit: $limit as u32,
             exact_name_match: false,

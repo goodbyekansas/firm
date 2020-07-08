@@ -222,6 +222,7 @@ async fn get_function_with_execution_environment(
         .list(tonic::Request::new(ListRequest {
             name_filter: "".to_owned(),
             metadata_filter: execution_env_metadata,
+            metadata_key_filter: vec![],
             offset: 0,
             limit: 1,
             exact_name_match: false,
