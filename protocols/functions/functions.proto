@@ -28,7 +28,7 @@ enum OrderingKey { NAME = 0; }
 
 message ListRequest {
   string name_filter = 1;
-  map<string, string> tags_filter = 2;
+  map<string, string> metadata_filter = 2;
   uint32 offset = 3;
   uint32 limit = 4;
   bool exact_name_match = 5;
@@ -68,14 +68,14 @@ message Function {
   FunctionId id = 1;
   string name = 2;
   string version = 3;
-  map<string, string> tags = 4;
+  map<string, string> metadata = 4;
   repeated FunctionInput inputs = 5;
   repeated FunctionOutput outputs = 6;
 }
 
 message RegisterRequest {
   string name = 1;
-  map<string, string> tags = 2;
+  map<string, string> metadata = 2;
   repeated FunctionInput inputs = 3;
   repeated FunctionOutput outputs = 4;
   FunctionAttachmentId code = 5;

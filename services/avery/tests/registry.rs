@@ -87,7 +87,7 @@ fn test_list_functions() {
 }
 
 #[test]
-fn test_list_tag_filtering() {
+fn test_list_metadata_filtering() {
     let fr = registry!();
 
     futures::executor::block_on(
@@ -108,7 +108,7 @@ fn test_list_tag_filtering() {
     assert!(list_request.is_ok());
     assert_eq!(2, list_request.unwrap().into_inner().functions.len());
 
-    // Test filtering with tags
+    // Test filtering with metadata
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(
         list_request!("", {"a" => "neo", "b" => "smith"}),
     )));
@@ -197,7 +197,7 @@ fn test_sorting() {
     // Descending
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
         name_filter: "my-name-a".to_owned(),
-        tags_filter: HashMap::new(),
+        metadata_filter: HashMap::new(),
         offset: 0,
         limit: 10,
         exact_name_match: true,
@@ -223,7 +223,7 @@ fn test_sorting() {
     // Ascending
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
         name_filter: "my-name-a".to_owned(),
-        tags_filter: HashMap::new(),
+        metadata_filter: HashMap::new(),
         offset: 0,
         limit: 10,
         exact_name_match: true,
@@ -266,7 +266,7 @@ fn test_sorting() {
     .unwrap();
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(ListRequest {
         name_filter: "sune".to_owned(),
-        tags_filter: HashMap::new(),
+        metadata_filter: HashMap::new(),
         offset: 0,
         limit: 10,
         exact_name_match: false,

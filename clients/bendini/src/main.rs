@@ -118,11 +118,11 @@ impl DisplayColored for Function {
                 })
                 .collect::<std::io::Result<()>>()?;
         }
-        if self.tags.is_empty() {
-            writeln!(f, "\ttags:    [n/a]")
+        if self.metadata.is_empty() {
+            writeln!(f, "\tmetadata:    [n/a]")
         } else {
-            writeln!(f, "\ttags:")?;
-            self.tags
+            writeln!(f, "\tmetadata:")?;
+            self.metadata
                 .clone()
                 .iter()
                 .map(|(x, y)| writeln!(f, "\t\t {}:{}", x, y))
@@ -368,7 +368,7 @@ fn run() -> Result<(), BendiniError> {
             if pipeable_output {
                 let list_request = ListRequest {
                     name_filter: String::new(),
-                    tags_filter: HashMap::new(),
+                    metadata_filter: HashMap::new(),
                     exact_name_match: false,
                     order_by: OrderingKey::Name as i32,
                     order_direction: OrderingDirection::Ascending as i32,
@@ -404,7 +404,7 @@ fn run() -> Result<(), BendiniError> {
                 stdout.reset()?;
                 let list_request = ListRequest {
                     name_filter: String::new(),
-                    tags_filter: HashMap::new(),
+                    metadata_filter: HashMap::new(),
                     exact_name_match: false,
                     order_by: OrderingKey::Name as i32,
                     order_direction: OrderingDirection::Ascending as i32,
@@ -451,7 +451,7 @@ fn run() -> Result<(), BendiniError> {
                     Ok(basic_rt
                         .block_on(client.list(Request::new(ListRequest {
                             name_filter: function_name.to_owned(),
-                            tags_filter: HashMap::new(),
+                            metadata_filter: HashMap::new(),
                             offset: 0,
                             limit: 1,
                             exact_name_match: true,

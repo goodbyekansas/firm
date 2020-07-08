@@ -65,7 +65,7 @@ pub struct FunctionManifest {
     execution_environment: ExecutionEnvironment,
 
     #[serde(default)]
-    tags: HashMap<String, String>,
+    metadata: HashMap<String, String>,
 
     #[serde(default)]
     attachments: HashMap<String, Attachment>,
@@ -211,7 +211,7 @@ impl From<&FunctionManifest> for RegisterRequest {
         RegisterRequest {
             name: fm.name.clone(),
             version: fm.version.clone(),
-            tags: fm.tags.clone(),
+            metadata: fm.metadata.clone(),
             inputs: fm
                 .inputs
                 .iter()
@@ -381,7 +381,7 @@ mod tests {
         [attachments.kalle]
         path = "fabrikam/sune"
         filename = "kalle.tar.gz"
-        metadata = { someTag = "sune", cool = "chorizo korvén" }
+        metadata = { someMetadata = "sune", cool = "chorizo korvén" }
         [attachments.kalle.checksums]
         sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
 
@@ -405,7 +405,7 @@ mod tests {
         let attachment = val.attachments.get("kalle").unwrap();
 
         assert_eq!(attachment.path, "fabrikam/sune");
-        assert_eq!(attachment.metadata.get("someTag").unwrap(), "sune");
+        assert_eq!(attachment.metadata.get("someMetadata").unwrap(), "sune");
         assert_eq!(attachment.metadata.get("cool").unwrap(), "chorizo korvén");
         assert!(attachment.filename.is_some());
         assert_eq!(attachment.filename.as_ref().unwrap(), "kalle.tar.gz");
@@ -489,7 +489,7 @@ mod tests {
 
         [attachments.kalle]
         path = "{}"
-        metadata = {{ someTag = "sune", cool = "chorizo korvén" }}
+        metadata = {{ someMetadata = "sune", cool = "chorizo korvén" }}
         [attachments.kalle.checksums]
         sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
 
@@ -521,7 +521,7 @@ mod tests {
                 .unwrap(),
             &AttachmentInfo {
                 path: fkalle.path().canonicalize().unwrap(),
-                request: register_attachment_request!("kalle", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"someTag" => "sune", "cool" => "chorizo korvén"})
+                request: register_attachment_request!("kalle", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"someMetadata" => "sune", "cool" => "chorizo korvén"})
             }
         );
         assert_eq!(

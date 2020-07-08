@@ -214,14 +214,14 @@ async fn get_function_with_execution_environment(
     exec_env: &str,
     version_requirement: Option<VersionReq>,
 ) -> Option<FunctionDescriptor> {
-    let mut execution_env_tags = HashMap::new();
-    execution_env_tags.insert("type".to_owned(), "execution-environment".to_owned());
-    execution_env_tags.insert("execution-environment".to_owned(), exec_env.to_owned());
+    let mut execution_env_metadata = HashMap::new();
+    execution_env_metadata.insert("type".to_owned(), "execution-environment".to_owned());
+    execution_env_metadata.insert("execution-environment".to_owned(), exec_env.to_owned());
 
     let result = registry
         .list(tonic::Request::new(ListRequest {
             name_filter: "".to_owned(),
-            tags_filter: execution_env_tags,
+            metadata_filter: execution_env_metadata,
             offset: 0,
             limit: 1,
             exact_name_match: false,
@@ -949,7 +949,7 @@ mod tests {
                     }),
                     name: "wienerbröööööööö".to_owned(),
                     version: "2019.3-5-PR2".to_owned(),
-                    tags: HashMap::new(),
+                    metadata: HashMap::new(),
                     inputs: vec![],
                     outputs: vec![],
                 }),
@@ -1037,7 +1037,7 @@ mod tests {
                     }),
                     name: "mandelkubb".to_owned(),
                     version: "2022.1-5-PR50".to_owned(),
-                    tags: HashMap::new(),
+                    metadata: HashMap::new(),
                     inputs: vec![],
                     outputs: vec![],
                 }),
@@ -1088,23 +1088,23 @@ mod tests {
         ));
 
         // get function executor
-        let mut wasi_executor_tags = HashMap::new();
-        wasi_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
-        wasi_executor_tags.insert(
+        let mut wasi_executor_metadata = HashMap::new();
+        wasi_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
+        wasi_executor_metadata.insert(
             "execution-environment".to_owned(),
             "oran-malifant".to_owned(),
         );
 
-        let mut nested_executor_tags = HashMap::new();
-        nested_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
-        nested_executor_tags.insert(
+        let mut nested_executor_metadata = HashMap::new();
+        nested_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
+        nested_executor_metadata.insert(
             "execution-environment".to_owned(),
             "precious-granag".to_owned(),
         );
 
-        let mut broken_executor_tags = HashMap::new();
-        broken_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
-        broken_executor_tags.insert(
+        let mut broken_executor_metadata = HashMap::new();
+        broken_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
+        broken_executor_metadata.insert(
             "execution-environment".to_owned(),
             "broken-chain-executor".to_owned(),
         );
@@ -1119,7 +1119,7 @@ mod tests {
                 code: None,
                 name: "oran-func".to_owned(),
                 version: "0.1.1".to_owned(),
-                tags: wasi_executor_tags,
+                metadata: wasi_executor_metadata,
                 inputs: vec![],
                 outputs: vec![],
                 attachment_ids: vec![],
@@ -1133,7 +1133,7 @@ mod tests {
                 code: None,
                 name: "precious-granag".to_owned(),
                 version: "8.1.5".to_owned(),
-                tags: nested_executor_tags,
+                metadata: nested_executor_metadata,
                 inputs: vec![],
                 outputs: vec![],
                 attachment_ids: vec![],
@@ -1147,7 +1147,7 @@ mod tests {
                 code: None,
                 name: "precious-granag".to_owned(),
                 version: "3.2.2".to_owned(),
-                tags: broken_executor_tags,
+                metadata: broken_executor_metadata,
                 inputs: vec![],
                 outputs: vec![],
                 attachment_ids: vec![],
@@ -1163,7 +1163,7 @@ mod tests {
             futures::executor::block_on(lookup_executor(null_logger!(), "oran-malifant", &fr));
         assert!(res.is_ok());
 
-        // Get two stage executor
+        // Get two smetadatae executor
         let res =
             futures::executor::block_on(lookup_executor(null_logger!(), "precious-granag", &fr));
         assert!(res.is_ok());
@@ -1197,17 +1197,17 @@ mod tests {
         ));
 
         // get function executor
-        let mut wasi_executor_tags = HashMap::new();
-        wasi_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
-        wasi_executor_tags.insert("execution-environment".to_owned(), "aa-exec".to_owned());
+        let mut wasi_executor_metadata = HashMap::new();
+        wasi_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
+        wasi_executor_metadata.insert("execution-environment".to_owned(), "aa-exec".to_owned());
 
-        let mut nested_executor_tags = HashMap::new();
-        nested_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
-        nested_executor_tags.insert("execution-environment".to_owned(), "bb-exec".to_owned());
+        let mut nested_executor_metadata = HashMap::new();
+        nested_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
+        nested_executor_metadata.insert("execution-environment".to_owned(), "bb-exec".to_owned());
 
-        let mut broken_executor_tags = HashMap::new();
-        broken_executor_tags.insert("type".to_owned(), "execution-environment".to_owned());
-        broken_executor_tags.insert("execution-environment".to_owned(), "cc-exec".to_owned());
+        let mut broken_executor_metadata = HashMap::new();
+        broken_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
+        broken_executor_metadata.insert("execution-environment".to_owned(), "cc-exec".to_owned());
 
         vec![
             register_request!(

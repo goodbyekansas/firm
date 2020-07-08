@@ -95,16 +95,16 @@ macro_rules! function_output {
 #[macro_export]
 macro_rules! register_request {
     ($name:expr, [$($input:expr),*], [$($output:expr),*], {$($key:expr => $value:expr),*}, $code:expr, $exec_env:expr) => {{
-        let mut tags = ::std::collections::HashMap::new();
+        let mut metadata = ::std::collections::HashMap::new();
         $(
-            tags.insert(String::from($key), String::from($value));
+            metadata.insert(String::from($key), String::from($value));
         )*
         gbk_protocols::functions::RegisterRequest {
             name: String::from($name),
             execution_environment: ::std::option::Option::from($exec_env),
             code: ::std::option::Option::from($code),
             version: "0.1.0".to_owned(),
-            tags,
+            metadata,
             inputs: vec![$($input),*],
             outputs: vec![$($output),*],
             attachment_ids: vec![],
@@ -138,7 +138,7 @@ macro_rules! register_request {
             execution_environment: ::std::option::Option::from($exe_env),
             code: $code,
             version: String::from($version),
-            tags: m,
+            metadata: m,
             inputs: vec![],
             outputs: vec![],
             attachment_ids: vec![$(
@@ -207,13 +207,13 @@ macro_rules! list_request {
     }};
 
     ($name:expr, $limit:expr, $offset:expr, {$($key:expr => $value:expr),*}) => {{
-        let mut tags = ::std::collections::HashMap::new();
+        let mut metadata = ::std::collections::HashMap::new();
         $(
-            tags.insert(String::from($key), String::from($value));
+            metadata.insert(String::from($key), String::from($value));
         )*
         gbk_protocols::functions::ListRequest {
             name_filter: String::from($name),
-            tags_filter: tags,
+            metadata_filter: metadata,
             offset: $offset as u32,
             limit: $limit as u32,
             exact_name_match: false,

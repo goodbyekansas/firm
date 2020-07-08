@@ -41,7 +41,7 @@ macro_rules! functions_service_with_functions {
             RegisterRequest {
                 name: "hello-world".to_owned(),
                 version: "0.5.1-beta".to_owned(),
-                tags: HashMap::with_capacity(0),
+                metadata: HashMap::with_capacity(0),
                 inputs: Vec::with_capacity(0),
                 outputs: Vec::with_capacity(0),
                 code: None,
@@ -55,7 +55,7 @@ macro_rules! functions_service_with_functions {
             RegisterRequest {
                 name: "say-hello-yourself".to_owned(),
                 version: "1.6.8".to_owned(),
-                tags: HashMap::with_capacity(0),
+                metadata: HashMap::with_capacity(0),
                 inputs: vec![
                     FunctionInput {
                         name: "say".to_string(),
