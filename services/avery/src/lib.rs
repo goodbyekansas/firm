@@ -11,7 +11,7 @@ use slog::{o, Logger};
 // crate / internal includes
 use executor::{
     get_execution_env_inputs, lookup_executor, validate_args, validate_results, ExecutorContext,
-    FunctionContext,
+    FunctionContextExt,
 };
 
 use registry::FunctionsRegistryService;
@@ -20,7 +20,7 @@ use gbk_protocols::{
     functions::{
         execute_response::Result as ProtoResult, functions_registry_server::FunctionsRegistry,
         functions_server::Functions as FunctionsServiceTrait, ExecuteRequest, ExecuteResponse,
-        Function, FunctionId, ListRequest, ListResponse,
+        Function, FunctionContext, FunctionId, ListRequest, ListResponse,
     },
     tonic,
 };
