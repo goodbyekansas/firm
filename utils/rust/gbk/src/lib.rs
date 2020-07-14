@@ -7,13 +7,16 @@ compile_error!("WASI function helper lib only supports running in WASI");
 use std::{
     borrow::Borrow,
     collections::{hash_map::RandomState, HashMap},
+    path::PathBuf,
 };
 
 use prost::Message;
 use thiserror::Error;
 
 pub use gbk_protocols::functions::ReturnValue;
-use gbk_protocols::functions::{ArgumentType, FunctionArgument, StartProcessRequest, FunctionAttachment};
+use gbk_protocols::functions::{
+    ArgumentType, FunctionArgument, FunctionAttachment, StartProcessRequest,
+};
 
 #[cfg(all(not(test), not(feature = "mock")))]
 mod raw;
@@ -64,14 +67,18 @@ macro_rules! host_call {
     };
 }
 
+/// Map an attachment that the WASI host knows about, given by `attachment_name`.
+///
+/// Since it is known by the host, the provided `attachment_name` is enough
+/// to resolve it.
 pub fn map_attachment<S: AsRef<str> + std::fmt::Display>(
     attachment_name: S,
 ) -> Result<PathBuf, Error> {
-    let mut attachment_path_bytes_len: u64 = 0;
+    let mut attachment_path_bytes_len: usize = 0;
     host_call!(raw::get_attachment_path_len(
         attachment_name.as_ref().as_ptr(),
         attachment_name.as_ref().as_bytes().len(),
-        &mut attachment_path_bytes_len as *mut u64
+        &mut attachment_path_bytes_len as *mut usize
     ))?;
 
     let mut attachment_path_buffer = Vec::with_capacity(attachment_path_bytes_len as usize);
@@ -83,9 +90,45 @@ pub fn map_attachment<S: AsRef<str> + std::fmt::Display>(
     ))?;
     unsafe { attachment_path_buffer.set_len(attachment_path_bytes_len as usize) };
 
-    PathBuf::from(String::from_utf8(attachment_path_buffer).map_err(|_| Error::ConversionError())?)
+    Ok(PathBuf::from(
+        String::from_utf8(attachment_path_buffer).map_err(|_| Error::ConversionError())?,
+    ))
 }
 
+/// Map an attachment from a descriptor that the WASI host does not know about.
+pub fn map_attachment_from_descriptor(
+    attachment_descriptor: &FunctionAttachment,
+) -> Result<PathBuf, Error> {
+    let mut attachment_path_bytes_len: usize = 0;
+
+    let mut value = Vec::with_capacity(attachment_descriptor.encoded_len());
+    attachment_descriptor.encode(&mut value)?;
+    host_call!(raw::get_attachment_path_len_from_descriptor(
+        value.as_ptr(),
+        value.len(),
+        &mut attachment_path_bytes_len as *mut usize
+    ))?;
+
+    let mut attachment_path_buffer = Vec::with_capacity(attachment_path_bytes_len as usize);
+    host_call!(raw::map_attachment_from_descriptor(
+        value.as_ptr(),
+        value.len(),
+        attachment_path_buffer.as_mut_ptr(),
+        attachment_path_bytes_len as usize,
+    ))?;
+    unsafe { attachment_path_buffer.set_len(attachment_path_bytes_len as usize) };
+
+    Ok(PathBuf::from(
+        String::from_utf8(attachment_path_buffer).map_err(|_| Error::ConversionError())?,
+    ))
+}
+
+/// Start a process on the host
+///
+/// `name` is the executable to run, `args` the command line arguments to it
+/// and `environment` is a mapping of environment vars to use
+/// for the launched process. This method returns the pid but does
+/// not wait for exit of the process.
 pub fn start_host_process<S1: AsRef<str>, S2: AsRef<str>>(
     name: S1,
     args: &[S2],
@@ -109,6 +152,12 @@ pub fn start_host_process<S1: AsRef<str>, S2: AsRef<str>>(
     .map(|_| pid)
 }
 
+/// Run a process on the host
+///
+/// `name` is the executable to run, `args` the command line arguments to it
+/// and `environment` is a mapping of environment vars to use
+/// for the launched process. This method waits for the process
+/// to exit and therefore returns the exit code.
 pub fn run_host_process<S1: AsRef<str>, S2: AsRef<str>>(
     name: S1,
     args: &[S2],
@@ -324,44 +373,50 @@ pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
 
 pub mod execution_environment {
 
-    use gbk_protocols::functions::{FunctionArgument, FunctionArguments, FunctionAttachment, FunctionAttachments};
+    use std::path::PathBuf;
+
+    use gbk_protocols::functions::{FunctionArgument, FunctionAttachment, FunctionContext};
     use prost::Message;
 
-    use crate::{get_input, Error, FromFunctionArgument};
+    use crate::{get_input, map_attachment_from_descriptor, Error, FromFunctionArgument};
+
+    pub trait AttachmentDownload {
+        fn download(&self) -> Result<PathBuf, Error>;
+    }
+
+    impl AttachmentDownload for FunctionAttachment {
+        fn download(&self) -> Result<PathBuf, Error> {
+            map_attachment_from_descriptor(self)
+        }
+    }
 
     /// Special function inputs for
     /// functions that are execution environments
     #[derive(Debug)]
     pub struct ExecutionEnvironmentArgs {
-        code: Vec<u8>,
+        code: FunctionAttachment,
         sha256: String,
         entrypoint: String,
-        args: Vec<FunctionArgument>,
-        pub attachments: Vec<FunctionAttachment>, // TODO should not be pub
+        context: FunctionContext,
     }
 
     impl ExecutionEnvironmentArgs {
         /// Create execution environment args from the wasi host
         pub fn from_wasi_host() -> Result<Self, Error> {
             Ok(Self {
-                code: get_input("code")?,
-                sha256: get_input("sha256")?,
-                entrypoint: get_input("entrypoint")?,
-                args: get_input("args")
-                    .and_then(|a: Vec<u8>| {
-                        FunctionArguments::decode(a.as_slice()).map_err(|e| e.into())
-                    })?
-                    .arguments,
-                attachments: get_input("attachments")
-                .and_then(|a: Vec<u8>| {
-                    FunctionAttachments::decode(a.as_slice()).map_err(|e| e.into())
-                })?
-                .attachments,
+                code: get_input("_code").and_then(|a: Vec<u8>| {
+                    FunctionAttachment::decode(a.as_slice()).map_err(|e| e.into())
+                })?,
+                sha256: get_input("_sha256")?,
+                entrypoint: get_input("_entrypoint")?,
+                context: get_input("_context").and_then(|a: Vec<u8>| {
+                    FunctionContext::decode(a.as_slice()).map_err(|e| e.into())
+                })?,
             })
         }
 
         /// Get the code that the execution environment is expected to execute
-        pub fn code(&self) -> &[u8] {
+        pub fn code(&self) -> &FunctionAttachment {
             &self.code
         }
 
@@ -375,27 +430,36 @@ pub mod execution_environment {
             &self.entrypoint
         }
 
-        /// Get an input designated by `key` for the function that the execution environment is
+        /// Get an argument designated by `key` for the
+        /// function that the execution environment is
         /// expected to execute
-        pub fn input<S: AsRef<str>, T: FromFunctionArgument>(&self, key: S) -> Result<T, Error> {
-            self.input_as_function_argument(key)
+        pub fn argument<S: AsRef<str>, T: FromFunctionArgument>(&self, key: S) -> Result<T, Error> {
+            self.get_argument_descriptor(key)
                 .and_then(|a| T::from_arg(a).ok_or_else(Error::ConversionError))
         }
 
-        /// Get an input designated by `key` for the function that the execution environment is
-        /// expected to execute but as the `FunctionArgument` type
-        pub fn input_as_function_argument<S: AsRef<str>>(
+        /// Get an argument descriptor designated by `key` for the function that
+        /// the execution environment is expected to execute
+        pub fn get_argument_descriptor<S: AsRef<str>>(
             &self,
             key: S,
         ) -> Result<&FunctionArgument, Error> {
-            self.args
+            self.context
+                .arguments
                 .iter()
                 .find(|a| a.name == key.as_ref())
                 .ok_or_else(|| Error::FailedToFindInput(key.as_ref().to_owned()))
         }
 
-        pub fn get_attachment_descriptor<S: AsRef<str>>(&self, name: S) -> Result<FunctionAttachment, Error>{
-            self.attachments.iter().find(|a| a.name = name.as_ref()).ok_or_else(|| Error::FailedToFindAttachment(name.as_ref().to_owned()))?;
+        pub fn get_attachment_descriptor<S: AsRef<str>>(
+            &self,
+            name: S,
+        ) -> Result<&FunctionAttachment, Error> {
+            self.context
+                .attachments
+                .iter()
+                .find(|a| a.name == name.as_ref())
+                .ok_or_else(|| Error::FailedToFindAttachment(name.as_ref().to_owned()))
         }
     }
 }
@@ -449,59 +513,31 @@ pub mod net {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gbk_protocols::functions::FunctionArguments;
+    use execution_environment::AttachmentDownload;
+    use gbk_protocols::functions::{FunctionAttachment, FunctionContext};
     use mock::MockResultRegistry;
 
     #[test]
-    fn test_get_attachment_path() {
+
+    fn test_map_attachment() {
         let attachment_name = "attachment_0";
-        let attachment_path = format!("attachments/{}", attachment_name);
-        let attachment_len = attachment_path.as_bytes().len();
+        let attachment_path = PathBuf::from("attachments").join(attachment_name);
+        let attachment_len = attachment_path.to_string_lossy().as_bytes().len();
 
         MockResultRegistry::set_get_attachment_path_len_impl(move |att| {
             assert_eq!(attachment_name, att);
-            Ok(attachment_len as u64)
+            Ok(attachment_len)
         });
 
         let attachment_path2 = attachment_path.clone();
         MockResultRegistry::set_map_attachment_impl(move |att| {
             assert_eq!(attachment_name, att);
-            Ok(attachment_path2.clone())
-        });
-
-        let res = get_attachment_path(attachment_name);
-        assert!(res.is_ok());
-        assert_eq!(res.unwrap(), attachment_path);
-
-        MockResultRegistry::set_map_attachment_impl(|_| Err(11));
-        let res = get_attachment_path(attachment_name);
-        assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), Error::HostError(11)));
-
-        MockResultRegistry::set_get_attachment_path_len_impl(|_| Err(10));
-        let res = get_attachment_path(attachment_name);
-        assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), Error::HostError(10)));
-    }
-
-    #[test]
-    fn test_map_attachment() {
-        let attachment_name = "attachment_0";
-        let attachment_path = format!("attachments/{}", attachment_name);
-        let attachment_len = attachment_path.as_bytes().len();
-
-        MockResultRegistry::set_get_attachment_path_len_impl(move |att| {
-            assert_eq!(attachment_name, att);
-            Ok(attachment_len as u64)
-        });
-
-        MockResultRegistry::set_map_attachment_impl(move |att| {
-            assert_eq!(attachment_name, att);
-            Ok(attachment_path.clone())
+            Ok(attachment_path2.clone().to_string_lossy().to_string())
         });
 
         let res = map_attachment(attachment_name);
         assert!(res.is_ok());
+        assert_eq!(res.unwrap(), attachment_path);
 
         MockResultRegistry::set_map_attachment_impl(|_| Err(11));
         let res = map_attachment(attachment_name);
@@ -761,7 +797,12 @@ mod tests {
 
     #[test]
     fn test_exec_env() {
-        let args = FunctionArguments {
+        // fake code attachment
+        std::fs::write("sune.txt", "code lol").unwrap();
+        MockResultRegistry::set_get_attachment_path_len_from_descriptor_impl(|_| Ok(8));
+        MockResultRegistry::set_map_attachment_from_descriptor_impl(|_| Ok("sune.txt".to_owned()));
+
+        let args = FunctionContext {
             arguments: vec![
                 FunctionArgument {
                     name: "sune".to_owned(),
@@ -774,31 +815,45 @@ mod tests {
                     value: "datta!".as_bytes().to_vec(),
                 },
             ],
+
+            attachments: vec![],
         };
 
         let mut buff = Vec::with_capacity(args.encoded_len());
         args.encode(&mut buff).unwrap();
 
+        let code_attachment = FunctionAttachment {
+            id: None,
+            checksums: None,
+            metadata: HashMap::new(),
+            name: "code".to_owned(),
+            url: "fake:///".to_owned(),
+            filename: "huh?".to_owned(),
+        };
+
+        let mut code_buff = Vec::with_capacity(code_attachment.encoded_len());
+        code_attachment.encode(&mut code_buff).unwrap();
+
         MockResultRegistry::set_inputs(&[
             FunctionArgument {
-                name: "code".to_owned(),
+                name: "_code".to_owned(),
                 r#type: ArgumentType::Bytes as i32,
-                value: "code lol".as_bytes().to_vec(),
+                value: code_buff,
             },
             FunctionArgument {
-                name: "sha256".to_owned(),
+                name: "_sha256".to_owned(),
                 r#type: ArgumentType::String as i32,
                 value: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     .as_bytes()
                     .to_vec(),
             },
             FunctionArgument {
-                name: "entrypoint".to_owned(),
+                name: "_entrypoint".to_owned(),
                 r#type: ArgumentType::String as i32,
                 value: "windows.exe".as_bytes().to_vec(),
             },
             FunctionArgument {
-                name: "args".to_owned(),
+                name: "_context".to_owned(),
                 r#type: ArgumentType::Bytes as i32,
                 value: buff,
             },
@@ -808,17 +863,56 @@ mod tests {
         assert!(eargs.is_ok());
 
         let eargs = eargs.unwrap();
-        assert_eq!(eargs.code(), "code lol".as_bytes());
+        assert_eq!(
+            std::fs::read(eargs.code().download().unwrap()).unwrap(),
+            "code lol".as_bytes()
+        );
         assert_eq!(
             eargs.sha256(),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
         assert_eq!(eargs.entrypoint(), "windows.exe");
 
-        assert_eq!(eargs.input::<&str, bool>("sune").unwrap(), false);
+        assert_eq!(eargs.argument::<&str, bool>("sune").unwrap(), false);
         assert_eq!(
-            eargs.input::<&str, String>("rune").unwrap(),
+            eargs.argument::<&str, String>("rune").unwrap(),
             "datta!".to_owned()
+        );
+    }
+
+    #[test]
+    fn test_map_attachment_from_descriptor() {
+        let random_attachment = FunctionAttachment {
+            id: None,
+            checksums: None,
+            metadata: HashMap::new(),
+            name: "foot".to_owned(),
+            url: "fake:///".to_owned(),
+            filename: "huh?".to_owned(),
+        };
+        let random_attachment2 = random_attachment.clone();
+
+        MockResultRegistry::set_map_attachment_from_descriptor_impl(move |att| {
+            let attachment_path = PathBuf::from("attachments").join(&att.name);
+            assert_eq!(att.id, random_attachment.id);
+            assert_eq!(att.checksums, random_attachment.checksums);
+            assert_eq!(att.metadata, random_attachment.metadata);
+            assert_eq!(att.name, random_attachment.name);
+            assert_eq!(att.url, random_attachment.url);
+            assert_eq!(att.filename, random_attachment.filename);
+            Ok(attachment_path.to_string_lossy().to_string())
+        });
+        MockResultRegistry::set_get_attachment_path_len_from_descriptor_impl(|att| {
+            Ok(PathBuf::from("attachments")
+                .join(&att.name)
+                .to_string_lossy()
+                .as_bytes()
+                .len())
+        });
+
+        assert_eq!(
+            random_attachment2.download().unwrap(),
+            PathBuf::from("attachments/foot")
         );
     }
 }

@@ -1,4 +1,4 @@
-use std::{cell::Cell, path::Path};
+use std::{cell::Cell, path::{Path, PathBuf}};
 
 use super::error::{WasiError, WasiResult};
 use prost::Message;
@@ -6,7 +6,7 @@ use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
 use super::sandbox::Sandbox;
 use crate::executor::{AttachmentDownload, FunctionContextExt};
-use gbk_protocols::functions::{FunctionContext, ReturnValue};
+use gbk_protocols::functions::{FunctionContext, ReturnValue, FunctionAttachment};
 
 pub trait WasmPtrExt<'a> {
     fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]>;
@@ -22,12 +22,69 @@ impl<'a> WasmPtrExt<'a> for WasmPtr<u8, Array> {
     }
 }
 
+fn attachment_path_from_descriptor(attachment_data: &FunctionAttachment) -> String {
+    let attachment_filename = if attachment_data.filename.is_empty() {
+        &attachment_data.name
+    } else {
+        &attachment_data.filename
+    };
+
+    // Manually joining paths to ensure we get a valid path for WASI (no backslash)
+    format!("attachments/{}", attachment_filename)
+}
+
+fn write_length_to_ptr(length_ptr: WasmPtr<u32, Item>, length: u32, vm_memory: &Memory) -> WasiResult<()> {
+    unsafe {
+        length_ptr
+            .deref_mut(vm_memory)
+            .ok_or_else(WasiError::FailedToDerefPointer)
+            .map(|c| {
+                c.set(length);
+            })
+    }
+}
+
+fn write_path_to_ptr(
+    path_ptr: WasmPtr<u8, Array>,
+    path_buffer_len: u32,
+    path: &str,
+    vm_memory: &Memory) -> WasiResult<()> {
+    path_ptr
+        .as_byte_array_mut(&vm_memory, path_buffer_len as usize)
+        .ok_or_else(|| {
+            WasiError::ConversionError(
+                "Failed to convert provided input path buffer to mut byte array.".to_owned(),
+            )
+        })
+        .and_then(|buff| {
+            buff.clone_from_slice(path.as_bytes());
+            Ok(())
+        })
+}
+
+fn download_and_map_at(attachment_data: &FunctionAttachment, path: &Path) -> WasiResult<()>{
+    if !path.exists() {
+        attachment_data
+            .download()
+            .map_err(|e| WasiError::FailedToMapAttachment(attachment_data.name.to_owned(), Box::new(e)))
+            .and_then(|data| {
+                // TODO: Map attachment differently depending on metadata.
+                // We need to support mapping folders as well.
+                std::fs::write(path, data).map_err(|e| {
+                    WasiError::FailedToMapAttachment(attachment_data.name.to_owned(), Box::new(e))
+                })
+            })?;
+    }
+
+    Ok(())
+}
+
 pub fn get_attachment_path_len(
     function_context: &FunctionContext,
     vm_memory: &Memory,
     attachment_name: WasmPtr<u8, Array>,
     attachment_name_len: u32,
-    path_len: WasmPtr<u64, Item>,
+    path_len: WasmPtr<u32, Item>,
 ) -> WasiResult<()> {
     let attachment_key = attachment_name
         .get_utf8_string(vm_memory, attachment_name_len)
@@ -36,29 +93,7 @@ pub fn get_attachment_path_len(
     let attachment_data = function_context
         .get_attachment(attachment_key)
         .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
-
-    let attachment_filename = if attachment_data.filename.is_empty() {
-        attachment_key
-    } else {
-        &attachment_data.filename
-    };
-
-    let path = Path::new("attachments").join(attachment_filename);
-    let path = path.to_str().ok_or_else(|| {
-        WasiError::ConversionError(format!(
-            "Failed to join path with attachment with name \"{}\"",
-            attachment_filename
-        ))
-    })?;
-    let len = path.as_bytes().len();
-    unsafe {
-        path_len
-            .deref_mut(vm_memory)
-            .ok_or_else(WasiError::FailedToDerefPointer)
-            .map(|c| {
-                c.set(len as u64);
-            })
-    }
+    write_length_to_ptr(path_len, attachment_path_from_descriptor(&attachment_data).as_bytes().len() as u32, vm_memory)
 }
 
 pub fn map_attachment(
@@ -78,46 +113,61 @@ pub fn map_attachment(
         .get_attachment(attachment_key)
         .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
 
-    let attachment_filename = if attachment_data.filename.is_empty() {
-        attachment_key
-    } else {
-        &attachment_data.filename
-    };
+    // Ensure path is platform specific to host and not the function
+    let wasi_attachment_path = attachment_path_from_descriptor(&attachment_data);
+    let native_attachment_path = sandbox.path().join(PathBuf::from(&wasi_attachment_path));
+    download_and_map_at(&attachment_data, &native_attachment_path)?;
+    write_path_to_ptr(path_ptr, path_buffer_len, &wasi_attachment_path, vm_memory)
+}
 
-    let sandbox_attachment_path = sandbox.path().join(attachment_filename);
-
-    if !sandbox_attachment_path.exists() {
-        attachment_data
-            .download()
-            .map_err(|e| WasiError::FailedToMapAttachment(attachment_key.to_owned(), Box::new(e)))
-            .and_then(|data| {
-                // TODO: Map attachment differently depending on metadata.
-                // We need to support mapping folders as well.
-                std::fs::write(sandbox_attachment_path, data).map_err(|e| {
-                    WasiError::FailedToMapAttachment(attachment_key.to_owned(), Box::new(e))
-                })
-            })?;
-    }
-
-    let attachment_path = Path::new("attachments").join(attachment_filename);
-    let attachment_path = attachment_path.to_str().ok_or_else(|| {
-        WasiError::ConversionError(format!(
-            "Failed to join path with attachment with name \"{}\"",
-            attachment_filename
-        ))
-    })?;
-
-    path_ptr
-        .as_byte_array_mut(&vm_memory, path_buffer_len as usize)
-        .ok_or_else(|| {
-            WasiError::ConversionError(
-                "Failed to convert provided input path buffer to mut byte array.".to_owned(),
+pub fn get_attachment_path_len_from_descriptor(
+    vm_memory: &Memory,
+    attachment_descriptor_ptr: WasmPtr<u8, Array>,
+    attachment_descriptor_len: u32,
+    path_len: WasmPtr<u32, Item>,
+) -> WasiResult<()> {
+    let fa = attachment_descriptor_ptr.deref(vm_memory, 0, attachment_descriptor_len)
+        .ok_or_else(WasiError::FailedToDerefPointer)
+        .and_then(|cells| {
+            FunctionAttachment::decode(
+                cells
+                    .iter()
+                    .map(|v| v.get())
+                    .collect::<Vec<u8>>()
+                    .as_slice(),
             )
-        })
-        .and_then(|buff| {
-            buff.clone_from_slice(attachment_path.as_bytes());
-            Ok(())
-        })
+                .map_err(WasiError::FailedToDecodeProtobuf)
+        })?;
+
+    write_length_to_ptr(path_len, attachment_path_from_descriptor(&fa).as_bytes().len() as u32, vm_memory)
+}
+
+pub fn map_attachment_from_descriptor(
+    sandbox: &Sandbox,
+    vm_memory: &Memory,
+    attachment_descriptor_ptr: WasmPtr<u8, Array>,
+    attachment_descriptor_len: u32,
+    path_ptr: WasmPtr<u8, Array>,
+    path_buffer_len: u32,
+) -> WasiResult<()> {
+    let fa = attachment_descriptor_ptr.deref(vm_memory, 0, attachment_descriptor_len)
+        .ok_or_else(WasiError::FailedToDerefPointer)
+        .and_then(|cells| {
+            FunctionAttachment::decode(
+                cells
+                    .iter()
+                    .map(|v| v.get())
+                    .collect::<Vec<u8>>()
+                    .as_slice(),
+            )
+                .map_err(WasiError::FailedToDecodeProtobuf)
+        })?;
+
+    // Ensure path is platform specific to host and not the function
+    let wasi_attachment_path = attachment_path_from_descriptor(&fa);
+    let native_attachment_path = sandbox.path().join(PathBuf::from(&wasi_attachment_path));
+    download_and_map_at(&fa, &native_attachment_path)?;
+    write_path_to_ptr(path_ptr, path_buffer_len, &wasi_attachment_path, vm_memory)
 }
 
 pub fn get_input_len(
