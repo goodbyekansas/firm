@@ -6,6 +6,7 @@ use std::{
     fs, str,
 };
 
+use prost::Message;
 use semver::VersionReq;
 use sha2::{Digest, Sha256};
 use slog::{o, Logger};
@@ -16,8 +17,8 @@ use crate::executor::wasi::WasiExecutor;
 use gbk_protocols::{
     functions::{
         execute_response::Result as ProtoResult, functions_registry_server::FunctionsRegistry,
-        ArgumentType, FunctionArgument, FunctionAttachment, FunctionDescriptor, FunctionInput,
-        FunctionOutput, FunctionResult, ListRequest, OrderingDirection, OrderingKey,
+        ArgumentType, FunctionArgument, FunctionAttachment, FunctionContext, FunctionDescriptor,
+        FunctionInput, FunctionOutput, FunctionResult, ListRequest, OrderingDirection, OrderingKey,
         VersionRequirement,
     },
     tonic,
@@ -32,59 +33,34 @@ pub struct ExecutorContext {
     pub arguments: Vec<FunctionArgument>,
 }
 
-#[derive(Default, Debug)]
-pub struct FunctionContext {
-    arguments: Vec<FunctionArgument>,
-    attachments: Vec<FunctionAttachment>,
-    inner_context: Option<Box<FunctionContext>>,
+pub trait FunctionContextExt {
+    fn new(
+        function_arguments: Vec<FunctionArgument>,
+        function_attachments: Vec<FunctionAttachment>,
+    ) -> Self;
+
+    fn get_argument<S: AsRef<str>>(&self, key: S) -> Option<&FunctionArgument>;
+
+    fn get_attachment<S: AsRef<str>>(&self, key: S) -> Option<&FunctionAttachment>;
 }
 
-impl FunctionContext {
-    pub fn new(
+impl FunctionContextExt for FunctionContext {
+    fn new(
         function_arguments: Vec<FunctionArgument>,
         function_attachments: Vec<FunctionAttachment>,
     ) -> Self {
         Self {
             arguments: function_arguments,
             attachments: function_attachments,
-            inner_context: None,
         }
     }
 
-    fn new_with_inner(
-        function_arguments: Vec<FunctionArgument>,
-        function_attachments: Vec<FunctionAttachment>,
-        inner_function_context: FunctionContext,
-    ) -> Self {
-        Self {
-            arguments: function_arguments,
-            attachments: function_attachments,
-            inner_context: Some(Box::new(inner_function_context)),
-        }
+    fn get_argument<S: AsRef<str>>(&self, key: S) -> Option<&FunctionArgument> {
+        self.arguments.iter().find(|a| a.name == key.as_ref())
     }
 
-    // TODO: This doesn't work at the moment because it doesnt handle name collisions.
-    pub fn get_argument<S: AsRef<str>>(&self, key: S) -> Option<&FunctionArgument> {
-        self.arguments
-            .iter()
-            .find(|a| a.name == key.as_ref())
-            .or_else(|| {
-                self.inner_context
-                    .as_ref()
-                    .and_then(|con| con.get_argument(key))
-            })
-    }
-
-    // TODO: This doesn't work at the moment because it doesnt handle name collisions.
-    pub fn get_attachment<S: AsRef<str>>(&self, key: S) -> Option<&FunctionAttachment> {
-        self.attachments
-            .iter()
-            .find(|a| a.name == key.as_ref())
-            .or_else(|| {
-                self.inner_context
-                    .as_ref()
-                    .and_then(|con| con.get_attachment(key))
-            })
+    fn get_attachment<S: AsRef<str>>(&self, key: S) -> Option<&FunctionAttachment> {
+        self.attachments.iter().find(|a| a.name == key.as_ref())
     }
 }
 
@@ -178,27 +154,37 @@ impl FunctionExecutor for FunctionAdapter {
             let downloaded_code = code.download()?;
 
             function_arguments.push(FunctionArgument {
-                name: "code".to_owned(),
+                name: "_code".to_owned(),
                 r#type: ArgumentType::Bytes as i32,
                 value: downloaded_code,
             });
 
             let checksums = code.checksums.ok_or(ExecutorError::MissingChecksums)?;
             function_arguments.push(FunctionArgument {
-                name: "sha256".to_owned(),
+                name: "_sha256".to_owned(),
                 r#type: ArgumentType::String as i32,
                 value: checksums.sha256.as_bytes().to_vec(),
             });
         }
 
         function_arguments.push(FunctionArgument {
-            name: "entrypoint".to_owned(),
+            name: "_entrypoint".to_owned(),
             r#type: ArgumentType::String as i32,
             value: executor_context.entrypoint.as_bytes().to_vec(),
         });
 
         let mut manifest_executor_arguments = executor_context.arguments;
         function_arguments.append(&mut manifest_executor_arguments);
+
+        // nest arguments and attachments
+        let mut buf: Vec<u8> = Vec::with_capacity(function_context.encoded_len());
+        function_context.encode(&mut buf)?;
+
+        function_arguments.push(FunctionArgument {
+            name: "_context".to_owned(),
+            r#type: ArgumentType::Bytes as i32,
+            value: buf,
+        });
 
         let function_name = self
             .function_descriptor
@@ -221,10 +207,9 @@ impl FunctionExecutor for FunctionAdapter {
                 code: self.function_descriptor.code.clone(),
                 arguments: function_exe_env.args,
             },
-            FunctionContext::new_with_inner(
+            FunctionContext::new(
                 function_arguments,
                 self.function_descriptor.attachments.clone(),
-                function_context,
             ),
         )
     }
@@ -1003,19 +988,22 @@ mod tests {
         {
             let fc = fake.function_context.borrow();
             let fake_args = fc.arguments.clone();
-            assert_eq!(fake_args.len(), 4);
-            assert_eq!(fc.get_argument("code").unwrap().value, code.as_bytes());
+            assert_eq!(fake_args.len(), 5);
+            assert_eq!(fc.get_argument("_code").unwrap().value, code.as_bytes());
             assert_eq!(
-                fc.get_argument("entrypoint").unwrap().value,
+                fc.get_argument("_entrypoint").unwrap().value,
                 entry.as_bytes()
             );
             assert_eq!(
-                fc.get_argument("sha256").unwrap().value,
+                fc.get_argument("_sha256").unwrap().value,
                 "688787d8ff144c502c7f5cffaafe2cc588d86079f9de88304c26b0cb99ce91c6".as_bytes()
             );
 
+            let inner_context =
+                FunctionContext::decode(fc.get_argument("_context").unwrap().value.as_slice())
+                    .unwrap();
             assert_eq!(
-                fc.get_argument("test-arg").unwrap().value,
+                inner_context.get_argument("test-arg").unwrap().value,
                 "test-value".as_bytes()
             );
 
@@ -1030,18 +1018,11 @@ mod tests {
 
         // Test president! 🕴
         {
-            let args = vec![
-                FunctionArgument {
-                    name: "the-arg".to_owned(),
-                    r#type: ArgumentType::String as i32,
-                    value: "this-is-arg".as_bytes().to_vec(),
-                },
-                FunctionArgument {
-                    name: "code".to_owned(),
-                    r#type: ArgumentType::String as i32,
-                    value: "this-is-not-code".as_bytes().to_vec(),
-                },
-            ];
+            let args = vec![FunctionArgument {
+                name: "_code".to_owned(), // deliberately use a reserved word 👿
+                r#type: ArgumentType::String as i32,
+                value: "this-is-not-code".as_bytes().to_vec(),
+            }];
 
             let exec_args = vec![FunctionArgument {
                 name: "the-arg".to_owned(),
@@ -1060,18 +1041,14 @@ mod tests {
 
             assert!(result.is_ok());
             let fc = &fake.function_context.borrow();
-            assert!(fc.get_argument("code").is_some());
-            assert!(fc.get_argument("sha256").is_some());
-            assert!(fc.get_argument("entrypoint").is_some());
+            assert!(fc.get_argument("_code").is_some());
+            assert!(fc.get_argument("_sha256").is_some());
+            assert!(fc.get_argument("_entrypoint").is_some());
 
+            // make sure that we get the actual code and not the argument named _code
             assert_eq!(
-                String::from_utf8(fc.get_argument("code").unwrap().value.clone()).unwrap(),
+                String::from_utf8(fc.get_argument("_code").unwrap().value.clone()).unwrap(),
                 "code"
-            );
-
-            assert_eq!(
-                String::from_utf8(fc.get_argument("the-arg").unwrap().value.clone()).unwrap(),
-                "this-is-arg"
             );
         }
 
@@ -1117,9 +1094,9 @@ mod tests {
 
             assert!(result.is_ok());
             let fc = &fake.function_context.borrow();
-            assert!(fc.get_argument("code").is_some());
-            assert!(fc.get_argument("sha256").is_some());
-            assert!(fc.get_argument("entrypoint").is_some());
+            assert!(fc.get_argument("_code").is_some());
+            assert!(fc.get_argument("_sha256").is_some());
+            assert!(fc.get_argument("_entrypoint").is_some());
         }
     }
 

@@ -24,8 +24,7 @@ use crate::executor::{
 };
 use error::{ToErrorCode, WasiError};
 use gbk_protocols::functions::{
-    execute_response::Result as ProtoResult, ExecutionError,
-    FunctionResult, ReturnValue,
+    execute_response::Result as ProtoResult, ExecutionError, FunctionResult, ReturnValue,
 };
 use sandbox::Sandbox;
 
@@ -34,7 +33,7 @@ fn execute_function(
     function_name: &str,
     _entrypoint: &str,
     code: &[u8],
-    function_context: FunctionContext
+    function_context: FunctionContext,
 ) -> Result<Vec<ReturnValue>, String> {
     const ENTRY: &str = "_start";
     let module = compile(code).map_err(|e| format!("failed to compile wasm: {}", e))?;
@@ -242,6 +241,7 @@ impl FunctionExecutor for WasiExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::executor::FunctionContextExt;
     use gbk_protocols_test_helpers::code_file;
 
     macro_rules! null_logger {

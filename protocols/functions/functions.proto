@@ -185,6 +185,11 @@ message ExecutionError {
   string msg = 1;
 }
 
+message FunctionContext {
+  repeated FunctionArgument arguments = 1;
+  repeated FunctionAttachment attachments = 2;
+}
+
 // GBK library
 message StartProcessRequest {
   string command = 1;
