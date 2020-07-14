@@ -4,7 +4,9 @@ use std::{
     thread::{self, ThreadId},
 };
 
-use gbk_protocols::functions::{FunctionArgument, ReturnValue, StartProcessRequest};
+use gbk_protocols::functions::{
+    FunctionArgument, FunctionAttachment, ReturnValue, StartProcessRequest,
+};
 use lazy_static::lazy_static;
 use prost::Message;
 
@@ -16,7 +18,7 @@ use prost::Message;
 pub unsafe fn get_attachment_path_len(
     attachment_name_ptr: *const u8,
     attachment_name_len: usize,
-    path_len: *mut u64,
+    path_len: *mut usize,
 ) -> u32 {
     MockResultRegistry::execute_get_attachment_path_len(
         attachment_name_ptr,
@@ -34,13 +36,49 @@ pub unsafe fn map_attachment(
     attachment_name_ptr: *const u8,
     attachment_name_len: usize,
     path_ptr: *mut u8,
-    path_buffer_len: usize,
+    path_len: usize,
 ) -> u32 {
     MockResultRegistry::execute_map_attachment(
         attachment_name_ptr,
         attachment_name_len,
         path_ptr,
-        path_buffer_len,
+        path_len,
+    )
+}
+
+/// Get attachment path len from descriptor
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
+pub unsafe fn get_attachment_path_len_from_descriptor(
+    attachment_descriptor_ptr: *const u8,
+    attachment_descriptor_len: usize,
+    path_len: *mut usize,
+) -> u32 {
+    MockResultRegistry::execute_get_attachment_path_len_from_descriptor(
+        attachment_descriptor_ptr,
+        attachment_descriptor_len,
+        path_len,
+    )
+}
+
+/// Map attachment from descriptor
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
+pub unsafe fn map_attachment_from_descriptor(
+    attachment_descriptor_ptr: *const u8,
+    attachment_descriptor_len: usize,
+    path_ptr: *mut u8,
+    path_len: usize,
+) -> u32 {
+    MockResultRegistry::execute_map_attachment_from_descriptor(
+        attachment_descriptor_ptr,
+        attachment_descriptor_len,
+        path_ptr,
+        path_len,
     )
 }
 
@@ -122,8 +160,12 @@ type MockCallbacks<T> = HashMap<ThreadId, Box<T>>;
 
 #[derive(Default)]
 pub struct MockResultRegistry {
-    get_attachment_path_len_closure: MockCallbacks<dyn Fn(&str) -> Result<u64, u32> + Send>,
+    get_attachment_path_len_closure: MockCallbacks<dyn Fn(&str) -> Result<usize, u32> + Send>,
     map_attachment_closure: MockCallbacks<dyn Fn(&str) -> Result<String, u32> + Send>,
+    get_attachment_path_len_from_descriptor_closure:
+        MockCallbacks<dyn Fn(&FunctionAttachment) -> Result<usize, u32> + Send>,
+    map_attachment_from_descriptor_closure:
+        MockCallbacks<dyn Fn(&FunctionAttachment) -> Result<String, u32> + Send>,
     start_host_process_closure:
         MockCallbacks<dyn Fn(StartProcessRequest) -> Result<u64, u32> + Send>,
     run_host_process_closure: MockCallbacks<dyn Fn(StartProcessRequest) -> Result<i32, u32> + Send>,
@@ -139,7 +181,7 @@ pub struct MockResultRegistry {
 impl MockResultRegistry {
     pub fn set_get_attachment_path_len_impl<F>(closure: F)
     where
-        F: Fn(&str) -> Result<u64, u32> + 'static + Send,
+        F: Fn(&str) -> Result<usize, u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -151,7 +193,7 @@ impl MockResultRegistry {
     fn execute_get_attachment_path_len(
         attachment_name_ptr: *const u8,
         attachment_name_len: usize,
-        path_len: *mut u64,
+        path_len: *mut usize,
     ) -> u32 {
         let attachment_name = unsafe {
             let slice = std::slice::from_raw_parts(attachment_name_ptr, attachment_name_len);
@@ -206,6 +248,93 @@ impl MockResultRegistry {
             .map_or_else(
                 || 1,
                 |c| match c(attachment_name) {
+                    Ok(att_path) => {
+                        let buff =
+                            unsafe { std::slice::from_raw_parts_mut(path_ptr, path_buffer_len) };
+                        buff.clone_from_slice(att_path.as_bytes());
+                        0
+                    }
+                    Err(e) => e,
+                },
+            )
+    }
+
+    pub fn set_get_attachment_path_len_from_descriptor_impl<F>(closure: F)
+    where
+        F: Fn(&FunctionAttachment) -> Result<usize, u32> + 'static + Send,
+    {
+        MOCK_RESULT_REGISTRY
+            .lock()
+            .unwrap()
+            .get_attachment_path_len_from_descriptor_closure
+            .insert(thread::current().id(), Box::new(closure));
+    }
+
+    fn execute_get_attachment_path_len_from_descriptor(
+        attachment_descriptor_ptr: *const u8,
+        attachment_descriptor_len: usize,
+        path_len: *mut usize,
+    ) -> u32 {
+        let attachment = unsafe {
+            FunctionAttachment::decode(std::slice::from_raw_parts(
+                attachment_descriptor_ptr,
+                attachment_descriptor_len,
+            ))
+            .unwrap()
+        };
+
+        MOCK_RESULT_REGISTRY
+            .lock()
+            .unwrap()
+            .get_attachment_path_len_from_descriptor_closure
+            .get(&thread::current().id())
+            .map_or_else(
+                || 1,
+                |c| match c(&attachment) {
+                    Ok(ex) => {
+                        unsafe {
+                            *path_len = ex;
+                        }
+                        0
+                    }
+                    Err(e) => e,
+                },
+            )
+    }
+
+    pub fn set_map_attachment_from_descriptor_impl<F>(closure: F)
+    where
+        F: Fn(&FunctionAttachment) -> Result<String, u32> + 'static + Send,
+    {
+        MOCK_RESULT_REGISTRY
+            .lock()
+            .unwrap()
+            .map_attachment_from_descriptor_closure
+            .insert(thread::current().id(), Box::new(closure));
+    }
+
+    fn execute_map_attachment_from_descriptor(
+        attachment_descriptor_ptr: *const u8,
+        attachment_descriptor_len: usize,
+        path_ptr: *mut u8,
+        path_buffer_len: usize,
+    ) -> u32 {
+        let attachment = unsafe {
+            FunctionAttachment::decode(std::slice::from_raw_parts(
+                attachment_descriptor_ptr,
+                attachment_descriptor_len,
+            ))
+            .unwrap()
+        };
+
+        MOCK_RESULT_REGISTRY
+            .lock()
+            .unwrap()
+            .map_attachment_from_descriptor_closure
+            .get(&thread::current().id())
+            .map_or_else(
+                || 1,
+                |c| match c(&attachment) {
                     Ok(att_path) => {
                         let buff =
                             unsafe { std::slice::from_raw_parts_mut(path_ptr, path_buffer_len) };

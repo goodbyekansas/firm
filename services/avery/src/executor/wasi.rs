@@ -112,6 +112,7 @@ fn execute_function(
     let res = Arc::clone(&results);
     let res2 = Arc::clone(&results);
     let attachment_sandbox = Arc::new(attachment_sandbox);
+    let attachment_sandbox2 = Arc::clone(&attachment_sandbox);
 
     let fc0 = Arc::new(function_context);
     let fc1 = Arc::clone(&fc0);
@@ -122,7 +123,7 @@ fn execute_function(
     let run_process_logger = logger.new(o!("scope" => "run_process"));
     let gbk_imports = imports! {
         "gbk" => {
-            "get_attachment_path_len" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_len: WasmPtr<u64, Item>| {
+            "get_attachment_path_len" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_len: WasmPtr<u32, Item>| {
                 function::get_attachment_path_len(&fc0,
                                                   ctx.memory(0),
                                                   attachment_name,
@@ -135,6 +136,22 @@ fn execute_function(
                                          ctx.memory(0),
                                          attachment_name,
                                          attachment_name_len,
+                                         path_ptr,
+                                         path_buffer_len).to_error_code()
+            }),
+            "get_attachment_path_len_from_descriptor" => func!(move |ctx: &mut Ctx, attachment_descriptor_ptr: WasmPtr<u8, Array>, attachment_descriptor_len: u32, path_len: WasmPtr<u32, Item>| {
+                function::get_attachment_path_len_from_descriptor(
+                                                  ctx.memory(0),
+                                                  attachment_descriptor_ptr,
+                                                  attachment_descriptor_len,
+                                                  path_len).to_error_code()
+            }),
+            "map_attachment_from_descriptor" => func!(move |ctx: &mut Ctx, attachment_descriptor_ptr: WasmPtr<u8, Array>, attachment_descriptor_len: u32, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
+                function::map_attachment_from_descriptor(
+                                         &attachment_sandbox2,
+                                         ctx.memory(0),
+                                         attachment_descriptor_ptr,
+                                         attachment_descriptor_len,
                                          path_ptr,
                                          path_buffer_len).to_error_code()
             }),
