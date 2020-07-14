@@ -1,4 +1,7 @@
-use std::{cell::Cell, path::{Path, PathBuf}};
+use std::{
+    cell::Cell,
+    path::{Path, PathBuf},
+};
 
 use super::error::{WasiError, WasiResult};
 use prost::Message;
@@ -6,7 +9,7 @@ use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
 use super::sandbox::Sandbox;
 use crate::executor::{AttachmentDownload, FunctionContextExt};
-use gbk_protocols::functions::{FunctionContext, ReturnValue, FunctionAttachment};
+use gbk_protocols::functions::{FunctionAttachment, FunctionContext, ReturnValue};
 
 pub trait WasmPtrExt<'a> {
     fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]>;
@@ -33,7 +36,11 @@ fn attachment_path_from_descriptor(attachment_data: &FunctionAttachment) -> Stri
     format!("attachments/{}", attachment_filename)
 }
 
-fn write_length_to_ptr(length_ptr: WasmPtr<u32, Item>, length: u32, vm_memory: &Memory) -> WasiResult<()> {
+fn write_length_to_ptr(
+    length_ptr: WasmPtr<u32, Item>,
+    length: u32,
+    vm_memory: &Memory,
+) -> WasiResult<()> {
     unsafe {
         length_ptr
             .deref_mut(vm_memory)
@@ -48,7 +55,8 @@ fn write_path_to_ptr(
     path_ptr: WasmPtr<u8, Array>,
     path_buffer_len: u32,
     path: &str,
-    vm_memory: &Memory) -> WasiResult<()> {
+    vm_memory: &Memory,
+) -> WasiResult<()> {
     path_ptr
         .as_byte_array_mut(&vm_memory, path_buffer_len as usize)
         .ok_or_else(|| {
@@ -62,11 +70,13 @@ fn write_path_to_ptr(
         })
 }
 
-fn download_and_map_at(attachment_data: &FunctionAttachment, path: &Path) -> WasiResult<()>{
+fn download_and_map_at(attachment_data: &FunctionAttachment, path: &Path) -> WasiResult<()> {
     if !path.exists() {
         attachment_data
             .download()
-            .map_err(|e| WasiError::FailedToMapAttachment(attachment_data.name.to_owned(), Box::new(e)))
+            .map_err(|e| {
+                WasiError::FailedToMapAttachment(attachment_data.name.to_owned(), Box::new(e))
+            })
             .and_then(|data| {
                 // TODO: Map attachment differently depending on metadata.
                 // We need to support mapping folders as well.
@@ -93,7 +103,13 @@ pub fn get_attachment_path_len(
     let attachment_data = function_context
         .get_attachment(attachment_key)
         .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
-    write_length_to_ptr(path_len, attachment_path_from_descriptor(&attachment_data).as_bytes().len() as u32, vm_memory)
+    write_length_to_ptr(
+        path_len,
+        attachment_path_from_descriptor(&attachment_data)
+            .as_bytes()
+            .len() as u32,
+        vm_memory,
+    )
 }
 
 pub fn map_attachment(
@@ -126,7 +142,8 @@ pub fn get_attachment_path_len_from_descriptor(
     attachment_descriptor_len: u32,
     path_len: WasmPtr<u32, Item>,
 ) -> WasiResult<()> {
-    let fa = attachment_descriptor_ptr.deref(vm_memory, 0, attachment_descriptor_len)
+    let fa = attachment_descriptor_ptr
+        .deref(vm_memory, 0, attachment_descriptor_len)
         .ok_or_else(WasiError::FailedToDerefPointer)
         .and_then(|cells| {
             FunctionAttachment::decode(
@@ -136,10 +153,14 @@ pub fn get_attachment_path_len_from_descriptor(
                     .collect::<Vec<u8>>()
                     .as_slice(),
             )
-                .map_err(WasiError::FailedToDecodeProtobuf)
+            .map_err(WasiError::FailedToDecodeProtobuf)
         })?;
 
-    write_length_to_ptr(path_len, attachment_path_from_descriptor(&fa).as_bytes().len() as u32, vm_memory)
+    write_length_to_ptr(
+        path_len,
+        attachment_path_from_descriptor(&fa).as_bytes().len() as u32,
+        vm_memory,
+    )
 }
 
 pub fn map_attachment_from_descriptor(
@@ -150,7 +171,8 @@ pub fn map_attachment_from_descriptor(
     path_ptr: WasmPtr<u8, Array>,
     path_buffer_len: u32,
 ) -> WasiResult<()> {
-    let fa = attachment_descriptor_ptr.deref(vm_memory, 0, attachment_descriptor_len)
+    let fa = attachment_descriptor_ptr
+        .deref(vm_memory, 0, attachment_descriptor_len)
         .ok_or_else(WasiError::FailedToDerefPointer)
         .and_then(|cells| {
             FunctionAttachment::decode(
@@ -160,7 +182,7 @@ pub fn map_attachment_from_descriptor(
                     .collect::<Vec<u8>>()
                     .as_slice(),
             )
-                .map_err(WasiError::FailedToDecodeProtobuf)
+            .map_err(WasiError::FailedToDecodeProtobuf)
         })?;
 
     // Ensure path is platform specific to host and not the function
