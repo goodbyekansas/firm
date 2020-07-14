@@ -151,12 +151,13 @@ impl FunctionExecutor for FunctionAdapter {
         // not having any code for the function is a valid case used for example to execute
         // external functions (gcp, aws lambdas, etc)
         if let Some(code) = executor_context.code {
-            let downloaded_code = code.download()?;
+            let mut code_buf = Vec::with_capacity(code.encoded_len());
+            code.encode(&mut code_buf)?;
 
             function_arguments.push(FunctionArgument {
                 name: "_code".to_owned(),
                 r#type: ArgumentType::Bytes as i32,
-                value: downloaded_code,
+                value: code_buf,
             });
 
             let checksums = code.checksums.ok_or(ExecutorError::MissingChecksums)?;
@@ -989,7 +990,10 @@ mod tests {
             let fc = fake.function_context.borrow();
             let fake_args = fc.arguments.clone();
             assert_eq!(fake_args.len(), 5);
-            assert_eq!(fc.get_argument("_code").unwrap().value, code.as_bytes());
+            let code_attachment =
+                FunctionAttachment::decode(fc.get_argument("_code").unwrap().value.as_slice())
+                    .unwrap();
+            assert_eq!(code_attachment.download().unwrap(), code.as_bytes());
             assert_eq!(
                 fc.get_argument("_entrypoint").unwrap().value,
                 entry.as_bytes()
@@ -1046,8 +1050,11 @@ mod tests {
             assert!(fc.get_argument("_entrypoint").is_some());
 
             // make sure that we get the actual code and not the argument named _code
+            let code_attachment =
+                FunctionAttachment::decode(fc.get_argument("_code").unwrap().value.as_slice())
+                    .unwrap();
             assert_eq!(
-                String::from_utf8(fc.get_argument("_code").unwrap().value.clone()).unwrap(),
+                String::from_utf8(code_attachment.download().unwrap()).unwrap(),
                 "code"
             );
         }
