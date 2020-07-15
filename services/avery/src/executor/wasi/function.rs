@@ -618,8 +618,7 @@ mod tests {
             vec![function_attachment!(
                 format!("file://{}", file_path.display()),
                 "sune",
-                "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe",
-                ""
+                "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
             )],
         );
 
@@ -772,8 +771,7 @@ mod tests {
             vec![function_attachment!(
                 "file://doesnt-matter",
                 "sune",
-                "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe",
-                ""
+                "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
             )],
         );
 

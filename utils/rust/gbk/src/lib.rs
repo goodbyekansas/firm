@@ -828,7 +828,6 @@ mod tests {
             metadata: HashMap::new(),
             name: "code".to_owned(),
             url: "fake:///".to_owned(),
-            filename: "huh?".to_owned(),
         };
 
         let mut code_buff = Vec::with_capacity(code_attachment.encoded_len());
@@ -888,7 +887,6 @@ mod tests {
             metadata: HashMap::new(),
             name: "foot".to_owned(),
             url: "fake:///".to_owned(),
-            filename: "huh?".to_owned(),
         };
         let random_attachment2 = random_attachment.clone();
 
@@ -899,7 +897,6 @@ mod tests {
             assert_eq!(att.metadata, random_attachment.metadata);
             assert_eq!(att.name, random_attachment.name);
             assert_eq!(att.url, random_attachment.url);
-            assert_eq!(att.filename, random_attachment.filename);
             Ok(attachment_path.to_string_lossy().to_string())
         });
         MockResultRegistry::set_get_attachment_path_len_from_descriptor_impl(|att| {
