@@ -534,7 +534,6 @@ impl FunctionsRegistry for FunctionsRegistryService {
                     url: format!("file://{}", path.display()),
                     metadata: payload.metadata,
                     checksums: Some(checksum),
-                    filename: payload.filename,
                 },
                 path,
             ),

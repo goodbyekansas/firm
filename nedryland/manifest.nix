@@ -7,10 +7,8 @@ let
       metadata = (
         if builtins.isString attachmentPathOrAttrs || builtins.isPath attachmentPathOrAttrs then {
           metadata = { };
-          filename = "";
         } else {
           metadata = attachmentPathOrAttrs.metadata or { };
-          filename = attachmentPathOrAttrs.filename or "";
         }
       );
     in
