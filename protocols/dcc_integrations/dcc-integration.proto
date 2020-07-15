@@ -25,12 +25,12 @@ message SetOutputCommand {
 
 message SetOutputResponse {}
 
-message GetAttachmentPathCommand {
+message GetAttachmentCommand {
   string name = 1;
 }
 
-message GetAttachmentPathResponse {
-  string path = 1;
+message GetAttachmentResponse {
+  bytes content = 1;
 }
 
 message SetErrorCommand {
@@ -47,7 +47,7 @@ message IntegrationCommand {
     SetOutputCommand set_output = 2;
     SetErrorCommand set_error = 3;
     FunctionFinishedCommand function_finished = 4;
-    GetAttachmentPathCommand get_attachment_path = 5;
+    GetAttachmentCommand get_attachment = 5;
   }
 }
 
@@ -57,6 +57,6 @@ message IntegrationResponse {
     SetOutputResponse set_response = 2;
     SetErrorResponse set_error_response = 3;
     string error_message = 4;
-    GetAttachmentPathResponse get_attachment_response = 5;
+    GetAttachmentResponse get_attachment_response = 5;
   }
 }
