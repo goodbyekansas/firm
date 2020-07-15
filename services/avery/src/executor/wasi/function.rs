@@ -25,15 +25,16 @@ impl<'a> WasmPtrExt<'a> for WasmPtr<u8, Array> {
     }
 }
 
-fn attachment_path_from_descriptor(attachment_data: &FunctionAttachment) -> String {
-    let attachment_filename = if attachment_data.filename.is_empty() {
-        &attachment_data.name
-    } else {
-        &attachment_data.filename
-    };
-
+fn wasi_attachment_path_from_descriptor(attachment_data: &FunctionAttachment) -> String {
     // Manually joining paths to ensure we get a valid path for WASI (no backslash)
-    format!("attachments/{}", attachment_filename)
+    format!("attachments/{}", &attachment_data.name)
+}
+
+fn native_attachment_path_from_descriptor(
+    attachment_data: &FunctionAttachment,
+    sandbox: &Sandbox,
+) -> PathBuf {
+    sandbox.path().join(&attachment_data.name)
 }
 
 fn write_length_to_ptr(
@@ -57,6 +58,12 @@ fn write_path_to_ptr(
     path: &str,
     vm_memory: &Memory,
 ) -> WasiResult<()> {
+    if path.as_bytes().len() as u32 != path_buffer_len {
+        return Err(WasiError::ConversionError(
+            "Path buffer from WASI guest is not the same length as the path.".to_owned(),
+        ));
+    }
+
     path_ptr
         .as_byte_array_mut(&vm_memory, path_buffer_len as usize)
         .ok_or_else(|| {
@@ -105,7 +112,7 @@ pub fn get_attachment_path_len(
         .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
     write_length_to_ptr(
         path_len,
-        attachment_path_from_descriptor(&attachment_data)
+        wasi_attachment_path_from_descriptor(&attachment_data)
             .as_bytes()
             .len() as u32,
         vm_memory,
@@ -129,11 +136,16 @@ pub fn map_attachment(
         .get_attachment(attachment_key)
         .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
 
-    // Ensure path is platform specific to host and not the function
-    let wasi_attachment_path = attachment_path_from_descriptor(&attachment_data);
-    let native_attachment_path = sandbox.path().join(PathBuf::from(&wasi_attachment_path));
-    download_and_map_at(&attachment_data, &native_attachment_path)?;
-    write_path_to_ptr(path_ptr, path_buffer_len, &wasi_attachment_path, vm_memory)
+    download_and_map_at(
+        &attachment_data,
+        &native_attachment_path_from_descriptor(&attachment_data, &sandbox),
+    )?;
+    write_path_to_ptr(
+        path_ptr,
+        path_buffer_len,
+        &wasi_attachment_path_from_descriptor(&attachment_data),
+        vm_memory,
+    )
 }
 
 pub fn get_attachment_path_len_from_descriptor(
@@ -158,7 +170,7 @@ pub fn get_attachment_path_len_from_descriptor(
 
     write_length_to_ptr(
         path_len,
-        attachment_path_from_descriptor(&fa).as_bytes().len() as u32,
+        wasi_attachment_path_from_descriptor(&fa).as_bytes().len() as u32,
         vm_memory,
     )
 }
@@ -185,11 +197,13 @@ pub fn map_attachment_from_descriptor(
             .map_err(WasiError::FailedToDecodeProtobuf)
         })?;
 
-    // Ensure path is platform specific to host and not the function
-    let wasi_attachment_path = attachment_path_from_descriptor(&fa);
-    let native_attachment_path = sandbox.path().join(PathBuf::from(&wasi_attachment_path));
-    download_and_map_at(&fa, &native_attachment_path)?;
-    write_path_to_ptr(path_ptr, path_buffer_len, &wasi_attachment_path, vm_memory)
+    download_and_map_at(&fa, &native_attachment_path_from_descriptor(&fa, &sandbox))?;
+    write_path_to_ptr(
+        path_ptr,
+        path_buffer_len,
+        &wasi_attachment_path_from_descriptor(&fa),
+        vm_memory,
+    )
 }
 
 pub fn get_input_len(
@@ -605,7 +619,7 @@ mod tests {
                 format!("file://{}", file_path.display()),
                 "sune",
                 "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe",
-                "bune.txt"
+                ""
             )],
         );
 
@@ -615,7 +629,7 @@ mod tests {
         write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
         let attachment_bytes_len = attachment_bytes.len() as u32;
         let path_ptr = WasmPtr::new(attachment_bytes_len);
-        let expected_path = "attachments/bune.txt";
+        let expected_path = "attachments/sune";
         let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
         // Test that we get the expected file path
         let res = map_attachment(
@@ -759,7 +773,7 @@ mod tests {
                 "file://doesnt-matter",
                 "sune",
                 "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe",
-                "rune.txt"
+                ""
             )],
         );
 
@@ -768,7 +782,7 @@ mod tests {
         let attachment_bytes = attachment_name.as_bytes();
         write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
         let attachment_bytes_len = attachment_bytes.len() as u32;
-        let path_len_ptr: WasmPtr<u64, Item> = WasmPtr::new(attachment_bytes_len);
+        let path_len_ptr: WasmPtr<u32, Item> = WasmPtr::new(attachment_bytes_len);
         let res = get_attachment_path_len(
             &fc,
             &mem,
@@ -781,14 +795,14 @@ mod tests {
             .deref(&mem)
             .map(|cell| cell.get() as u64)
             .unwrap();
-        assert_eq!(path_len, "attachments/rune.txt".as_bytes().len() as u64);
+        assert_eq!(path_len, "attachments/sune".as_bytes().len() as u64);
 
         // Test non existing attachment
         let mem = create_mem!();
         let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
         let attachment_name = "not-a-thing".to_owned();
         let attachment_bytes = attachment_name.as_bytes();
-        let path_len_ptr: WasmPtr<u64, Item> = WasmPtr::new(0);
+        let path_len_ptr: WasmPtr<u32, Item> = WasmPtr::new(0);
         write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
         let res = get_attachment_path_len(
             &fc,
