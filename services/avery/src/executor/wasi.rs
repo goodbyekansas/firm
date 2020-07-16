@@ -5,7 +5,6 @@ mod process;
 mod sandbox;
 
 use std::{
-    fs::OpenOptions,
     path::Path,
     str,
     sync::{Arc, RwLock},
@@ -14,10 +13,7 @@ use std::{
 use slog::{info, o, Logger};
 
 use wasmer_runtime::{compile, func, imports, Array, Ctx, Func, Item, WasmPtr};
-use wasmer_wasi::{
-    generate_import_object_from_state, get_wasi_version,
-    state::{HostFile, WasiState},
-};
+use wasmer_wasi::{generate_import_object_from_state, get_wasi_version, state::WasiState};
 
 use crate::executor::{
     AttachmentDownload, ExecutorContext, ExecutorError, FunctionContext, FunctionExecutor,
@@ -26,6 +22,7 @@ use error::{ToErrorCode, WasiError};
 use gbk_protocols::functions::{
     execute_response::Result as ProtoResult, ExecutionError, FunctionResult, ReturnValue,
 };
+use process::StdIOConfig;
 use sandbox::Sandbox;
 
 fn execute_function(
@@ -55,35 +52,19 @@ fn execute_function(
     );
 
     // create stdout and stderr
-    let stdout = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(sandbox.path().join("stdout"))
-        .map_err(|e| format!("failed to open stdout file: {}", e))?;
-
-    let stderr = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(sandbox.path().join("stderr"))
-        .map_err(|e| format!("failed to open stderr file: {}", e))?;
+    let stdiofiles = sandbox
+        .setup_stdio()
+        .map_err(|e| format!("Failed to setup std IO files: {}", e))?;
+    let std0 = stdiofiles
+        .try_clone()
+        .map_err(|e| format!("Failed to clone stdio files: {}", e))?;
+    let std1 = stdiofiles
+        .try_clone()
+        .map_err(|e| format!("Failed to clone stdio files: {}", e))?;
 
     let wasi_state = WasiState::new(&format!("wasi-{}", function_name))
-        .stdout(Box::new(HostFile::new(
-            stdout,
-            sandbox.path().join("stdout"),
-            true,
-            true,
-            true,
-        )))
-        .stderr(Box::new(HostFile::new(
-            stderr,
-            sandbox.path().join("stderr"),
-            true,
-            true,
-            true,
-        )))
+        .stdout(Box::new(stdiofiles.stdout))
+        .stderr(Box::new(stdiofiles.stderr))
         .preopen(|p| {
             p.directory(sandbox.path())
                 .alias("sandbox")
@@ -156,11 +137,16 @@ fn execute_function(
                                          path_buffer_len).to_error_code()
             }),
             "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
-                process::start_process(&start_process_logger, &sandboxes, ctx.memory(0), s, len, pid_out).to_error_code()
+                StdIOConfig::new(&std0.stdout.inner, &std0.stderr.inner)
+                .map_or_else(|e| WasiError::FailedToSetupStdIO(e).into(), |stdioconfig| process::start_process(&start_process_logger, &sandboxes, stdioconfig, ctx.memory(0), s, len, pid_out).to_error_code())
+
             }),
 
             "run_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, exit_code_out: WasmPtr<i32, Item>| {
-                process::run_process(&run_process_logger, &sandboxes2, ctx.memory(0), s, len, exit_code_out).to_error_code()
+                StdIOConfig::new(&std1.stdout.inner, &std1.stderr.inner)
+                .map_or_else(|e| WasiError::FailedToSetupStdIO(e).into(), |stdioconfig| {
+                    process::run_process(&run_process_logger, &sandboxes2, stdioconfig, ctx.memory(0), s, len, exit_code_out).to_error_code()
+                })
             }),
 
             "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u64, Item>| {

@@ -10,6 +10,9 @@ pub enum WasiError {
     #[error("Sandbox Error: {0}")]
     SandboxError(String),
 
+    #[error("Failed to setup std IO: {0}")]
+    FailedToSetupStdIO(io::Error),
+
     #[error("{0}")]
     ConversionError(String),
 
@@ -75,6 +78,7 @@ impl From<WasiError> for u32 {
             WasiError::FailedToMapAttachment(..) => 11,
             WasiError::FailedToFindAttachment(_) => 12,
             WasiError::SandboxError(_) => 13,
+            WasiError::FailedToSetupStdIO(_) => 14,
         }
     }
 }
