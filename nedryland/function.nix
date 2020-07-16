@@ -9,7 +9,7 @@ let
       builder = builtins.toFile "builder.sh" ''
         source $stdenv/setup
         mkdir -p $out
-        $lomax/bin/lomax --address ${endpoint} --port ${builtins.toString port} register $inputPackage/${package.code} $inputPackage/manifest.toml 2>&1 | tee $out/command-output
+        $lomax/bin/lomax --address ${endpoint} --port ${builtins.toString port} register $inputPackage/manifest.toml 2>&1 | tee $out/command-output
       '';
     };
   };
