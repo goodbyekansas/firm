@@ -246,7 +246,7 @@ impl FunctionsRegistryService {
                             format!("failed to find attachment with id: {}", attachment_id),
                         )
                     })
-                    .and_then(|(attachment, path)| Ok((attachment.clone(), path.clone())))
+                    .map(|(attachment, path)| (attachment.clone(), path.clone()))
             })
     }
 

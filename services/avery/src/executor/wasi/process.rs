@@ -1,4 +1,8 @@
-use std::{collections::HashMap, process::Command};
+use std::{
+    collections::HashMap,
+    fs::File,
+    process::{Command, Stdio},
+};
 
 use prost::Message;
 use slog::{info, Logger};
@@ -7,6 +11,20 @@ use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 use super::error::{WasiError, WasiResult};
 use super::sandbox::Sandbox;
 use gbk_protocols::functions::StartProcessRequest;
+
+pub struct StdIOConfig {
+    pub stdout: Stdio,
+    pub stderr: Stdio,
+}
+
+impl StdIOConfig {
+    pub fn new(stdout: &File, stderr: &File) -> std::io::Result<Self> {
+        Ok(StdIOConfig {
+            stdout: Stdio::from(stdout.try_clone()?),
+            stderr: Stdio::from(stderr.try_clone()?),
+        })
+    }
+}
 
 pub fn get_args_and_envs(
     request: &StartProcessRequest,
@@ -38,6 +56,7 @@ pub fn get_args_and_envs(
 pub fn start_process(
     logger: &Logger,
     sandboxes: &[Sandbox],
+    stdio: StdIOConfig,
     vm_memory: &Memory,
     request: WasmPtr<u8, Array>,
     len: u32,
@@ -66,6 +85,8 @@ pub fn start_process(
     Command::new(request.command)
         .args(args)
         .envs(&env)
+        .stdout(stdio.stdout)
+        .stderr(stdio.stderr)
         .spawn()
         .map_err(|e| {
             println!("Failed to launch host process: {}", e);
@@ -82,6 +103,7 @@ pub fn start_process(
 pub fn run_process(
     logger: &Logger,
     sandboxes: &[Sandbox],
+    stdio: StdIOConfig,
     vm_memory: &Memory,
     request: WasmPtr<u8, Array>,
     len: u32,
@@ -110,6 +132,8 @@ pub fn run_process(
     Command::new(request.command)
         .args(args)
         .envs(&env)
+        .stdout(stdio.stdout)
+        .stderr(stdio.stderr)
         .status()
         .map_err(|e| {
             println!("Failed to run host process: {}", e);

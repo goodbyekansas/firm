@@ -71,10 +71,7 @@ fn write_path_to_ptr(
                 "Failed to convert provided input path buffer to mut byte array.".to_owned(),
             )
         })
-        .and_then(|buff| {
-            buff.clone_from_slice(path.as_bytes());
-            Ok(())
-        })
+        .map(|buff| buff.clone_from_slice(path.as_bytes()))
 }
 
 fn download_and_map_at(attachment_data: &FunctionAttachment, path: &Path) -> WasiResult<()> {
