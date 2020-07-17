@@ -1,8 +1,7 @@
 { base, pkgs }:
 let
-  deployFunction = { package }: {
-    type = "function";
-    derivation = { lomax, endpoint, port }: pkgs.stdenv.mkDerivation {
+  deployFunction = { package }:
+    { lomax, endpoint, port }: pkgs.stdenv.mkDerivation {
       name = "deploy-${package.name}";
       inputPackage = package;
       inherit lomax;
@@ -12,7 +11,7 @@ let
         $lomax/bin/lomax --address ${endpoint} --port ${builtins.toString port} register $inputPackage/manifest.toml 2>&1 | tee $out/command-output
       '';
     };
-  };
+
   # TODO investigate if code should be different from attachment, i.e: code vs manifest.attachments
   mkFunction = attrs@{ name, package, manifest, code, ... }:
     let

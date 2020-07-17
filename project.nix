@@ -10,7 +10,7 @@ let
         builtins.fetchGit {
           name = "nedryland";
           url = "git@github.com:goodbyekansas/nedryland.git";
-          rev = "f6c321eb9280debe9f670661fc8ace4bddbfb2eb";
+          ref = "refs/tags/0.2.0";
         }
     );
 
@@ -54,39 +54,31 @@ let
     };
   };
   capturedLomaxPackage = components.lomax.package;
-  getFunctionDeployments = { components, endpoint ? "tcp://[::1]", port ? 1939 }: builtins.map
+
+  setupFunctionDeployment = { components, endpoint ? "tcp://[::1]", port ? 1939 }: (builtins.mapAttrs
     (
-      drv:
-      drv {
-        inherit endpoint port;
-        lomax = capturedLomaxPackage;
-      }
+      name:
+      comp:
+      comp // (
+        if (builtins.hasAttr "deployment" comp) && (builtins.hasAttr "function" comp.deployment) then {
+          deployment = comp.deployment // {
+            function = comp.deployment.function {
+              inherit endpoint port;
+              lomax = capturedLomaxPackage;
+            };
+          };
+        } else { }
+      )
     )
-    (
-      nedryland.getDeployments { inherit components; type = "function"; }
-    );
+    (components)
+  );
 in
 # create the build grid (accessed with nix-build, exposed through default.nix)
 project.mkGrid {
   inherit components;
   deploy = rec {
-    functions = getFunctionDeployments {
-      inherit components;
-    };
-
-    local = [
-      functions
-    ];
-
-    prod = [
-      (
-        getFunctionDeployments {
-          inherit components;
-          endpoint = "tcp://a.production.registry";
-          port = 1337;
-        }
-      )
-    ];
+    local = [ ];
+    prod = [ ];
   };
 
   # create the project shells (accessed with nix-shell, exposed through shell.nix)
@@ -94,6 +86,6 @@ project.mkGrid {
 
   # Add functions and other things you want to re-export, making it publicly visible to users of firm.
   lib = {
-    inherit getFunctionDeployments;
+    inherit setupFunctionDeployment;
   };
 }
