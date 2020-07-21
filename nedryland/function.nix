@@ -41,9 +41,8 @@ base.extend.mkExtension {
   deployFunctions = {
     inherit deployFunction;
   };
-  languages = base.extend.mkLanguageHelper {
-    language = "rust";
-    functions = {
+  languages = {
+    rust = {
       mkFunction =
         attrs@{ name
         , src
@@ -71,10 +70,6 @@ base.extend.mkExtension {
                 mkdir -p $out/bin
                 cp target/wasm32-wasi/release/*.wasm $out/bin
               '';
-
-              configurePhase = ''
-                ${oldAttrs.configurePhase}
-              '';
             }
           );
         in
@@ -83,5 +78,6 @@ base.extend.mkExtension {
           code = "bin/${newPackage.name}.wasm";
         });
     };
+    python = { };
   };
 }
