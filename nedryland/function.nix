@@ -12,16 +12,19 @@ let
       '';
     };
 
-  # TODO investigate if code should be different from attachment, i.e: code vs manifest.attachments
   mkFunction = attrs@{ name, package, manifest, code, ... }:
     let
       manifestGenerator = pkgs.callPackage ./manifest.nix {
-        inherit name code manifest;
-        attachments = manifest.attachments or { };
+        inherit name;
+        manifest = manifest // {
+          code = {
+            path = code;
+          };
+        };
       };
 
       packageWithManifest = package.overrideAttrs (oldAttrs: {
-        buildInputs = oldAttrs.buildInputs ++ [ manifestGenerator ];
+        nativeBuildInputs = oldAttrs.nativeBuildInputs or [ ] ++ [ manifestGenerator ];
       });
     in
     base.mkComponent (

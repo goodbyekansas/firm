@@ -1,52 +1,25 @@
-fixupOutputHooks+=('generateManifest')
+preDistPhases+=" generateManifestPhase"
 
-generateManifest() {
-  codepath=(@codePath@)
-  attachmentPaths=(@attachmentPaths@)
-  attachmentNames=(@attachmentNames@)
-  attachmentTest=(@attachmentTest@)
+generateManifestPhase() {
 
-    echo "📜 Creating output manifest..."
+  echo "  📜 [manifest] Creating output manifest..."
 
-  # relative paths are relative to the derivation
-  # output folder (or really, the manifest file but that
-  # is the same).
+  echo "  📜 [manifest] Generating checksums for attachments..."
+  python @out@/generate_checksums.py \
+          @out@/manifest-data.json \
+          ./manifest-data-with-checksums.json \
+          --sha512 | sed "s/^/  📜 [manifest] /"
 
-  function makeSha256() {
-    att=$(realpath "$1")
-    if [ ! -f $att ]; then
-      echo "ERROR: 💥 specified attachment \"$att\" does not exist..."
-      exit 1
-    fi
-    echo "generating checksum for $att..."
-    checksum=$(sha256sum $att | cut -d " " -f 1)
-  }
+  echo "  📜 [manifest] Copying attachments to output folder..."
+  mkdir -p $out/attachments
+  python @out@/copy_attachments.py \
+          $out/attachments \
+          ./manifest-data-with-checksums.json \
+          ./manifest-data-with-existing-attachments.json | sed "s/^/  📜 [manifest] /"
 
-  # Code path is relative to the installation directory ($out in this case)
-  # while the rest are relative to the component
-  pushd $out > /dev/null
-  makeSha256 $codepath
-  declare -x "sha256_0=$checksum"
-  declare -x "attachment_0=$codepath"
-  popd > /dev/null
-
-  mkdir "$out/attachments"
-  for i in "${!attachmentPaths[@]}"; do
-    makeSha256 "${attachmentPaths[$i]}"
-    declare -x "sha256_$(($i+1))=$checksum"
-
-    # copy files
-    source_path=$(realpath "${attachmentPaths[$i]}")
-    target_path="$out/attachments/${attachmentNames[$i]}"
-    echo "copying $att to installation $target_path"
-
-    cp $source_path $target_path
-
-    # declare replacable for the file name in the manifest
-    declare -x "attachment_$(($i+1))=attachments/${attachmentNames[$i]}"
-
-  done
-  substituteAll @out@/manifest.toml $out/manifest.toml
-
-  echo "📜 Manifest written to $out/manifest.toml"
+  echo "  📜 [manifest] Generating final manifest..."
+  j2 -f json @out@/manifest-template.jinja.toml \
+          ./manifest-data-with-existing-attachments.json \
+          -o $out/manifest.toml | sed "s/^/  📜 [manifest] /"
+  echo "  📜 [manifest] Manifest written to $out/manifest.toml"
 }
