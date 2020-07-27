@@ -1,66 +1,44 @@
-{ pkgs, name, manifest, code, attachments }:
+{ pkgs, name, manifest }:
 let
-  genAttachmentAttrs = attachmentPathOrAttrs: attachmentName: idx:
-    let
-      checksums = { checksums = { sha256 = "@sha256_${builtins.toString idx}@"; }; };
-      path = { path = "@attachment_${builtins.toString idx}@"; };
-      metadata = (
-        if builtins.isString attachmentPathOrAttrs || builtins.isPath attachmentPathOrAttrs then {
-          metadata = { };
-        } else {
-          metadata = attachmentPathOrAttrs.metadata or { };
-        }
-      );
-    in
-    {
-      "${attachmentName}" = ({ } // metadata // checksums // path);
-    };
+  manifestData = (if builtins.isPath manifest then (builtins.fromTOML (builtins.readFile manifest)) else manifest);
+  j2 = pkgs.python3.withPackages (ps: with ps; [ j2cli setuptools ]);
 
-  getAttachmentPath = attachmentPathOrAttrs:
+  normalizeAttachments = attachments: pkgs.lib.mapAttrs
     (
-      if builtins.isString attachmentPathOrAttrs || builtins.isPath attachmentPathOrAttrs then
-        attachmentPathOrAttrs
-      else
-        attachmentPathOrAttrs.path
-    );
-  manifestContent = if builtins.isPath manifest then (builtins.fromTOML (builtins.readFile manifest)) else manifest;
-  attachmentList = pkgs.lib.mapAttrsToList
-    (key: value: {
-      attachmentName = "${key}";
-      data = value;
-    })
+      attName: attachmentPathOrData:
+        if builtins.isString attachmentPathOrData || builtins.isPath attachmentPathOrData then {
+          path = attachmentPathOrData;
+        }
+        else attachmentPathOrData
+    )
     attachments;
 
-  nestedAttachmentList = pkgs.lib.imap1 (i: att: genAttachmentAttrs att.data att.attachmentName i) attachmentList;
-  flattenedAttachmentList = (pkgs.lib.lists.fold (a: b: a // b) { } nestedAttachmentList);
-  manifestWithChecksum = manifestContent // {
-    attachments = flattenedAttachmentList;
-  }
-    // genAttachmentAttrs code "code" 0;
-  # Code path is treated differently because it's relative to the installation folder rather than the component
-  # and attachment paths are always relative to the component or are an absolute path
-  # Could be possible to unify code with attachments
-  codePath = "${getAttachmentPath code}";
-  attachmentPaths = pkgs.lib.lists.forEach attachmentList (att: (getAttachmentPath att.data));
-  attachmentNames = pkgs.lib.lists.forEach attachmentList (att: (att.attachmentName));
+  manifestWithNormalizedAttachments = {
+    # wrap this in a key to be able to
+    # use variables with dashes in Jinja later
+    manifest = manifest // {
+      attachments = normalizeAttachments manifest.attachments or { };
+    };
+  };
 in
 pkgs.stdenv.mkDerivation {
   name = "${name}-manifest";
-  nativeBuildInputs = [ pkgs.utillinux pkgs.remarshal ];
+  propagatedBuildInputs = [ j2 ];
+  manifestData = builtins.toJSON manifestWithNormalizedAttachments;
+  passAsFile = [ "manifestData" ];
 
-  inherit attachmentPaths codePath attachmentNames;
-  manifestContent = builtins.toJSON manifestWithChecksum;
-  passAsFile = [ "manifestContent" ];
-
-  phases = [ "buildPhase" "installPhase" "fixupPhase" ];
-
-  buildPhase = ''
-    json2toml -i $manifestContentPath -o ./manifest.toml
-  '';
+  # we need the fixupPhase to exist even though
+  # we do not define one but otherwise the `setupHook`
+  # below does not get written out (it happens during stdenv's
+  # fixupPhase
+  phases = [ "installPhase" "fixupPhase" ];
 
   installPhase = ''
     mkdir -p $out
-    cp manifest.toml $out/manifest.toml
+    cp ${./generate_checksums.py} $out/generate_checksums.py
+    cp ${./copy_attachments.py} $out/copy_attachments.py
+    cp ${./manifest-template.jinja.toml} $out/manifest-template.jinja.toml
+    cp $manifestDataPath $out/manifest-data.json
   '';
 
   setupHook = ./generate-manifest.sh;

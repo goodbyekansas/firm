@@ -1,0 +1,31 @@
+name = "{{ manifest.name }}"
+version = "{{ manifest.version }}"
+
+[execution-environment]
+entrypoint = "{{ manifest['execution-environment'].entrypoint }}"
+type = "{{ manifest['execution-environment'].type }}"
+
+{% if manifest.attachments -%}
+[attachments]
+
+{%- for name, attachment in manifest.attachments.items() %}
+
+[attachments.{{name}}]
+path = "attachments/{{ attachment.path }}"
+
+[attachments.{{name}}.checksums]
+{%- for k, v in attachment.checksums.items() %}
+{{ k }} = "{{ v }}"
+{%- endfor -%}
+
+{% endfor -%}
+
+{%- endif %}
+
+[code]
+path = "{{manifest.code.path}}"
+
+[code.checksums]
+{%- for k, v in manifest.code.checksums.items() %}
+{{ k }} = "{{ v }}"
+{%- endfor -%}
