@@ -7,7 +7,6 @@ import sys
 
 
 def copyFileToOutput(path: str, target_filename: str) -> None:
-    os.makedirs(os.path.dirname(target_filename), exist_ok=True)
     shutil.copy(path, target_filename)
 
 
@@ -45,7 +44,7 @@ if __name__ == "__main__":
     }
 
     for name, attachment in required_or_existing_attachments.items():
-        target = os.path.join(args.outputfolder, attachment["path"])
+        target = os.path.join(args.outputfolder, name)
         if not os.path.exists(attachment["path"]):
             print(
                 f"Attachment {name} is required but does not exist at {attachment['path']}, exiting..."
