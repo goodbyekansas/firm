@@ -59,7 +59,7 @@ if __name__ == "__main__":
             copyFileToOutput(attachment["path"], target)
         except Exception as e:
             print(
-                "Failed to copy attachment {name} at {attachment['path']} to {target}: {e}"
+                f"Failed to copy attachment {name} at {attachment['path']} to {target}: {e}"
             )
             sys.exit(1)
 
