@@ -1,6 +1,13 @@
 name = "{{ manifest.name }}"
 version = "{{ manifest.version }}"
 
+{% if "metadata" in manifest %}
+[metadata]
+{%- for k, v in manifest.metadata.items() %}
+{{ k }} = "{{ v }}"
+{%- endfor -%}
+{% endif %}
+
 [execution-environment]
 {%- if 'entrypoint' in manifest['execution-environment'] %}
 entrypoint = "{{ manifest['execution-environment'].entrypoint }}"
@@ -20,7 +27,7 @@ path = "attachments/{{ name }}"
 {{ k }} = "{{ v }}"
 {%- endfor -%}
 
-{% if "metadata" in attachment -%}
+{% if "metadata" in attachment %}
 [attachments.{{name}}.metadata]
 {%- for k, v in attachment.metadata.items() %}
 {{ k }} = "{{ v }}"
