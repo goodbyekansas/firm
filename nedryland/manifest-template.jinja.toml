@@ -20,6 +20,13 @@ path = "attachments/{{ name }}"
 {{ k }} = "{{ v }}"
 {%- endfor -%}
 
+{% if "metadata" in attachment -%}
+[attachments.{{name}}.metadata]
+{%- for k, v in attachment.metadata.items() %}
+{{ k }} = "{{ v }}"
+{%- endfor -%}
+{%- endif %}
+
 {% endfor -%}
 
 {%- endif %}

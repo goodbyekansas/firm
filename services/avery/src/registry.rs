@@ -510,17 +510,17 @@ impl FunctionsRegistry for FunctionsRegistryService {
             )
         })?;
 
-        let saved_code = NamedTempFile::new().map_err(|e| {
+        let attachment_file = NamedTempFile::new().map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
-                format!("Failed to create temp file to save code in 😿: {}", e),
+                format!("Failed to create temp file to save attachment in 😿: {}", e),
             )
         })?;
 
-        let (_, path) = saved_code.keep().map_err(|e| {
+        let (_, path) = attachment_file.keep().map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
-                format!("Failed to persist temp file with code: {}", e),
+                format!("Failed to persist temp file with attachment: {}", e),
             )
         })?;
 

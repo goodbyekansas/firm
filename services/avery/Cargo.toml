@@ -29,6 +29,8 @@ gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
 async-stream = "0.2"
 sha2 = "0.8"
 hex = "0.4"
+flate2 = "1"
+tar = "0.4"
 
 
 [dev-dependencies]

@@ -77,6 +77,8 @@ pub struct FunctionManifest {
 #[derive(Debug, Deserialize)]
 struct Attachment {
     path: String,
+
+    #[serde(default)]
     metadata: HashMap<String, String>,
     checksums: Checksums,
 }

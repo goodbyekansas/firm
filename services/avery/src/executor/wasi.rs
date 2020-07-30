@@ -102,6 +102,8 @@ fn execute_function(
 
     let start_process_logger = logger.new(o!("scope" => "start_process"));
     let run_process_logger = logger.new(o!("scope" => "run_process"));
+    let map_attachment_logger = logger.new(o!("scope" => "map_attachment"));
+    let map_attachment_descriptor_logger = logger.new(o!("scope" => "map_attachment_descriptor"));
     let gbk_imports = imports! {
         "gbk" => {
             "get_attachment_path_len" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_len: WasmPtr<u32, Item>| {
@@ -118,7 +120,8 @@ fn execute_function(
                                          attachment_name,
                                          attachment_name_len,
                                          path_ptr,
-                                         path_buffer_len).to_error_code()
+                                         path_buffer_len,
+                                         &map_attachment_logger).to_error_code()
             }),
             "get_attachment_path_len_from_descriptor" => func!(move |ctx: &mut Ctx, attachment_descriptor_ptr: WasmPtr<u8, Array>, attachment_descriptor_len: u32, path_len: WasmPtr<u32, Item>| {
                 function::get_attachment_path_len_from_descriptor(
@@ -134,7 +137,8 @@ fn execute_function(
                                          attachment_descriptor_ptr,
                                          attachment_descriptor_len,
                                          path_ptr,
-                                         path_buffer_len).to_error_code()
+                    path_buffer_len,
+                    &map_attachment_descriptor_logger).to_error_code()
             }),
             "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
                 StdIOConfig::new(&std0.stdout.inner, &std0.stderr.inner)
