@@ -43,6 +43,9 @@ pub enum WasiError {
     #[error("Failed to map attachment \"{0}\": {1}")]
     FailedToMapAttachment(String, Box<dyn Error>),
 
+    #[error("Failed to unpack attachment \"{0}\": {1}")]
+    FailedToUnpackAttachment(String, Box<dyn Error>),
+
     #[error("Failed to find attachment \"{0}\"")]
     FailedToFindAttachment(String),
 }
@@ -79,6 +82,7 @@ impl From<WasiError> for u32 {
             WasiError::FailedToFindAttachment(_) => 12,
             WasiError::SandboxError(_) => 13,
             WasiError::FailedToSetupStdIO(_) => 14,
+            WasiError::FailedToUnpackAttachment(..) => 15,
         }
     }
 }

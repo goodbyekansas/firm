@@ -1,15 +1,20 @@
 use std::{
     cell::Cell,
+    io::Cursor,
     path::{Path, PathBuf},
 };
 
 use super::error::{WasiError, WasiResult};
+use flate2::read::GzDecoder;
 use prost::Message;
+use tar::Archive;
 use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
 use super::sandbox::Sandbox;
 use crate::executor::{AttachmentDownload, FunctionContextExt};
 use gbk_protocols::functions::{FunctionAttachment, FunctionContext, ReturnValue};
+
+use slog::{warn, Logger};
 
 pub trait WasmPtrExt<'a> {
     fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]>;
@@ -74,7 +79,11 @@ fn write_path_to_ptr(
         .map(|buff| buff.clone_from_slice(path.as_bytes()))
 }
 
-fn download_and_map_at(attachment_data: &FunctionAttachment, path: &Path) -> WasiResult<()> {
+fn download_and_map_at(
+    attachment_data: &FunctionAttachment,
+    path: &Path,
+    logger: &Logger,
+) -> WasiResult<()> {
     if !path.exists() {
         attachment_data
             .download()
@@ -82,11 +91,22 @@ fn download_and_map_at(attachment_data: &FunctionAttachment, path: &Path) -> Was
                 WasiError::FailedToMapAttachment(attachment_data.name.to_owned(), Box::new(e))
             })
             .and_then(|data| {
-                // TODO: Map attachment differently depending on metadata.
-                // We need to support mapping folders as well.
-                std::fs::write(path, data).map_err(|e| {
-                    WasiError::FailedToMapAttachment(attachment_data.name.to_owned(), Box::new(e))
-                })
+                if attachment_data.metadata.contains_key("unpack") {
+                    let mut ar = Archive::new(GzDecoder::new(Cursor::new(data)));
+                    ar.unpack(path).map_err(|e| {
+                        WasiError::FailedToUnpackAttachment(
+                            attachment_data.name.to_owned(),
+                            Box::new(e),
+                        )
+                    })
+                } else {
+                    std::fs::write(path, data).map_err(|e| {
+                        WasiError::FailedToMapAttachment(
+                            attachment_data.name.to_owned(),
+                            Box::new(e),
+                        )
+                    })
+                }
             })?;
     }
 
@@ -124,6 +144,7 @@ pub fn map_attachment(
     attachment_name_len: u32,
     path_ptr: WasmPtr<u8, Array>,
     path_buffer_len: u32,
+    logger: &Logger,
 ) -> WasiResult<()> {
     let attachment_key = attachment_name
         .get_utf8_string(vm_memory, attachment_name_len)
@@ -136,6 +157,7 @@ pub fn map_attachment(
     download_and_map_at(
         &attachment_data,
         &native_attachment_path_from_descriptor(&attachment_data, &sandbox),
+        logger,
     )?;
     write_path_to_ptr(
         path_ptr,
@@ -179,6 +201,7 @@ pub fn map_attachment_from_descriptor(
     attachment_descriptor_len: u32,
     path_ptr: WasmPtr<u8, Array>,
     path_buffer_len: u32,
+    logger: &Logger,
 ) -> WasiResult<()> {
     let fa = attachment_descriptor_ptr
         .deref(vm_memory, 0, attachment_descriptor_len)
@@ -194,7 +217,11 @@ pub fn map_attachment_from_descriptor(
             .map_err(WasiError::FailedToDecodeProtobuf)
         })?;
 
-    download_and_map_at(&fa, &native_attachment_path_from_descriptor(&fa, &sandbox))?;
+    download_and_map_at(
+        &fa,
+        &native_attachment_path_from_descriptor(&fa, &sandbox),
+        logger,
+    )?;
     write_path_to_ptr(
         path_ptr,
         path_buffer_len,

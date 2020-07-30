@@ -33,9 +33,9 @@ def generateChecksums(data: dict, sha512: bool) -> dict:
         )
 
         if sha512:
-            dataWithChecksums[name]["checksums"][
-                "sha512"
-            ] = generateSha512Checksum(attachment)
+            dataWithChecksums[name]["checksums"]["sha512"] = generateSha512Checksum(
+                attachment
+            )
 
     return dataWithChecksums
 
@@ -51,6 +51,11 @@ if __name__ == "__main__":
     parser.add_argument("infile", help="Input json file")
     parser.add_argument("outfile", help="Output json file")
     parser.add_argument("--sha512", action="store_true", default=False)
+    parser.add_argument(
+        "--code-root",
+        help="Path to the folder where the deployed code is relative to.",
+        default=os.environ.get("out", ""),
+    )
 
     args = parser.parse_args()
 
@@ -63,8 +68,13 @@ if __name__ == "__main__":
 
     json_data = json_data["manifest"]
     output = json_data.copy()
-    output["attachments"] = generateChecksums(json_data.get("attachments", {}), args.sha512)
-    output["code"] = generateChecksums({"code": json_data["code"]}, args.sha512)["code"]
+    output["attachments"] = generateChecksums(
+        json_data.get("attachments", {}), args.sha512
+    )
+    output["code"] = generateChecksums(
+        {"code": {"path": os.path.join(args.code_root, json_data["code"]["path"])}},
+        args.sha512,
+    )["code"]
 
     output = {"manifest": output}
 
