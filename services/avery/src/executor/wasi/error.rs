@@ -13,11 +13,8 @@ pub enum WasiError {
     #[error("Failed to setup std IO: {0}")]
     FailedToSetupStdIO(io::Error),
 
-    #[error("{0}")]
-    ConversionError(String),
-
-    #[error("Failed to read string pointer for \"{0}\"")]
-    FailedToReadStringPointer(String),
+    #[error("Failed to read string pointer for \"{0}\": {1}")]
+    FailedToReadStringPointer(String, std::str::Utf8Error),
 
     #[error("Failed to find key: {0}")]
     FailedToFindKey(String),
@@ -48,6 +45,12 @@ pub enum WasiError {
 
     #[error("Failed to find attachment \"{0}\"")]
     FailedToFindAttachment(String),
+
+    #[error("Failed to write to WASI buffer: {0}")]
+    FailedToWriteBuffer(std::io::Error),
+
+    #[error("Failed to read WASI buffer: {0}")]
+    FailedToReadBuffer(std::io::Error),
 }
 
 pub type WasiResult<T> = std::result::Result<T, WasiError>;
@@ -71,8 +74,7 @@ impl From<WasiError> for u32 {
             WasiError::Unknown(_) => 1,
             WasiError::FailedToDerefPointer() => 2,
             WasiError::FailedToDecodeProtobuf(_) => 3,
-            WasiError::ConversionError(_) => 4,
-            WasiError::FailedToReadStringPointer(_) => 5,
+            WasiError::FailedToReadStringPointer(..) => 5,
             WasiError::FailedToFindKey(_) => 6,
             WasiError::FailedToEncodeProtobuf(_) => 7,
             WasiError::FailedToStartProcess(_) => 8,
@@ -83,6 +85,8 @@ impl From<WasiError> for u32 {
             WasiError::SandboxError(_) => 13,
             WasiError::FailedToSetupStdIO(_) => 14,
             WasiError::FailedToUnpackAttachment(..) => 15,
+            WasiError::FailedToWriteBuffer(..) => 16,
+            WasiError::FailedToReadBuffer(..) => 17,
         }
     }
 }

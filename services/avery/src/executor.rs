@@ -671,7 +671,7 @@ mod tests {
         let args = vec![FunctionArgument {
             name: "very_important_argument".to_owned(),
             r#type: ArgumentType::String as i32,
-            value: "yes".as_bytes().to_vec(),
+            value: b"yes".to_vec(),
         }];
 
         let r = validate_args(inputs.iter(), &vec![]);

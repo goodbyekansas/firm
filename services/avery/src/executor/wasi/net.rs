@@ -1,14 +1,19 @@
-use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::net::TcpStream;
+use std::{
+    convert::TryFrom,
+    io::{self, Read, Seek, SeekFrom, Write},
+    net::TcpStream,
+};
 
 use serde::{de, Deserialize, Serialize};
-use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 use wasmer_wasi::{
     state::{WasiFile, WasiFs, WasiFsError, VIRTUAL_ROOT_FD},
     types,
 };
 
-use super::error::{WasiError, WasiResult};
+use super::{
+    error::{WasiError, WasiResult},
+    WasmItemPtr, WasmString,
+};
 
 #[derive(Debug, Serialize)]
 struct SocketFile {
@@ -161,26 +166,19 @@ impl WasiFile for SocketFile {
     }
 }
 
-pub fn connect(
-    fs: &mut WasiFs,
-    vm_memory: &Memory,
-    addr: WasmPtr<u8, Array>,
-    addr_len: u32,
-    fd_out: WasmPtr<u32, Item>,
-) -> WasiResult<()> {
-    let address = addr
-        .get_utf8_string(vm_memory, addr_len)
-        .ok_or_else(|| WasiError::FailedToReadStringPointer("address".to_owned()))?;
+pub fn connect(fs: &mut WasiFs, address: WasmString, fd_out: WasmItemPtr<u32>) -> WasiResult<()> {
+    let address: String = String::try_from(address)
+        .map_err(|e| WasiError::FailedToReadStringPointer("address".to_owned(), e))?;
 
-    let socket_file = SocketFile::new(address.to_owned())
-        .map_err(|e| WasiError::FailedToConnect(address.to_owned(), e))?;
+    let socket_file =
+        SocketFile::new(&address).map_err(|e| WasiError::FailedToConnect(address.clone(), e))?;
 
     let fd = fs
         .open_file_at(
             VIRTUAL_ROOT_FD,
             Box::new(socket_file),
             types::__WASI_O_CREAT, // open_flags
-            format!("{}.sock", address),
+            format!("{}.sock", &address),
             types::__WASI_RIGHT_FD_READ
                 | types::__WASI_RIGHT_FD_WRITE
                 | types::__WASI_RIGHT_FD_SEEK,
@@ -189,12 +187,5 @@ pub fn connect(
         )
         .map_err(|e| WasiError::FailedToOpenFile(format!("{:#?}", e)))?;
 
-    unsafe {
-        fd_out
-            .deref_mut(vm_memory)
-            .ok_or_else(WasiError::FailedToDerefPointer)
-            .map(|c| {
-                c.set(fd);
-            })
-    }
+    fd_out.set(fd)
 }
