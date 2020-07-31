@@ -1,6 +1,6 @@
 use std::{
-    cell::Cell,
-    io::Cursor,
+    convert::TryInto,
+    io::{Cursor, Write},
     path::{Path, PathBuf},
 };
 
@@ -8,30 +8,15 @@ use super::error::{WasiError, WasiResult};
 use flate2::read::GzDecoder;
 use prost::Message;
 use tar::Archive;
-use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
-use super::sandbox::Sandbox;
+use super::{sandbox::Sandbox, WasmBuffer, WasmItemPtr, WasmString};
 use crate::executor::{AttachmentDownload, FunctionContextExt};
 use gbk_protocols::functions::{FunctionAttachment, FunctionContext, ReturnValue};
 
-use slog::{warn, Logger};
-
-pub trait WasmPtrExt<'a> {
-    fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]>;
-}
-
-impl<'a> WasmPtrExt<'a> for WasmPtr<u8, Array> {
-    fn as_byte_array_mut(&self, mem: &'a Memory, len: usize) -> Option<&'a mut [u8]> {
-        unsafe {
-            // black magic casting (Cell doesn't contain any data which is why this works)
-            self.deref_mut(&mem, 0, len as u32)
-                .map(|cells| (&mut *(cells as *mut [Cell<u8>] as *mut Cell<[u8]>)).get_mut())
-        }
-    }
-}
+use slog::{info, Logger};
 
 fn wasi_attachment_path_from_descriptor(attachment_data: &FunctionAttachment) -> String {
-    // Manually joining paths to ensure we get a valid path for WASI (no backslash)
+    // Manually joining paths to ensure we always get a valid path for WASI (no backslash)
     format!("attachments/{}", &attachment_data.name)
 }
 
@@ -40,43 +25,6 @@ fn native_attachment_path_from_descriptor(
     sandbox: &Sandbox,
 ) -> PathBuf {
     sandbox.path().join(&attachment_data.name)
-}
-
-fn write_length_to_ptr(
-    length_ptr: WasmPtr<u32, Item>,
-    length: u32,
-    vm_memory: &Memory,
-) -> WasiResult<()> {
-    unsafe {
-        length_ptr
-            .deref_mut(vm_memory)
-            .ok_or_else(WasiError::FailedToDerefPointer)
-            .map(|c| {
-                c.set(length);
-            })
-    }
-}
-
-fn write_path_to_ptr(
-    path_ptr: WasmPtr<u8, Array>,
-    path_buffer_len: u32,
-    path: &str,
-    vm_memory: &Memory,
-) -> WasiResult<()> {
-    if path.as_bytes().len() as u32 != path_buffer_len {
-        return Err(WasiError::ConversionError(
-            "Path buffer from WASI guest is not the same length as the path.".to_owned(),
-        ));
-    }
-
-    path_ptr
-        .as_byte_array_mut(&vm_memory, path_buffer_len as usize)
-        .ok_or_else(|| {
-            WasiError::ConversionError(
-                "Failed to convert provided input path buffer to mut byte array.".to_owned(),
-            )
-        })
-        .map(|buff| buff.clone_from_slice(path.as_bytes()))
 }
 
 fn download_and_map_at(
@@ -92,6 +40,12 @@ fn download_and_map_at(
             })
             .and_then(|data| {
                 if attachment_data.metadata.contains_key("unpack") {
+                    info!(
+                        logger,
+                        "Unpacking attachment {} at {}",
+                        attachment_data.name,
+                        path.display()
+                    );
                     let mut ar = Archive::new(GzDecoder::new(Cursor::new(data)));
                     ar.unpack(path).map_err(|e| {
                         WasiError::FailedToUnpackAttachment(
@@ -100,6 +54,12 @@ fn download_and_map_at(
                         )
                     })
                 } else {
+                    info!(
+                        logger,
+                        "Mapping attachment {} at {}",
+                        attachment_data.name,
+                        path.display()
+                    );
                     std::fs::write(path, data).map_err(|e| {
                         WasiError::FailedToMapAttachment(
                             attachment_data.name.to_owned(),
@@ -115,211 +75,134 @@ fn download_and_map_at(
 
 pub fn get_attachment_path_len(
     function_context: &FunctionContext,
-    vm_memory: &Memory,
-    attachment_name: WasmPtr<u8, Array>,
-    attachment_name_len: u32,
-    path_len: WasmPtr<u32, Item>,
+    attachment_name: WasmString,
+    path_len: WasmItemPtr<u32>,
 ) -> WasiResult<()> {
-    let attachment_key = attachment_name
-        .get_utf8_string(vm_memory, attachment_name_len)
-        .ok_or_else(|| WasiError::FailedToReadStringPointer("attachment_name".to_owned()))?;
+    let attachment_key: String = attachment_name
+        .try_into()
+        .map_err(|e| WasiError::FailedToReadStringPointer("attachment_name".to_owned(), e))?;
 
     let attachment_data = function_context
-        .get_attachment(attachment_key)
-        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
-    write_length_to_ptr(
-        path_len,
+        .get_attachment(&attachment_key)
+        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key))?;
+    path_len.set(
         wasi_attachment_path_from_descriptor(&attachment_data)
             .as_bytes()
             .len() as u32,
-        vm_memory,
     )
 }
 
 pub fn map_attachment(
     function_context: &FunctionContext,
     sandbox: &Sandbox,
-    vm_memory: &Memory,
-    attachment_name: WasmPtr<u8, Array>,
-    attachment_name_len: u32,
-    path_ptr: WasmPtr<u8, Array>,
-    path_buffer_len: u32,
+    attachment_name: WasmString,
+    path_buffer: &mut WasmBuffer,
     logger: &Logger,
 ) -> WasiResult<()> {
-    let attachment_key = attachment_name
-        .get_utf8_string(vm_memory, attachment_name_len)
-        .ok_or_else(|| WasiError::FailedToReadStringPointer("attachment_name".to_owned()))?;
+    let attachment_key: String = attachment_name
+        .try_into()
+        .map_err(|e| WasiError::FailedToReadStringPointer("attachment_key".to_owned(), e))?;
 
     let attachment_data = function_context
-        .get_attachment(attachment_key)
-        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key.to_owned()))?;
+        .get_attachment(&attachment_key)
+        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key))?;
 
     download_and_map_at(
         &attachment_data,
         &native_attachment_path_from_descriptor(&attachment_data, &sandbox),
         logger,
     )?;
-    write_path_to_ptr(
-        path_ptr,
-        path_buffer_len,
-        &wasi_attachment_path_from_descriptor(&attachment_data),
-        vm_memory,
-    )
+
+    path_buffer
+        .write(&wasi_attachment_path_from_descriptor(&attachment_data).as_bytes())
+        .map_err(WasiError::FailedToWriteBuffer)
+        .map(|_bytes_written| ())
 }
 
 pub fn get_attachment_path_len_from_descriptor(
-    vm_memory: &Memory,
-    attachment_descriptor_ptr: WasmPtr<u8, Array>,
-    attachment_descriptor_len: u32,
-    path_len: WasmPtr<u32, Item>,
+    attachment_descriptor: WasmBuffer,
+    path_len: WasmItemPtr<u32>,
 ) -> WasiResult<()> {
-    let fa = attachment_descriptor_ptr
-        .deref(vm_memory, 0, attachment_descriptor_len)
-        .ok_or_else(WasiError::FailedToDerefPointer)
-        .and_then(|cells| {
-            FunctionAttachment::decode(
-                cells
-                    .iter()
-                    .map(|v| v.get())
-                    .collect::<Vec<u8>>()
-                    .as_slice(),
-            )
-            .map_err(WasiError::FailedToDecodeProtobuf)
-        })?;
+    let fa = FunctionAttachment::decode(attachment_descriptor.buffer())
+        .map_err(WasiError::FailedToDecodeProtobuf)?;
 
-    write_length_to_ptr(
-        path_len,
-        wasi_attachment_path_from_descriptor(&fa).as_bytes().len() as u32,
-        vm_memory,
-    )
+    path_len.set(wasi_attachment_path_from_descriptor(&fa).as_bytes().len() as u32)
 }
 
 pub fn map_attachment_from_descriptor(
     sandbox: &Sandbox,
-    vm_memory: &Memory,
-    attachment_descriptor_ptr: WasmPtr<u8, Array>,
-    attachment_descriptor_len: u32,
-    path_ptr: WasmPtr<u8, Array>,
-    path_buffer_len: u32,
+    attachment_descriptor: WasmBuffer,
+    path_buffer: &mut WasmBuffer,
     logger: &Logger,
 ) -> WasiResult<()> {
-    let fa = attachment_descriptor_ptr
-        .deref(vm_memory, 0, attachment_descriptor_len)
-        .ok_or_else(WasiError::FailedToDerefPointer)
-        .and_then(|cells| {
-            FunctionAttachment::decode(
-                cells
-                    .iter()
-                    .map(|v| v.get())
-                    .collect::<Vec<u8>>()
-                    .as_slice(),
-            )
-            .map_err(WasiError::FailedToDecodeProtobuf)
-        })?;
+    let fa = FunctionAttachment::decode(attachment_descriptor.buffer())
+        .map_err(WasiError::FailedToDecodeProtobuf)?;
 
     download_and_map_at(
         &fa,
         &native_attachment_path_from_descriptor(&fa, &sandbox),
         logger,
     )?;
-    write_path_to_ptr(
-        path_ptr,
-        path_buffer_len,
-        &wasi_attachment_path_from_descriptor(&fa),
-        vm_memory,
-    )
+
+    path_buffer
+        .write(&wasi_attachment_path_from_descriptor(&fa).as_bytes())
+        .map_err(WasiError::FailedToWriteBuffer)
+        .map(|_bytes_written| ())
 }
 
 pub fn get_input_len(
-    vm_memory: &Memory,
-    key: WasmPtr<u8, Array>,
-    keylen: u32,
-    value: WasmPtr<u64, Item>,
+    key: WasmString,
+    len: WasmItemPtr<u32>,
     function_context: &FunctionContext,
 ) -> WasiResult<()> {
-    let key = key
-        .get_utf8_string(vm_memory, keylen)
-        .ok_or_else(|| WasiError::FailedToReadStringPointer("key".to_owned()))?;
+    let key: String = key
+        .try_into()
+        .map_err(|e| WasiError::FailedToReadStringPointer("input key".to_owned(), e))?;
 
     function_context
-        .get_argument(key)
-        .ok_or_else(|| WasiError::FailedToFindKey(key.to_string()))
-        .and_then(|a| {
-            let len = a.encoded_len();
-            unsafe {
-                value
-                    .deref_mut(vm_memory)
-                    .ok_or_else(WasiError::FailedToDerefPointer)
-                    .map(|c| {
-                        c.set(len as u64);
-                    })
-            }
-        })
+        .get_argument(&key)
+        .ok_or_else(|| WasiError::FailedToFindKey(key))
+        .and_then(|a| len.set(a.encoded_len() as u32))
 }
 
 pub fn get_input(
-    vm_memory: &Memory,
-    key: WasmPtr<u8, Array>,
-    keylen: u32,
-    value: WasmPtr<u8, Array>,
-    valuelen: u32,
+    key: WasmString,
+    value: &mut WasmBuffer,
     function_context: &FunctionContext,
 ) -> WasiResult<()> {
-    let key = key
-        .get_utf8_string(vm_memory, keylen)
-        .ok_or_else(|| WasiError::FailedToReadStringPointer("key".to_owned()))?;
+    let key: String = key
+        .try_into()
+        .map_err(|e| WasiError::FailedToReadStringPointer("input key".to_owned(), e))?;
 
     function_context
-        .get_argument(key)
-        .ok_or_else(|| WasiError::FailedToFindKey(key.to_string()))
+        .get_argument(&key)
+        .ok_or_else(|| WasiError::FailedToFindKey(key))
         .and_then(|a| {
-            value
-                .as_byte_array_mut(&vm_memory, valuelen as usize)
-                .ok_or_else(|| {
-                    WasiError::ConversionError(
-                        "Failed to convert provided input buffer to mut byte array.".to_owned(),
-                    )
-                })
-                .and_then(|mut buff| {
-                    a.encode(&mut buff)
-                        .map_err(WasiError::FailedToEncodeProtobuf)
-                })
+            a.encode(&mut value.buffer_mut())
+                .map_err(WasiError::FailedToEncodeProtobuf)
         })
 }
 
-pub fn set_output(
-    vm_memory: &Memory,
-    val: WasmPtr<u8, Array>,
-    vallen: u32,
-) -> WasiResult<ReturnValue> {
-    val.deref(vm_memory, 0, vallen)
-        .ok_or_else(WasiError::FailedToDerefPointer)
-        .and_then(|cells| {
-            ReturnValue::decode(
-                cells
-                    .iter()
-                    .map(|v| v.get())
-                    .collect::<Vec<u8>>()
-                    .as_slice(),
-            )
-            .map_err(WasiError::FailedToDecodeProtobuf)
-        })
+pub fn set_output(value: WasmBuffer) -> WasiResult<ReturnValue> {
+    ReturnValue::decode(value.buffer()).map_err(WasiError::FailedToDecodeProtobuf)
 }
 
-pub fn set_error(vm_memory: &Memory, msg: WasmPtr<u8, Array>, msglen: u32) -> WasiResult<String> {
-    msg.get_utf8_string(vm_memory, msglen)
-        .ok_or_else(|| WasiError::FailedToReadStringPointer("msg".to_owned()))
-        .map(|s| s.to_owned())
+pub fn set_error(msg: WasmString) -> WasiResult<String> {
+    msg.try_into()
+        .map_err(|e| WasiError::FailedToReadStringPointer("msg".to_owned(), e))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::convert::TryFrom;
+
     use gbk_protocols::functions::{ArgumentType, FunctionArgument};
     use gbk_protocols_test_helpers::function_attachment;
 
     use tempfile::Builder;
-    use wasmer_runtime::memory::Memory;
+    use wasmer_runtime::{memory::Memory, WasmPtr};
     use wasmer_runtime::{types::MemoryDescriptor, units::Pages};
 
     macro_rules! create_mem {
@@ -328,30 +211,41 @@ mod tests {
         }};
     }
 
-    fn write_to_ptr(ptr: &WasmPtr<u8, Array>, mem: &Memory, data: &[u8]) {
-        unsafe {
-            ptr.deref_mut(&mem, 0, data.len() as u32).map(|cells| {
-                cells.iter().zip(data).for_each(|(cell, byte)| {
-                    cell.set(*byte);
-                });
-            });
-        }
+    macro_rules! null_logger {
+        () => {{
+            slog::Logger::root(slog::Discard, slog::o!())
+        }};
+    }
+
+    macro_rules! wasm_string {
+        ($mem:expr, $offset:expr, $val:expr) => {{
+            let s: &str = $val.as_ref();
+            let byte_len = s.as_bytes().len();
+            let mut buf = WasmBuffer::new($mem, WasmPtr::new($offset), byte_len as u32);
+            buf.write_all(s.as_bytes()).unwrap();
+            WasmString::new(buf)
+        }};
+    }
+
+    macro_rules! invalid_wasm_string {
+        ($mem: expr) => {{
+            WasmString::new(WasmBuffer::new($mem, WasmPtr::new(std::u32::MAX), 1337u32))
+        }};
+    }
+
+    macro_rules! out_buffer {
+        ($mem: expr, $offset: expr, $size: expr) => {{
+            WasmBuffer::new($mem, WasmPtr::new($offset), $size)
+        }};
     }
 
     #[test]
-    fn test_get_input_len() {
-        // get with bad key ptr
+    #[should_panic]
+    fn test_bad_input_len_key() {
         let mem = create_mem!();
-
-        // Will fail to parse key as str if the size is larger than its
-        // memory available
-        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(std::u32::MAX);
-        let val: WasmPtr<u64, Item> = WasmPtr::new(0);
-        let res = get_input_len(
-            &mem,
-            key_ptr,
-            5 as u32,
-            val,
+        get_input_len(
+            invalid_wasm_string!(&mem),
+            WasmItemPtr::new(&mem, WasmPtr::new(0)),
             &FunctionContext::new(
                 vec![FunctionArgument {
                     name: "chorizo korvén".to_owned(),
@@ -360,28 +254,21 @@ mod tests {
                 }],
                 vec![],
             ),
-        );
+        )
+        .unwrap();
+    }
 
-        assert!(res.is_err());
-        assert!(matches!(
-            res.unwrap_err(),
-            WasiError::FailedToReadStringPointer(..)
-        ));
-
+    #[test]
+    fn test_get_input_len() {
         // get non existant input
         let mem = create_mem!();
-        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-
-        let arg_name = "sune was here".to_owned();
-        let arg_name_bytes = arg_name.as_bytes();
-        write_to_ptr(&key_ptr, &mem, arg_name_bytes);
-
-        let val: WasmPtr<u64, Item> = WasmPtr::new(arg_name_bytes.len() as u32);
+        let key = wasm_string!(&mem, 0, "inte chorizo korvén");
         let res = get_input_len(
-            &mem,
-            key_ptr,
-            arg_name.len() as u32,
-            val,
+            key.clone(),
+            WasmItemPtr::new(
+                &mem,
+                WasmPtr::new(key.buffer_len() /* after the string in memory */),
+            ),
             &FunctionContext::new(
                 vec![FunctionArgument {
                     name: "chorizo korvén".to_owned(),
@@ -397,35 +284,33 @@ mod tests {
 
         // get existing input
         let mem = create_mem!();
-        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let arg_name = "input1".to_owned();
-        let arg_name_bytes = arg_name.as_bytes();
-
+        let key = wasm_string!(&mem, 0, "input1");
         let function_argument = FunctionArgument {
             name: "input1".to_owned(),
             r#type: ArgumentType::Bytes as i32,
             value: vec![1, 2, 3],
         };
 
-        write_to_ptr(&key_ptr, &mem, arg_name_bytes);
-        let val: WasmPtr<u64, Item> = WasmPtr::new(arg_name_bytes.len() as u32);
-        let res = get_input_len(
+        let out_len = WasmItemPtr::new(
             &mem,
-            key_ptr,
-            arg_name.len() as u32,
-            val,
+            WasmPtr::new(
+                key.buffer_len(), /* put it after the string in memory */
+            ),
+        );
+        let res = get_input_len(
+            key,
+            out_len.clone(),
             &FunctionContext::new(vec![function_argument.clone()], vec![]),
         );
         assert!(res.is_ok());
-
-        let write_len: u64 = val.deref(&mem).map(|cell| cell.get() as u64).unwrap();
-        assert_eq!(function_argument.encoded_len(), write_len as usize);
+        assert_eq!(
+            function_argument.encoded_len(),
+            out_len.get().unwrap() as usize
+        );
 
         // get existing input with invalid pointer
         let mem = create_mem!();
-        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let arg_name = "input1".to_owned();
-        let arg_name_bytes = arg_name.as_bytes();
+        let key = wasm_string!(&mem, 0, "input1");
 
         let function_argument = FunctionArgument {
             name: "input1".to_owned(),
@@ -433,14 +318,12 @@ mod tests {
             value: vec![1, 2, 3],
         };
 
-        write_to_ptr(&key_ptr, &mem, arg_name_bytes);
-        let val: WasmPtr<u64, Item> = WasmPtr::new(std::u32::MAX);
+        // creates a pointer that points beyond the end of memory
+        let val = WasmItemPtr::new(&mem, WasmPtr::new(std::u32::MAX));
         let res = get_input_len(
-            &mem,
-            key_ptr,
-            arg_name.len() as u32,
+            key,
             val,
-            &FunctionContext::new(vec![function_argument.clone()], vec![]),
+            &FunctionContext::new(vec![function_argument], vec![]),
         );
 
         assert!(res.is_err());
@@ -452,91 +335,32 @@ mod tests {
 
     #[test]
     fn test_get_input() {
-        // testing invalid key pointer
-        let mem = create_mem!();
-        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(std::u32::MAX);
-        let value_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-
-        let res = get_input(
-            &mem,
-            key_ptr,
-            5 as u32,
-            value_ptr,
-            0 as u32,
-            &FunctionContext::default(),
-        );
-        assert!(res.is_err());
-        assert!(matches!(
-            res.unwrap_err(),
-            WasiError::FailedToReadStringPointer(..)
-        ));
-
         // testing failed to find key
         let mem = create_mem!();
-        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let key_name = "input1".to_owned();
-        write_to_ptr(&key_ptr, &mem, key_name.as_bytes());
 
         let res = get_input(
-            &mem,
-            key_ptr,
-            key_name.len() as u32,
-            WasmPtr::new(0),
-            0 as u32,
-            &FunctionContext::new(vec![], vec![]),
+            wasm_string!(&mem, 0, "input1"),
+            &mut out_buffer!(&mem, 0u32, 0u32), // no point in creating a valid buffer
+            &FunctionContext::default(),
         );
 
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), WasiError::FailedToFindKey(..)));
 
-        // testing failing to convert provided input
-        let mem = create_mem!();
-        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let key_name = "input1".to_owned();
-        write_to_ptr(&key_ptr, &mem, key_name.as_bytes());
-
-        let function_argument = FunctionArgument {
-            name: "input1".to_owned(),
-            r#type: ArgumentType::Bytes as i32,
-            value: vec![1, 2, 3],
-        };
-
-        let res = get_input(
-            &mem,
-            key_ptr,
-            key_name.len() as u32,
-            WasmPtr::new(std::u32::MAX),
-            1 as u32,
-            &FunctionContext::new(vec![function_argument], vec![]),
-        );
-
-        assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), WasiError::ConversionError(..)));
-
         // testing failed to encode protobuf
         let mem = create_mem!();
-        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let key_name = "input1".to_owned();
-
         let function_argument = FunctionArgument {
             name: "input1".to_owned(),
             r#type: ArgumentType::Bytes as i32,
             value: vec![1, 2, 3],
         };
 
-        write_to_ptr(&key_ptr, &mem, key_name.as_bytes());
         let encoded_len = function_argument.encoded_len();
 
-        let mut reference_value = Vec::with_capacity(encoded_len);
-        function_argument.encode(&mut reference_value).unwrap();
-
-        let value_ptr: WasmPtr<u8, Array> = WasmPtr::new(key_name.as_bytes().len() as u32);
+        let key = wasm_string!(&mem, 0, "input1");
         let res = get_input(
-            &mem,
-            key_ptr,
-            key_name.len() as u32,
-            value_ptr,
-            (encoded_len - 1) as u32,
+            key.clone(),
+            &mut out_buffer!(&mem, key.buffer_len(), (encoded_len - 1) as u32), // make buffer 1 too small
             &FunctionContext::new(vec![function_argument], vec![]),
         );
 
@@ -548,8 +372,6 @@ mod tests {
 
         // testing getting valid input
         let mem = create_mem!();
-        let key_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let key_name = "input1".to_owned();
 
         let function_argument = FunctionArgument {
             name: "input1".to_owned(),
@@ -557,70 +379,38 @@ mod tests {
             value: vec![1, 2, 3],
         };
 
-        write_to_ptr(&key_ptr, &mem, key_name.as_bytes());
+        let key = wasm_string!(&mem, 0, "input1");
         let encoded_len = function_argument.encoded_len();
 
         let mut reference_value = Vec::with_capacity(encoded_len);
         function_argument.encode(&mut reference_value).unwrap();
 
-        let value_ptr: WasmPtr<u8, Array> = WasmPtr::new(key_name.as_bytes().len() as u32);
+        let out_ptr = out_buffer!(&mem, key.buffer_len(), encoded_len as u32);
         let res = get_input(
-            &mem,
-            key_ptr,
-            key_name.len() as u32,
-            value_ptr,
-            encoded_len as u32,
+            key,
+            &mut out_ptr.clone(),
             &FunctionContext::new(vec![function_argument], vec![]),
         );
 
         assert!(res.is_ok());
 
         // check that the byte patterns are identical
-        let encoded = value_ptr
-            .deref(&mem, 0, encoded_len as u32)
-            .unwrap()
-            .iter()
-            .map(|c| c.get())
-            .collect::<Vec<u8>>();
-
-        assert_eq!(reference_value, encoded);
+        assert_eq!(reference_value, out_ptr.buffer());
     }
 
     #[test]
     fn test_set_output() {
         let mem = create_mem!();
-        let ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-
-        // testing bad pointer
-
-        let res = set_output(&mem, WasmPtr::new(0), std::u32::MAX);
-
-        assert!(res.is_err());
-        assert!(matches!(
-            res.unwrap_err(),
-            WasiError::FailedToDerefPointer()
-        ));
-
         let return_value = ReturnValue {
             name: "sune".to_owned(),
             r#type: ArgumentType::Int as i32,
             value: vec![1, 2, 3, 4, 5, 6, 7, 8],
         };
 
-        let encoded_len = return_value.encoded_len();
-        let mut return_value_bytes = Vec::with_capacity(encoded_len);
-        return_value.encode(&mut return_value_bytes).unwrap();
+        let mut buf = WasmBuffer::new(&mem, WasmPtr::new(0), return_value.encoded_len() as u32);
+        return_value.encode(&mut buf.buffer_mut()).unwrap();
 
-        // Try with empty pointer
-        let res = set_output(&mem, ptr, encoded_len as u32);
-        assert!(matches!(
-            res.unwrap_err(),
-            WasiError::FailedToDecodeProtobuf(..)
-        ));
-
-        // Try with written pointer
-        write_to_ptr(&ptr, &mem, &return_value_bytes);
-        let res = set_output(&mem, ptr, encoded_len as u32);
+        let res = set_output(buf);
 
         assert!(res.is_ok());
         assert_eq!(return_value, res.unwrap());
@@ -646,110 +436,39 @@ mod tests {
             )],
         );
 
-        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let attachment_name = "sune".to_owned();
-        let attachment_bytes = attachment_name.as_bytes();
-        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
-        let attachment_bytes_len = attachment_bytes.len() as u32;
-        let path_ptr = WasmPtr::new(attachment_bytes_len);
+        let attachment_name = wasm_string!(&mem, 0, "sune");
         let expected_path = "attachments/sune";
         let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
+
+        let mut out_path = out_buffer!(&mem, attachment_name.buffer_len(), expected_path_bytes_len);
+
         // Test that we get the expected file path
         let res = map_attachment(
             &fc,
             &sandbox,
-            &mem,
-            attachment_name_ptr,
-            attachment_bytes_len,
-            path_ptr,
-            expected_path_bytes_len,
+            attachment_name,
+            &mut out_path,
+            &null_logger!(),
         );
         assert!(res.is_ok());
-        let return_path = path_ptr
-            .deref(&mem, 0, expected_path_bytes_len)
-            .unwrap()
-            .iter()
-            .map(|c| c.get())
-            .collect::<Vec<u8>>();
-        let return_path = std::str::from_utf8(&return_path).unwrap();
-
-        assert_eq!(return_path, expected_path);
-
-        // Test attachment with no filename specified
-        let mem = create_mem!();
-        let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
-        let fc = FunctionContext::new(
-            vec![],
-            vec![function_attachment!(
-                format!("file://{}", file_path.display()),
-                "sune",
-                "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
-            )],
+        assert_eq!(
+            String::try_from(WasmString::new(out_path)).unwrap(),
+            expected_path
         );
-        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let attachment_name = "sune".to_owned();
-        let attachment_bytes = attachment_name.as_bytes();
-        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
-        let attachment_bytes_len = attachment_bytes.len() as u32;
-        let path_ptr = WasmPtr::new(attachment_bytes_len);
-        let expected_path = "attachments/sune";
-        let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
-        let res = map_attachment(
-            &fc,
-            &sandbox,
-            &mem,
-            attachment_name_ptr,
-            attachment_bytes_len,
-            path_ptr,
-            expected_path_bytes_len,
-        );
-        assert!(res.is_ok());
-        let return_path = path_ptr
-            .deref(&mem, 0, expected_path_bytes_len)
-            .unwrap()
-            .iter()
-            .map(|c| c.get())
-            .collect::<Vec<u8>>();
-        let return_path = std::str::from_utf8(&return_path).unwrap();
-        assert_eq!(return_path, expected_path);
 
         // Test non existing attachment
         let mem = create_mem!();
-        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let attachment_name = "not-a-thing".to_owned();
-        let attachment_bytes = attachment_name.as_bytes();
-        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
         let res = map_attachment(
             &fc,
             &sandbox,
-            &mem,
-            attachment_name_ptr,
-            attachment_bytes_len,
-            path_ptr,
-            expected_path_bytes_len,
+            wasm_string!(&mem, 0, "i-am-not-here"),
+            &mut out_buffer!(&mem, 0, 0u32), // no point in having a valid buffer here
+            &null_logger!(),
         );
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
             WasiError::FailedToFindAttachment(_)
-        ));
-
-        // Test bad attachment name
-        let mem = create_mem!();
-        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let res = map_attachment(
-            &fc,
-            &sandbox,
-            &mem,
-            attachment_name_ptr,
-            (mem.size().bytes().0 + 1) as u32,
-            path_ptr,
-            expected_path_bytes_len,
-        );
-        assert!(res.is_err());
-        assert!(matches!(
-            res.unwrap_err(),
-            WasiError::FailedToReadStringPointer(_)
         ));
 
         // Test bad attachment transport
@@ -763,22 +482,13 @@ mod tests {
                 "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
             )],
         );
-        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let attachment_name = "sune".to_owned();
-        let attachment_bytes = attachment_name.as_bytes();
-        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
-        let attachment_bytes_len = attachment_bytes.len() as u32;
-        let path_ptr = WasmPtr::new(attachment_bytes_len);
-        let expected_path = "attachments/sune";
-        let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
+
         let res = map_attachment(
             &fc,
             &sandbox,
-            &mem,
-            attachment_name_ptr,
-            attachment_bytes_len,
-            path_ptr,
-            expected_path_bytes_len,
+            wasm_string!(&mem, 0, "sune"),
+            &mut out_buffer!(&mem, 0, 0u32), // no point in having a valid buffer here
+            &null_logger!(),
         );
         assert!(res.is_err());
         assert!(matches!(
@@ -799,61 +509,25 @@ mod tests {
             )],
         );
 
-        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let attachment_name = "sune".to_owned();
-        let attachment_bytes = attachment_name.as_bytes();
-        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
-        let attachment_bytes_len = attachment_bytes.len() as u32;
-        let path_len_ptr: WasmPtr<u32, Item> = WasmPtr::new(attachment_bytes_len);
-        let res = get_attachment_path_len(
-            &fc,
-            &mem,
-            attachment_name_ptr,
-            attachment_bytes_len,
-            path_len_ptr,
-        );
+        let attachment_name = wasm_string!(&mem, 0, "sune");
+        let out_path_len = WasmItemPtr::new(&mem, WasmPtr::new(attachment_name.buffer_len()));
+        let res = get_attachment_path_len(&fc, attachment_name, out_path_len.clone());
+
         assert!(res.is_ok());
-        let path_len: u64 = path_len_ptr
-            .deref(&mem)
-            .map(|cell| cell.get() as u64)
-            .unwrap();
-        assert_eq!(path_len, "attachments/sune".as_bytes().len() as u64);
+        assert_eq!(
+            out_path_len.get().unwrap(),
+            b"attachments/sune".len() as u32
+        );
 
         // Test non existing attachment
-        let mem = create_mem!();
-        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let attachment_name = "not-a-thing".to_owned();
-        let attachment_bytes = attachment_name.as_bytes();
-        let path_len_ptr: WasmPtr<u32, Item> = WasmPtr::new(0);
-        write_to_ptr(&attachment_name_ptr, &mem, attachment_bytes);
-        let res = get_attachment_path_len(
-            &fc,
-            &mem,
-            attachment_name_ptr,
-            attachment_bytes_len,
-            path_len_ptr,
-        );
+        let attachment_name = wasm_string!(&mem, 0, "i-am-not-there");
+        let out_path_len = WasmItemPtr::new(&mem, WasmPtr::new(attachment_name.buffer_len()));
+        let res = get_attachment_path_len(&fc, attachment_name, out_path_len);
 
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
             WasiError::FailedToFindAttachment(_)
-        ));
-
-        // Test bad attachment name
-        let mem = create_mem!();
-        let attachment_name_ptr: WasmPtr<u8, Array> = WasmPtr::new(0);
-        let res = get_attachment_path_len(
-            &fc,
-            &mem,
-            attachment_name_ptr,
-            (mem.size().bytes().0 + 1) as u32,
-            path_len_ptr,
-        );
-        assert!(res.is_err());
-        assert!(matches!(
-            res.unwrap_err(),
-            WasiError::FailedToReadStringPointer(_)
         ));
     }
 }

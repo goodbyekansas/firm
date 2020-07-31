@@ -6,10 +6,12 @@ use std::{
 
 use prost::Message;
 use slog::{info, Logger};
-use wasmer_runtime::{memory::Memory, Array, Item, WasmPtr};
 
-use super::error::{WasiError, WasiResult};
-use super::sandbox::Sandbox;
+use super::{
+    error::{WasiError, WasiResult},
+    sandbox::Sandbox,
+    WasmBuffer, WasmItemPtr,
+};
 use gbk_protocols::functions::StartProcessRequest;
 
 pub struct StdIOConfig {
@@ -57,24 +59,11 @@ pub fn start_process(
     logger: &Logger,
     sandboxes: &[Sandbox],
     stdio: StdIOConfig,
-    vm_memory: &Memory,
-    request: WasmPtr<u8, Array>,
-    len: u32,
-    pid_out: WasmPtr<u64, Item>,
+    request: WasmBuffer,
+    pid_out: WasmItemPtr<u64>,
 ) -> WasiResult<()> {
-    let request: StartProcessRequest = request
-        .deref(vm_memory, 0, len)
-        .ok_or_else(WasiError::FailedToDerefPointer)
-        .and_then(|cells| {
-            StartProcessRequest::decode(
-                cells
-                    .iter()
-                    .map(|v| v.get())
-                    .collect::<Vec<u8>>()
-                    .as_slice(),
-            )
-            .map_err(WasiError::FailedToDecodeProtobuf)
-        })?;
+    let request: StartProcessRequest =
+        StartProcessRequest::decode(request.buffer()).map_err(WasiError::FailedToDecodeProtobuf)?;
 
     let (args, env) = get_args_and_envs(&request, sandboxes);
     info!(
@@ -92,36 +81,18 @@ pub fn start_process(
             println!("Failed to launch host process: {}", e);
             WasiError::FailedToStartProcess(e)
         })
-        .and_then(|c| unsafe {
-            pid_out
-                .deref_mut(&vm_memory)
-                .ok_or_else(WasiError::FailedToDerefPointer)
-                .map(|cell| cell.set(c.id() as u64))
-        })
+        .and_then(|c| pid_out.set(c.id() as u64))
 }
 
 pub fn run_process(
     logger: &Logger,
     sandboxes: &[Sandbox],
     stdio: StdIOConfig,
-    vm_memory: &Memory,
-    request: WasmPtr<u8, Array>,
-    len: u32,
-    exit_code_out: WasmPtr<i32, Item>,
+    request: WasmBuffer,
+    exit_code_out: WasmItemPtr<i32>,
 ) -> WasiResult<()> {
-    let request: StartProcessRequest = request
-        .deref(vm_memory, 0, len)
-        .ok_or_else(WasiError::FailedToDerefPointer)
-        .and_then(|cells| {
-            StartProcessRequest::decode(
-                cells
-                    .iter()
-                    .map(|v| v.get())
-                    .collect::<Vec<u8>>()
-                    .as_slice(),
-            )
-            .map_err(WasiError::FailedToDecodeProtobuf)
-        })?;
+    let request: StartProcessRequest =
+        StartProcessRequest::decode(request.buffer()).map_err(WasiError::FailedToDecodeProtobuf)?;
 
     let (args, env) = get_args_and_envs(&request, sandboxes);
     info!(
@@ -139,10 +110,5 @@ pub fn run_process(
             println!("Failed to run host process: {}", e);
             WasiError::FailedToStartProcess(e)
         })
-        .and_then(|c| unsafe {
-            exit_code_out
-                .deref_mut(&vm_memory)
-                .ok_or_else(WasiError::FailedToDerefPointer)
-                .map(|cell| cell.set(c.code().unwrap_or(-1)))
-        })
+        .and_then(|c| exit_code_out.set(c.code().unwrap_or(-1)))
 }
