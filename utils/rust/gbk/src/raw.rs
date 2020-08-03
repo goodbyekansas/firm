@@ -10,6 +10,7 @@ extern "C" {
     pub fn map_attachment(
         attachment_name_ptr: *const u8,
         attachment_name_len: usize,
+        unpack: u8,
         path_ptr: *mut u8,
         path_len: usize,
     ) -> u32;
@@ -23,6 +24,7 @@ extern "C" {
     pub fn map_attachment_from_descriptor(
         attachment_descriptor_ptr: *const u8,
         attachment_descriptor_len: usize,
+        unpack: u8,
         path_ptr: *mut u8,
         path_len: usize,
     ) -> u32;

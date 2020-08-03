@@ -67,12 +67,9 @@ macro_rules! host_call {
     };
 }
 
-/// Map an attachment that the WASI host knows about, given by `attachment_name`.
-///
-/// Since it is known by the host, the provided `attachment_name` is enough
-/// to resolve it.
-pub fn map_attachment<S: AsRef<str> + std::fmt::Display>(
+fn _map_attachment<S: AsRef<str> + std::fmt::Display>(
     attachment_name: S,
+    unpack: bool,
 ) -> Result<PathBuf, Error> {
     let mut attachment_path_bytes_len: usize = 0;
     host_call!(raw::get_attachment_path_len(
@@ -85,6 +82,7 @@ pub fn map_attachment<S: AsRef<str> + std::fmt::Display>(
     host_call!(raw::map_attachment(
         attachment_name.as_ref().as_ptr(),
         attachment_name.as_ref().as_bytes().len(),
+        unpack as u8,
         attachment_path_buffer.as_mut_ptr(),
         attachment_path_bytes_len as usize,
     ))?;
@@ -95,9 +93,29 @@ pub fn map_attachment<S: AsRef<str> + std::fmt::Display>(
     ))
 }
 
-/// Map an attachment from a descriptor that the WASI host does not know about.
-pub fn map_attachment_from_descriptor(
+/// Map an attachment that the WASI host knows about, given by `attachment_name`.
+///
+/// Since it is known by the host, the provided `attachment_name` is enough
+/// to resolve it.
+pub fn map_attachment<S: AsRef<str> + std::fmt::Display>(
+    attachment_name: S,
+) -> Result<PathBuf, Error> {
+    _map_attachment(attachment_name, false)
+}
+
+/// Map an attachment that the WASI host knows about, given by `attachment_name` and unpack it.
+///
+/// Since it is known by the host, the provided `attachment_name` is enough
+/// to resolve it.
+pub fn map_attachment_and_unpack<S: AsRef<str> + std::fmt::Display>(
+    attachment_name: S,
+) -> Result<PathBuf, Error> {
+    _map_attachment(attachment_name, true)
+}
+
+fn _map_attachment_from_descriptor(
     attachment_descriptor: &FunctionAttachment,
+    unpack: bool,
 ) -> Result<PathBuf, Error> {
     let mut attachment_path_bytes_len: usize = 0;
 
@@ -113,6 +131,7 @@ pub fn map_attachment_from_descriptor(
     host_call!(raw::map_attachment_from_descriptor(
         value.as_ptr(),
         value.len(),
+        unpack as u8,
         attachment_path_buffer.as_mut_ptr(),
         attachment_path_bytes_len as usize,
     ))?;
@@ -121,6 +140,20 @@ pub fn map_attachment_from_descriptor(
     Ok(PathBuf::from(
         String::from_utf8(attachment_path_buffer).map_err(|_| Error::ConversionError())?,
     ))
+}
+
+/// Map an attachment from a descriptor that the WASI host does not know about.
+pub fn map_attachment_from_descriptor(
+    attachment_descriptor: &FunctionAttachment,
+) -> Result<PathBuf, Error> {
+    _map_attachment_from_descriptor(attachment_descriptor, false)
+}
+
+/// Map an attachment from a descriptor that the WASI host does not know about and unpack it.
+pub fn map_attachment_from_descriptor_and_unpack(
+    attachment_descriptor: &FunctionAttachment,
+) -> Result<PathBuf, Error> {
+    _map_attachment_from_descriptor(attachment_descriptor, true)
 }
 
 /// Start a process on the host
@@ -518,7 +551,6 @@ mod tests {
     use mock::MockResultRegistry;
 
     #[test]
-
     fn test_map_attachment() {
         let attachment_name = "attachment_0";
         let attachment_path = PathBuf::from("attachments").join(attachment_name);
@@ -530,7 +562,7 @@ mod tests {
         });
 
         let attachment_path2 = attachment_path.clone();
-        MockResultRegistry::set_map_attachment_impl(move |att| {
+        MockResultRegistry::set_map_attachment_impl(move |att, _| {
             assert_eq!(attachment_name, att);
             Ok(attachment_path2.clone().to_string_lossy().to_string())
         });
@@ -539,7 +571,7 @@ mod tests {
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), attachment_path);
 
-        MockResultRegistry::set_map_attachment_impl(|_| Err(11));
+        MockResultRegistry::set_map_attachment_impl(|_, _| Err(11));
         let res = map_attachment(attachment_name);
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), Error::HostError(11)));
@@ -800,7 +832,9 @@ mod tests {
         // fake code attachment
         std::fs::write("sune.txt", "code lol").unwrap();
         MockResultRegistry::set_get_attachment_path_len_from_descriptor_impl(|_| Ok(8));
-        MockResultRegistry::set_map_attachment_from_descriptor_impl(|_| Ok("sune.txt".to_owned()));
+        MockResultRegistry::set_map_attachment_from_descriptor_impl(|_, _| {
+            Ok("sune.txt".to_owned())
+        });
 
         let args = FunctionContext {
             arguments: vec![
@@ -890,7 +924,7 @@ mod tests {
         };
         let random_attachment2 = random_attachment.clone();
 
-        MockResultRegistry::set_map_attachment_from_descriptor_impl(move |att| {
+        MockResultRegistry::set_map_attachment_from_descriptor_impl(move |att, _| {
             let attachment_path = PathBuf::from("attachments").join(&att.name);
             assert_eq!(att.id, random_attachment.id);
             assert_eq!(att.checksums, random_attachment.checksums);
