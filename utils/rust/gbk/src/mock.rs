@@ -35,12 +35,14 @@ pub unsafe fn get_attachment_path_len(
 pub unsafe fn map_attachment(
     attachment_name_ptr: *const u8,
     attachment_name_len: usize,
+    unpack: u8,
     path_ptr: *mut u8,
     path_len: usize,
 ) -> u32 {
     MockResultRegistry::execute_map_attachment(
         attachment_name_ptr,
         attachment_name_len,
+        unpack,
         path_ptr,
         path_len,
     )
@@ -71,12 +73,14 @@ pub unsafe fn get_attachment_path_len_from_descriptor(
 pub unsafe fn map_attachment_from_descriptor(
     attachment_descriptor_ptr: *const u8,
     attachment_descriptor_len: usize,
+    unpack: u8,
     path_ptr: *mut u8,
     path_len: usize,
 ) -> u32 {
     MockResultRegistry::execute_map_attachment_from_descriptor(
         attachment_descriptor_ptr,
         attachment_descriptor_len,
+        unpack,
         path_ptr,
         path_len,
     )
@@ -161,11 +165,11 @@ type MockCallbacks<T> = HashMap<ThreadId, Box<T>>;
 #[derive(Default)]
 pub struct MockResultRegistry {
     get_attachment_path_len_closure: MockCallbacks<dyn Fn(&str) -> Result<usize, u32> + Send>,
-    map_attachment_closure: MockCallbacks<dyn Fn(&str) -> Result<String, u32> + Send>,
+    map_attachment_closure: MockCallbacks<dyn Fn(&str, bool) -> Result<String, u32> + Send>,
     get_attachment_path_len_from_descriptor_closure:
         MockCallbacks<dyn Fn(&FunctionAttachment) -> Result<usize, u32> + Send>,
     map_attachment_from_descriptor_closure:
-        MockCallbacks<dyn Fn(&FunctionAttachment) -> Result<String, u32> + Send>,
+        MockCallbacks<dyn Fn(&FunctionAttachment, bool) -> Result<String, u32> + Send>,
     start_host_process_closure:
         MockCallbacks<dyn Fn(StartProcessRequest) -> Result<u64, u32> + Send>,
     run_host_process_closure: MockCallbacks<dyn Fn(StartProcessRequest) -> Result<i32, u32> + Send>,
@@ -220,7 +224,7 @@ impl MockResultRegistry {
 
     pub fn set_map_attachment_impl<F>(closure: F)
     where
-        F: Fn(&str) -> Result<String, u32> + 'static + Send,
+        F: Fn(&str, bool) -> Result<String, u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -232,6 +236,7 @@ impl MockResultRegistry {
     fn execute_map_attachment(
         attachment_name_ptr: *const u8,
         attachment_name_len: usize,
+        unpack: u8,
         path_ptr: *mut u8,
         path_buffer_len: usize,
     ) -> u32 {
@@ -247,7 +252,7 @@ impl MockResultRegistry {
             .get(&thread::current().id())
             .map_or_else(
                 || 1,
-                |c| match c(attachment_name) {
+                |c| match c(attachment_name, unpack != 0) {
                     Ok(att_path) => {
                         let buff =
                             unsafe { std::slice::from_raw_parts_mut(path_ptr, path_buffer_len) };
@@ -304,7 +309,7 @@ impl MockResultRegistry {
 
     pub fn set_map_attachment_from_descriptor_impl<F>(closure: F)
     where
-        F: Fn(&FunctionAttachment) -> Result<String, u32> + 'static + Send,
+        F: Fn(&FunctionAttachment, bool) -> Result<String, u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -316,6 +321,7 @@ impl MockResultRegistry {
     fn execute_map_attachment_from_descriptor(
         attachment_descriptor_ptr: *const u8,
         attachment_descriptor_len: usize,
+        unpack: u8,
         path_ptr: *mut u8,
         path_buffer_len: usize,
     ) -> u32 {
@@ -334,7 +340,7 @@ impl MockResultRegistry {
             .get(&thread::current().id())
             .map_or_else(
                 || 1,
-                |c| match c(&attachment) {
+                |c| match c(&attachment, unpack != 0) {
                     Ok(att_path) => {
                         let buff =
                             unsafe { std::slice::from_raw_parts_mut(path_ptr, path_buffer_len) };

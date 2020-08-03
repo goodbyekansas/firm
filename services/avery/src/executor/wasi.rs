@@ -276,7 +276,7 @@ fn execute_function(
                                                       attachment_name_len)),
                                                   WasmItemPtr::new(ctx.memory(0), path_len)).to_error_code()
             }),
-            "map_attachment" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
+            "map_attachment" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, unpack: u8, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
                 function::map_attachment(&fc1,
                                          &attachment_sandbox,
                                          WasmString::new(
@@ -286,6 +286,7 @@ fn execute_function(
                                                  attachment_name_len
                                              ),
                                          ),
+                                         unpack!=0,
                                          &mut WasmBuffer::new(
                                              ctx.memory(0),
                                              path_ptr,
@@ -301,7 +302,7 @@ fn execute_function(
                         attachment_descriptor_len),
                         WasmItemPtr::new(ctx.memory(0), path_len)).to_error_code()
             }),
-            "map_attachment_from_descriptor" => func!(move |ctx: &mut Ctx, attachment_descriptor_ptr: WasmPtr<u8, Array>, attachment_descriptor_len: u32, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
+            "map_attachment_from_descriptor" => func!(move |ctx: &mut Ctx, attachment_descriptor_ptr: WasmPtr<u8, Array>, attachment_descriptor_len: u32, unpack: u8, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
                 function::map_attachment_from_descriptor(
                     &attachment_sandbox2,
                     WasmBuffer::new(
@@ -309,6 +310,7 @@ fn execute_function(
                         attachment_descriptor_ptr,
                         attachment_descriptor_len,
                     ),
+                    unpack!=0,
                     &mut WasmBuffer::new(
                         ctx.memory(0),
                         path_ptr,

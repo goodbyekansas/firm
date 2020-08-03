@@ -30,6 +30,7 @@ fn native_attachment_path_from_descriptor(
 fn download_and_map_at(
     attachment_data: &FunctionAttachment,
     path: &Path,
+    unpack: bool,
     logger: &Logger,
 ) -> WasiResult<()> {
     if !path.exists() {
@@ -39,7 +40,7 @@ fn download_and_map_at(
                 WasiError::FailedToMapAttachment(attachment_data.name.to_owned(), Box::new(e))
             })
             .and_then(|data| {
-                if attachment_data.metadata.contains_key("unpack") {
+                if unpack {
                     info!(
                         logger,
                         "Unpacking attachment {} at {}",
@@ -96,6 +97,7 @@ pub fn map_attachment(
     function_context: &FunctionContext,
     sandbox: &Sandbox,
     attachment_name: WasmString,
+    unpack: bool,
     path_buffer: &mut WasmBuffer,
     logger: &Logger,
 ) -> WasiResult<()> {
@@ -110,6 +112,7 @@ pub fn map_attachment(
     download_and_map_at(
         &attachment_data,
         &native_attachment_path_from_descriptor(&attachment_data, &sandbox),
+        unpack,
         logger,
     )?;
 
@@ -132,6 +135,7 @@ pub fn get_attachment_path_len_from_descriptor(
 pub fn map_attachment_from_descriptor(
     sandbox: &Sandbox,
     attachment_descriptor: WasmBuffer,
+    unpack: bool,
     path_buffer: &mut WasmBuffer,
     logger: &Logger,
 ) -> WasiResult<()> {
@@ -141,6 +145,7 @@ pub fn map_attachment_from_descriptor(
     download_and_map_at(
         &fa,
         &native_attachment_path_from_descriptor(&fa, &sandbox),
+        unpack,
         logger,
     )?;
 
@@ -447,6 +452,7 @@ mod tests {
             &fc,
             &sandbox,
             attachment_name,
+            false,
             &mut out_path,
             &null_logger!(),
         );
@@ -462,6 +468,7 @@ mod tests {
             &fc,
             &sandbox,
             wasm_string!(&mem, 0, "i-am-not-here"),
+            false,
             &mut out_buffer!(&mem, 0, 0u32), // no point in having a valid buffer here
             &null_logger!(),
         );
@@ -487,6 +494,7 @@ mod tests {
             &fc,
             &sandbox,
             wasm_string!(&mem, 0, "sune"),
+            false,
             &mut out_buffer!(&mem, 0, 0u32), // no point in having a valid buffer here
             &null_logger!(),
         );
