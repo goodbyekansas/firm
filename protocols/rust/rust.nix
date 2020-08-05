@@ -1,13 +1,17 @@
 { base, pkgs, protobuf, rustProtoCompiler, includeServices }:
 
 base.mkComponent {
+  # TODO: this should really use mkUtility and not freestyle it
+  # there are some issues to solve for that to work though
   package = pkgs.stdenv.mkDerivation {
     name = "rust-protobuf-definitions";
     PROTOC = "${protobuf}/bin/protoc";
 
-    src = builtins.filterSource
-      (path: type: !(type == "directory" && baseNameOf path == "target"))
-      ../.;
+    src = (builtins.path {
+      path = ../.;
+      name = "rust-protobuf-definitions";
+      filter = (path: type: !(type == "directory" && baseNameOf path == "target"));
+    });
 
     buildInputs = with pkgs; [
       cacert
@@ -18,8 +22,10 @@ base.mkComponent {
       )
     ];
 
+    inherit rustProtoCompiler;
+
     buildPhase = ''
-      ${rustProtoCompiler}/bin/compiler -I ./ ${if includeServices then "--build-services" else ""} -o ./gbk-protocols/src **/*.proto
+      $rustProtoCompiler/bin/compiler -I ./ ${if includeServices then "--build-services" else ""} -o ./gbk-protocols/src **/*.proto
       substitute rust/Cargo.toml ./gbk-protocols/Cargo.toml --subst-var-by includeTonic ${if includeServices then "'tonic = \"0.2\"'" else "''"}
 
       # generate a useable lib.rs
