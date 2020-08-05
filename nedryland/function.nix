@@ -58,12 +58,15 @@ base.extend.mkExtension {
         , extraChecks ? ""
         , buildFeatures ? [ ]
         , testFeatures ? [ ]
+        , ...
         }:
         let
           package = base.languages.rust.mkPackage {
             inherit src name rustDependencies useNightly buildInputs extraChecks buildFeatures testFeatures;
             targets = targets ++ [ "wasm32-wasi" ];
             defaultTarget = "wasm32-wasi";
+            shellInputs = attrs.shellInputs or [ ];
+            shellHook = attrs.shellHook or "";
           };
 
           newPackage = package.overrideAttrs (
