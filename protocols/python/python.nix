@@ -4,9 +4,7 @@ base.languages.python.mkUtility {
   inherit pythonVersion;
   name = "gbk-protocols";
   version = "0.1.0";
-  src = builtins.filterSource
-    (path: type: !(type == "directory" && baseNameOf path == "target"))
-    ../.;
+  src = ../.;
   nativeBuildInputs = (pythonPkgs: [ pythonPkgs.grpcio-tools ]);
   doStandardTests = false;
   preBuild = ''
