@@ -10,7 +10,7 @@ let
         builtins.fetchGit {
           name = "nedryland";
           url = "git@github.com:goodbyekansas/nedryland.git";
-          rev = "1dc8d12052ea48d0faaaf679381e5b46b6d7551a";
+          rev = "a90df76c703f040390dc6486c69934622c8cef3c";
         }
     );
 
