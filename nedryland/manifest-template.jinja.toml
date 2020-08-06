@@ -45,3 +45,16 @@ path = "{{manifest.code.path}}"
 {%- for k, v in manifest.code.checksums.items() %}
 {{ k }} = "{{ v }}"
 {%- endfor -%}
+
+{%- if manifest.mounts %}
+
+[mounts]
+
+{%- for name, mount in manifest.mounts.items() %}
+
+[mounts."{{name}}"]
+hostpath = "{{ mount.hostpath }}"
+required = {{ mount.required }}
+{%- endfor %}
+
+{% endif %}

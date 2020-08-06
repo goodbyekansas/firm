@@ -951,6 +951,7 @@ mod tests {
                 }),
                 code: Some(code_file!(s.as_bytes())),
                 attachments: vec![],
+                host_folder_mounts: vec![],
                 function: Some(Function {
                     id: Some(FunctionId {
                         value: "huuuuuus".to_owned(),
@@ -1070,6 +1071,7 @@ mod tests {
                 }),
                 code: Some(code_file!(s.as_bytes())),
                 attachments: vec![],
+                host_folder_mounts: vec![],
                 function: Some(Function {
                     id: Some(FunctionId {
                         value: "pieceee of pie".to_owned(),
@@ -1158,6 +1160,7 @@ mod tests {
                 inputs: vec![],
                 outputs: vec![],
                 attachment_ids: vec![],
+                host_folder_mounts: vec![],
             },
             RegisterRequest {
                 execution_environment: Some(ExecutionEnvironment {
@@ -1172,6 +1175,7 @@ mod tests {
                 inputs: vec![],
                 outputs: vec![],
                 attachment_ids: vec![],
+                host_folder_mounts: vec![],
             },
             RegisterRequest {
                 execution_environment: Some(ExecutionEnvironment {
@@ -1186,6 +1190,7 @@ mod tests {
                 inputs: vec![],
                 outputs: vec![],
                 attachment_ids: vec![],
+                host_folder_mounts: vec![],
             },
         ]
         .into_iter()

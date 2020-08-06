@@ -1,8 +1,8 @@
 use std::fmt::{self, Display};
 
 use gbk_protocols::functions::{
-    ArgumentType, ExecutionEnvironment, Function, FunctionDescriptor, FunctionId, FunctionInput,
-    FunctionOutput,
+    ArgumentType, ExecutionEnvironment, FunctionDescriptor, FunctionHostFolderMount, FunctionId,
+    FunctionInput, FunctionOutput,
 };
 
 pub struct Displayer<'a, T> {
@@ -72,6 +72,17 @@ impl Display for Displayer<'_, FunctionDescriptor> {
                 }
                 write!(f, "{}codeUrl: ", t)?;
 
+                if self.host_folder_mounts.is_empty() {
+                    writeln!(f, "\tmounts: [n/a]")?;
+                } else {
+                    writeln!(f, "\tmounts:")?;
+                    self.host_folder_mounts
+                        .clone()
+                        .into_iter()
+                        .map(|mount| writeln!(f, "{}{}", t2, mount.display()))
+                        .collect::<fmt::Result>()?;
+                }
+
                 writeln!(
                     f,
                     "{}",
@@ -117,42 +128,19 @@ impl Display for Displayer<'_, FunctionDescriptor> {
     }
 }
 
-impl Display for Displayer<'_, Function> {
+impl Display for Displayer<'_, FunctionHostFolderMount> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let na = "n/a".to_string();
-        let id_str = self.id.clone().unwrap_or(FunctionId { value: na }).value;
-        writeln!(f, "\t{}", self.name)?;
-        writeln!(f, "\tid:      {}", id_str)?;
-        if self.inputs.is_empty() {
-            writeln!(f, "\tinputs:  n/a")?;
-        } else {
-            writeln!(f, "\tinputs:")?;
-            self.inputs
-                .clone()
-                .into_iter()
-                .map(|i| writeln!(f, "\t\t {}", i.display()))
-                .collect::<fmt::Result>()?;
-        }
-        if self.outputs.is_empty() {
-            writeln!(f, "\toutputs: n/a")?;
-        } else {
-            writeln!(f, "\toutputs:")?;
-            self.outputs
-                .clone()
-                .into_iter()
-                .map(|i| writeln!(f, "\t\t {}", i.display()))
-                .collect::<fmt::Result>()?;
-        }
-        if self.metadata.is_empty() {
-            writeln!(f, "\tmetadata:    n/a")
-        } else {
-            writeln!(f, "\tmetadata:")?;
-            self.metadata
-                .clone()
-                .iter()
-                .map(|(x, y)| writeln!(f, "\t\t {}:{}", x, y))
-                .collect()
-        }
+        writeln!(
+            f,
+            "[{}] {}:{}",
+            if self.required {
+                "required"
+            } else {
+                "optional"
+            },
+            self.target_folder_path,
+            self.host_folder_path
+        )
     }
 }
 

@@ -51,6 +51,7 @@ macro_rules! functions_service_with_functions {
                     args: vec![],
                 }),
                 attachment_ids: vec![],
+                host_folder_mounts: vec![],
             },
             RegisterRequest {
                 name: "say-hello-yourself".to_owned(),
@@ -83,6 +84,7 @@ macro_rules! functions_service_with_functions {
                     args: vec![],
                 }),
                 attachment_ids: vec![],
+                host_folder_mounts: vec![],
             },
         ]
         .iter()
