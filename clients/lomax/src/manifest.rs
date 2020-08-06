@@ -9,7 +9,8 @@ use thiserror::Error;
 
 use gbk_protocols::functions::{
     ArgumentType, Checksums as ProtoChecksums, ExecutionEnvironment as ProtoExecutionEnvironment,
-    FunctionArgument, FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput,
+    FunctionArgument, FunctionHostFolderMount as ProtoHostFolderMount,
+    FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput,
     RegisterAttachmentRequest, RegisterRequest,
 };
 
@@ -46,6 +47,9 @@ enum FunctionArgumentType {
     Bytes,
 }
 
+fn default_as_true() -> bool {
+    true
+}
 #[derive(Debug, Deserialize)]
 pub struct FunctionManifest {
     name: String,
@@ -72,6 +76,17 @@ pub struct FunctionManifest {
 
     #[serde(default)]
     code: Option<Attachment>,
+
+    #[serde(default)]
+    mounts: HashMap<String, HostFolderMount>,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct HostFolderMount {
+    hostpath: String,
+
+    #[serde(default = "default_as_true")]
+    required: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -245,6 +260,15 @@ impl From<&FunctionManifest> for RegisterRequest {
                     .collect(),
                 entrypoint: fm.execution_environment.entrypoint.clone(),
             }),
+            host_folder_mounts: fm
+                .mounts
+                .iter()
+                .map(|(target_folder, mount)| ProtoHostFolderMount {
+                    target_folder_path: target_folder.clone(),
+                    host_folder_path: mount.hostpath.clone(),
+                    required: mount.required,
+                })
+                .collect(),
             attachment_ids: vec![],
         }
     }
@@ -306,6 +330,13 @@ mod tests {
             ManifestError::ManifestParseError(_)
         ));
 
+        let r = FunctionManifest::parse(Path::new(""));
+        assert!(r.is_err());
+        assert!(matches!(
+            r.unwrap_err(),
+            ManifestError::ManifestFileReadError{ .. }
+        ));
+
         let toml = r#"
         name = "start-blender"
         version = "0.1.0"
@@ -357,12 +388,51 @@ mod tests {
         assert!(r.is_ok());
         assert_eq!(r.unwrap().execution_environment.args["sune"], "bune");
 
-        let r = FunctionManifest::parse(Path::new(""));
-        assert!(r.is_err());
-        assert!(matches!(
-            r.unwrap_err(),
-            ManifestError::ManifestFileReadError{ .. }
-        ));
+        // test parsing mounts
+        let toml = r#"
+        name = "start-blender"
+
+        version = "0.1.0"
+
+        [inputs]
+          [inputs.version]
+          type = "string"
+
+        [outputs]
+          [outputs.pid]
+          type="int"
+
+        [execution-environment]
+        type = "wasm"
+
+        [execution-environment.args]
+        sune = "bune"
+
+        [mounts]
+        "test/compact" = { hostpath="/a/path" }
+
+        [mounts."test/sune"]
+        hostpath = "C:\\sune"
+        required = false
+
+        "#;
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        assert!(r.is_ok());
+        let manifest = r.unwrap();
+        assert_eq!(
+            manifest.mounts["test/sune"],
+            HostFolderMount {
+                hostpath: "C:\\sune".to_owned(),
+                required: false
+            }
+        );
+        assert_eq!(
+            manifest.mounts["test/compact"],
+            HostFolderMount {
+                hostpath: "/a/path".to_owned(),
+                required: true // true is the default
+            }
+        );
 
         // Test parsing code and attachments
         let toml = r#"
@@ -457,6 +527,63 @@ mod tests {
         assert_eq!(
             rr.outputs.first().unwrap(),
             &function_output!("ost", ArgumentType::Int)
+        );
+    }
+
+    #[test]
+    fn test_mounts_conversion() {
+        // test parsing mounts
+        let toml = r#"
+        name = "start-blender"
+
+        version = "0.1.0"
+
+        [inputs]
+          [inputs.version]
+          type = "string"
+
+        [outputs]
+          [outputs.pid]
+          type="int"
+
+        [execution-environment]
+        type = "wasm"
+
+        [execution-environment.args]
+        sune = "bune"
+
+        [mounts]
+        "test/compact" = { hostpath="/a/path" }
+
+        [mounts."test/sune"]
+        hostpath = "C:\\sune"
+        required = false
+
+        "#;
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        let rr = RegisterRequest::from(&r.unwrap());
+
+        assert_eq!(
+            rr.host_folder_mounts
+                .iter()
+                .find(|m| m.target_folder_path == "test/sune")
+                .unwrap(),
+            &ProtoHostFolderMount {
+                host_folder_path: "C:\\sune".to_owned(),
+                target_folder_path: "test/sune".to_owned(),
+                required: false
+            }
+        );
+        assert_eq!(
+            rr.host_folder_mounts
+                .iter()
+                .find(|m| m.target_folder_path == "test/compact")
+                .unwrap(),
+            &ProtoHostFolderMount {
+                target_folder_path: "test/compact".to_owned(),
+                host_folder_path: "/a/path".to_owned(),
+                required: true // true is the default
+            }
         );
     }
 
