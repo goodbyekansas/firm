@@ -96,9 +96,9 @@ impl AttachmentDownload for FunctionAttachment {
                     .ok_or(ExecutorError::MissingChecksums)
                     .and_then(|checksums| {
                         let mut hasher = Sha256::new();
-                        hasher.input(&content);
+                        hasher.update(&content);
 
-                        let checksum = hasher.result();
+                        let checksum = hasher.finalize();
 
                         if &checksum[..] != hex::decode(checksums.sha256.clone())?.as_slice() {
                             Err(ExecutorError::ChecksumMismatch {

@@ -391,7 +391,8 @@ fn execute_function(
         .map_err(|e| format!("failed to instantiate WASI module: {}", e))?;
 
     let entry_function: Func<(), ()> = instance
-        .func(ENTRY)
+        .exports
+        .get(ENTRY)
         .map_err(|e| format!("Failed to resolve entrypoint {}: {}", ENTRY, e))?;
 
     entry_function

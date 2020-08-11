@@ -15,4 +15,5 @@ thiserror = "1"
 tokio = { version = "0.2", features = ["rt-threaded"] }
 toml = "0.5"
 uuid = { version = "0.8", features = ["v4"] }
+
 gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
