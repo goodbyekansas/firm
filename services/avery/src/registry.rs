@@ -162,7 +162,7 @@ impl FunctionsRegistryService {
                 (Err(ref mut e), _) => Err(e.clone()),
             }?;
 
-            hasher.input(&chunk.content);
+            hasher.update(&chunk.content);
             file.write(&chunk.content).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Internal,
@@ -178,7 +178,7 @@ impl FunctionsRegistryService {
         }
 
         // validate integrity of uploaded file
-        let uploaded_content_checksum = hasher.result();
+        let uploaded_content_checksum = hasher.finalize();
         maybe_attachment
             .as_ref()
             .and_then(|a| a.checksums.as_ref())

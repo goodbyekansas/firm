@@ -7,17 +7,18 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+async-stream = "0.3"
+futures = "0.3"
+indicatif = "0.15"
 prost = "0.6"
+rand = "0.7"
 serde = { version = "1", features = ["derive"] }
 structopt = "0.3"
 thiserror = "1"
 tokio = { version = "0.2", features = ["blocking", "rt-threaded", "macros"] }
 toml = "0.5"
+
 gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
-async-stream = "0.2"
-futures = "0.3"
-indicatif = "0.14"
-rand = "0.7"
 
 [dev-dependencies]
 tempfile = "3"
