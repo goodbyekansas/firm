@@ -13,29 +13,18 @@ let
     )
     attachments;
 
-  normalizeMounts = mounts: pkgs.lib.mapAttrs
-    (
-      mountName: mountPathOrData:
-        {
-          hostpath = if builtins.isString mountPathOrData then mountPathOrData else mountPathOrData.hostPath;
-          required = if builtins.isString mountPathOrData then true else mountPathOrData.required;
-        }
-    )
-    mounts;
-
-  normalizedManifest = {
+  manifestWithNormalizedAttachments = {
     # wrap this in a key to be able to
     # use variables with dashes in Jinja later
     manifest = manifest // {
       attachments = normalizeAttachments manifest.attachments or { };
-      mounts = normalizeMounts manifest.mounts or { };
     };
   };
 in
 pkgs.stdenv.mkDerivation {
   name = "${name}-manifest";
   propagatedBuildInputs = [ j2 ];
-  manifestData = builtins.toJSON normalizedManifest;
+  manifestData = builtins.toJSON manifestWithNormalizedAttachments;
   passAsFile = [ "manifestData" ];
 
   # we need the fixupPhase to exist even though

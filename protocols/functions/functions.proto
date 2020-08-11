@@ -57,33 +57,21 @@ message ExecutionEnvironment {
   repeated FunctionArgument args = 3;
 }
 
-// All info for a function
-// Needs to be enough to execute it
 message FunctionDescriptor {
   ExecutionEnvironment execution_environment = 1;
   FunctionAttachment code = 2;
   Function function = 3;
   repeated FunctionAttachment attachments = 5;
-  repeated FunctionHostFolderMount host_folder_mounts = 6;
 }
 
-// Metadata about a function. I.e. what is needed
-// to reason about it, not execute it
 message Function {
+  // this record is only for discussing metadata of a function not its code
   FunctionId id = 1;
   string name = 2;
   string version = 3;
   map<string, string> metadata = 4;
   repeated FunctionInput inputs = 5;
   repeated FunctionOutput outputs = 6;
-}
-
-// A mount of a host folder to
-// the function domain (e.g. WASI)
-message FunctionHostFolderMount {
-  string host_folder_path = 1;
-  string target_folder_path = 2;
-  bool required_ = 3;
 }
 
 message RegisterRequest {
@@ -95,8 +83,6 @@ message RegisterRequest {
   ExecutionEnvironment execution_environment = 6;
   string version = 7;
   repeated FunctionAttachmentId attachment_ids = 9;
-  repeated FunctionHostFolderMount host_folder_mounts = 10;
-
 }
 
 message FunctionAttachment {

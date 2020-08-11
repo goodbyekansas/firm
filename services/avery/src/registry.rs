@@ -277,7 +277,6 @@ impl FunctionsRegistryService {
             execution_environment: Some(f.execution_environment.clone()),
             code,
             attachments,
-            host_folder_mounts: vec![],
         })
     }
 }

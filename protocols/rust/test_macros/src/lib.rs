@@ -103,7 +103,6 @@ macro_rules! register_request {
             inputs: vec![$($input),*],
             outputs: vec![$($output),*],
             attachment_ids: vec![],
-            host_folder_mounts: vec![],
         }
     }};
 
@@ -142,7 +141,6 @@ macro_rules! register_request {
                     id: String::from($attach),
                 }
             ),*],
-            host_folder_mounts: vec![],
         }
     }};
 }
