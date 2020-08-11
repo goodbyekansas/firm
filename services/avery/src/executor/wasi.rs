@@ -266,6 +266,22 @@ fn execute_function(
     let run_process_logger = logger.new(o!("scope" => "run_process"));
     let map_attachment_logger = logger.new(o!("scope" => "map_attachment"));
     let map_attachment_descriptor_logger = logger.new(o!("scope" => "map_attachment_descriptor"));
+
+    let host_file_exists_closure =
+        move |ctx: &mut Ctx, path: WasmPtr<u8, Array>, path_len: u32, exists: WasmPtr<u8, Item>| {
+            String::try_from(WasmString::new(WasmBuffer::new(
+                ctx.memory(0),
+                path,
+                path_len,
+            )))
+            .map_err(|e| WasiError::FailedToReadStringPointer("path".to_owned(), e))
+            .and_then(|p| {
+                let exists = WasmItemPtr::new(ctx.memory(0), exists);
+                exists.set(Path::new(&p).exists() as u8)
+            })
+            .to_error_code()
+        };
+
     let gbk_imports = imports! {
         "gbk" => {
             "get_attachment_path_len" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_len: WasmPtr<u32, Item>| {
@@ -318,6 +334,7 @@ fn execute_function(
                     ),
                     &map_attachment_descriptor_logger).to_error_code()
             }),
+            "host_path_exists" => func!(host_file_exists_closure),
             "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
                 StdIOConfig::new(&std0.stdout.inner, &std0.stderr.inner)
                 .map_or_else(
