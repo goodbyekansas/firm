@@ -86,6 +86,15 @@ pub unsafe fn map_attachment_from_descriptor(
     )
 }
 
+/// Host path exists
+///
+/// # Safety
+/// This is a mock implementation and while it uses
+/// unsafe functions it does nothing technically unsafe
+pub unsafe fn host_path_exists(path: *const u8, path_len: usize, exists: *mut u8) -> u32 {
+    MockResultRegistry::execute_host_path_exists(path, path_len, exists)
+}
+
 /// Start host process
 ///
 /// # Safety
@@ -170,6 +179,7 @@ pub struct MockResultRegistry {
         MockCallbacks<dyn Fn(&FunctionAttachment) -> Result<usize, u32> + Send>,
     map_attachment_from_descriptor_closure:
         MockCallbacks<dyn Fn(&FunctionAttachment, bool) -> Result<String, u32> + Send>,
+    host_path_exists_closure: MockCallbacks<dyn Fn(&str) -> Result<bool, u32> + Send>,
     start_host_process_closure:
         MockCallbacks<dyn Fn(StartProcessRequest) -> Result<u64, u32> + Send>,
     run_host_process_closure: MockCallbacks<dyn Fn(StartProcessRequest) -> Result<i32, u32> + Send>,
@@ -345,6 +355,42 @@ impl MockResultRegistry {
                         let buff =
                             unsafe { std::slice::from_raw_parts_mut(path_ptr, path_buffer_len) };
                         buff.clone_from_slice(att_path.as_bytes());
+                        0
+                    }
+                    Err(e) => e,
+                },
+            )
+    }
+
+    pub fn set_host_path_exists_impl<F>(closure: F)
+    where
+        F: Fn(&str) -> Result<bool, u32> + Send + 'static,
+    {
+        MOCK_RESULT_REGISTRY
+            .lock()
+            .unwrap()
+            .host_path_exists_closure
+            .insert(thread::current().id(), Box::new(closure));
+    }
+
+    fn execute_host_path_exists(path_ptr: *const u8, path_len: usize, exists: *mut u8) -> u32 {
+        let path = unsafe {
+            let slice = std::slice::from_raw_parts(path_ptr, path_len);
+            std::str::from_utf8(slice).unwrap()
+        };
+
+        MOCK_RESULT_REGISTRY
+            .lock()
+            .unwrap()
+            .host_path_exists_closure
+            .get(&thread::current().id())
+            .map_or_else(
+                || 1,
+                |c| match c(path) {
+                    Ok(e) => {
+                        unsafe {
+                            *exists = e as u8;
+                        }
                         0
                     }
                     Err(e) => e,

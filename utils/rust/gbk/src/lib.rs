@@ -156,6 +156,18 @@ pub fn map_attachment_from_descriptor_and_unpack(
     _map_attachment_from_descriptor(attachment_descriptor, true)
 }
 
+/// Checks if a path on the hosts file system exists (outside the wasi file system)
+pub fn host_path_exists<S: AsRef<str>>(path: S) -> Result<bool, Error> {
+    let mut exists: u8 = 0;
+
+    host_call!(raw::host_path_exists(
+        path.as_ref().as_ptr(),
+        path.as_ref().len(),
+        &mut exists as *mut u8
+    ))
+    .map(|_| exists != 0)
+}
+
 /// Start a process on the host
 ///
 /// `name` is the executable to run, `args` the command line arguments to it
@@ -580,6 +592,28 @@ mod tests {
         let res = map_attachment(attachment_name);
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), Error::HostError(10)));
+    }
+
+    #[test]
+    fn test_host_path_exists() {
+        let datapata = "/sune/super-sune/mega-sune";
+        let datapata2 = datapata.clone();
+        MockResultRegistry::set_host_path_exists_impl(move |path| {
+            assert_eq!(path, datapata);
+            Ok(true)
+        });
+
+        assert!(host_path_exists(datapata2).unwrap());
+
+        MockResultRegistry::set_host_path_exists_impl(|_| Ok(false));
+
+        assert!(!host_path_exists(datapata2).unwrap());
+
+        MockResultRegistry::set_host_path_exists_impl(|_| Err(123456));
+
+        let res = host_path_exists(datapata2);
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), Error::HostError(123456)));
     }
 
     #[test]
