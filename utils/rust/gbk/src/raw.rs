@@ -15,6 +15,8 @@ extern "C" {
         path_len: usize,
     ) -> u32;
 
+    pub fn host_path_exists(path: *const u8, path_len: usize, exists: *mut u8) -> u32;
+
     pub fn get_attachment_path_len_from_descriptor(
         attachment_descriptor_ptr: *const u8,
         attachment_descriptor_len: usize,
