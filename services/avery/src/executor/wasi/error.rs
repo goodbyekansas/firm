@@ -23,7 +23,7 @@ pub enum WasiError {
     FailedToDerefPointer(),
 
     #[error("Failed to start process: {0}.")]
-    FailedToStartProcess(#[from] io::Error),
+    FailedToStartProcess(io::Error),
 
     #[error("Failed to decode value from protobuf: {0}")]
     FailedToDecodeProtobuf(#[from] prost::DecodeError),

@@ -5,7 +5,7 @@ use std::{
 };
 
 use prost::Message;
-use slog::{info, Logger};
+use slog::{info, warn, Logger};
 
 use super::{
     error::{WasiError, WasiResult},
@@ -78,7 +78,7 @@ pub fn start_process(
         .stderr(stdio.stderr)
         .spawn()
         .map_err(|e| {
-            println!("Failed to launch host process: {}", e);
+            warn!(logger, "Failed to launch host process: {}", e);
             WasiError::FailedToStartProcess(e)
         })
         .and_then(|c| pid_out.set(c.id() as u64))
@@ -107,7 +107,7 @@ pub fn run_process(
         .stderr(stdio.stderr)
         .status()
         .map_err(|e| {
-            println!("Failed to run host process: {}", e);
+            warn!(logger, "Failed to run host process: {}", e);
             WasiError::FailedToStartProcess(e)
         })
         .and_then(|c| exit_code_out.set(c.code().unwrap_or(-1)))
