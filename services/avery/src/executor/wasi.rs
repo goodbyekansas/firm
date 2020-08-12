@@ -282,6 +282,18 @@ fn execute_function(
             .to_error_code()
         };
 
+    let get_host_os =
+        |ctx: &mut Ctx, os_name: WasmPtr<u8, Array>, len_written: WasmPtr<u32, Item>| {
+            WasmItemPtr::new(ctx.memory(0), len_written)
+                .set(std::env::consts::OS.len() as u32)
+                .and_then(|_| {
+                    WasmBuffer::new(ctx.memory(0), os_name, 128)
+                        .write_all(std::env::consts::OS.as_bytes())
+                        .map_err(WasiError::FailedToWriteBuffer)
+                })
+                .to_error_code();
+        };
+
     let gbk_imports = imports! {
         "gbk" => {
             "get_attachment_path_len" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_len: WasmPtr<u32, Item>| {
@@ -335,6 +347,7 @@ fn execute_function(
                     &map_attachment_descriptor_logger).to_error_code()
             }),
             "host_path_exists" => func!(host_file_exists_closure),
+            "get_host_os" => func!(get_host_os),
             "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
                 StdIOConfig::new(&std0.stdout.inner, &std0.stderr.inner)
                 .map_or_else(
