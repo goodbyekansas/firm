@@ -38,6 +38,7 @@ pkgs.stdenv.mkDerivation {
     cp ${./generate_checksums.py} $out/generate_checksums.py
     cp ${./copy_attachments.py} $out/copy_attachments.py
     cp ${./manifest-template.jinja.toml} $out/manifest-template.jinja.toml
+    cp ${./template_settings.py} $out/template_settings.py
     cp $manifestDataPath $out/manifest-data.json
   '';
 

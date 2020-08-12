@@ -18,7 +18,8 @@ generateManifestPhase() {
           ./manifest-data-with-existing-attachments.json | sed "s/^/  📜 [manifest] /"
 
   echo "  📜 [manifest] Generating final manifest..."
-  j2 -f json @out@/manifest-template.jinja.toml \
+  j2 -f json --customize @out@/template_settings.py \
+          @out@/manifest-template.jinja.toml \
           ./manifest-data-with-existing-attachments.json \
           -o $out/manifest.toml | sed "s/^/  📜 [manifest] /"
   echo "  📜 [manifest] Manifest written to $out/manifest.toml"

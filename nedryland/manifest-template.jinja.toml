@@ -3,45 +3,59 @@ version = "{{ manifest.version }}"
 
 {% if "metadata" in manifest %}
 [metadata]
-{%- for k, v in manifest.metadata.items() %}
+{% for k, v in manifest.metadata.items() %}
 {{ k }} = "{{ v }}"
-{%- endfor -%}
+{% endfor %}
 {% endif %}
 
 [execution-environment]
-{%- if 'entrypoint' in manifest['execution-environment'] %}
+{% if 'entrypoint' in manifest['execution-environment'] %}
 entrypoint = "{{ manifest['execution-environment'].entrypoint }}"
-{%- endif %}
+{% endif %}
 type = "{{ manifest['execution-environment'].type }}"
 
-{% if manifest.attachments -%}
+{% if "inputs" in manifest %}
+[inputs]
+{% for name, input in manifest.inputs.items() %}
+[inputs.{{name}}]
+type = "{{input.type}}"
+{% if "default" in input %}
+default = "{{input.default}}"
+{% endif %}
+required = {{ "true" if "required" in input and input.required else "false" }}
+{% endfor %}
+{% endif %}
+
+{% if "outputs" in manifest %}
+[outputs]
+{% for name, output in manifest.outputs.items() %}
+[outputs.{{name}}]
+type = "{{output.type}}"
+{% endfor %}
+{% endif %}
+
+{% if manifest.attachments %}
 [attachments]
 
-{%- for name, attachment in manifest.attachments.items() %}
-
+{% for name, attachment in manifest.attachments.items() %}
 [attachments.{{name}}]
 path = "attachments/{{ name }}"
-
 [attachments.{{name}}.checksums]
-{%- for k, v in attachment.checksums.items() %}
+{% for k, v in attachment.checksums.items() %}
 {{ k }} = "{{ v }}"
-{%- endfor -%}
-
+{% endfor %}
 {% if "metadata" in attachment %}
 [attachments.{{name}}.metadata]
-{%- for k, v in attachment.metadata.items() %}
+{% for k, v in attachment.metadata.items() %}
 {{ k }} = "{{ v }}"
-{%- endfor -%}
-{%- endif %}
-
-{% endfor -%}
-
-{%- endif %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}
 
 [code]
 path = "{{manifest.code.path}}"
-
 [code.checksums]
-{%- for k, v in manifest.code.checksums.items() %}
+{% for k, v in manifest.code.checksums.items() %}
 {{ k }} = "{{ v }}"
-{%- endfor -%}
+{% endfor %}
