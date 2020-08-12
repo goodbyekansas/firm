@@ -291,7 +291,7 @@ fn execute_function(
                         .write_all(std::env::consts::OS.as_bytes())
                         .map_err(WasiError::FailedToWriteBuffer)
                 })
-                .to_error_code();
+                .to_error_code()
         };
 
     let gbk_imports = imports! {
