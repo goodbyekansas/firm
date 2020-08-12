@@ -168,6 +168,23 @@ pub fn host_path_exists<S: AsRef<str>>(path: S) -> Result<bool, Error> {
     .map(|_| exists != 0)
 }
 
+/// Get the name of the OS of the host
+pub fn get_host_os() -> Result<String, Error> {
+    let mut name = String::with_capacity(128);
+    let mut host_os_name_length: u32 = 0;
+    host_call!(raw::get_host_os(
+        name.as_mut_ptr(),
+        &mut host_os_name_length as *mut u32
+    ))
+    .map(|_| {
+        unsafe {
+            name.as_mut_vec().set_len(host_os_name_length as usize);
+        }
+
+        name
+    })
+}
+
 /// Start a process on the host
 ///
 /// `name` is the executable to run, `args` the command line arguments to it
@@ -614,6 +631,16 @@ mod tests {
         let res = host_path_exists(datapata2);
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), Error::HostError(123456)));
+    }
+
+    #[test]
+    fn test_get_host_os() {
+        MockResultRegistry::set_get_host_os_impl(|| Ok(String::from("windows")));
+        assert!(get_host_os().is_ok());
+        assert_eq!(get_host_os().unwrap(), "windows");
+        MockResultRegistry::set_get_host_os_impl(|| Err(666));
+        assert!(get_host_os().is_err());
+        assert!(matches!(get_host_os().unwrap_err(), Error::HostError(666)));
     }
 
     #[test]
