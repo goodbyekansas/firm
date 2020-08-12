@@ -284,11 +284,15 @@ fn execute_function(
 
     let get_host_os =
         |ctx: &mut Ctx, os_name: WasmPtr<u8, Array>, len_written: WasmPtr<u32, Item>| {
+            let len = std::env::consts::OS.len();
             WasmItemPtr::new(ctx.memory(0), len_written)
-                .set(std::env::consts::OS.len() as u32)
+                .set(len as u32)
                 .and_then(|_| {
-                    WasmBuffer::new(ctx.memory(0), os_name, 128)
-                        .write_all(std::env::consts::OS.as_bytes())
+                    // TODO: Proper error for OS names longer than 128 when we have
+                    // better error marshalling.
+                    let len = std::cmp::min(128, len);
+                    WasmBuffer::new(ctx.memory(0), os_name, len as u32)
+                        .write_all(&std::env::consts::OS.as_bytes()[..len])
                         .map_err(WasiError::FailedToWriteBuffer)
                 })
                 .to_error_code()
