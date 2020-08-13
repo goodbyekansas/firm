@@ -12,7 +12,7 @@ let
       '';
     };
 
-  mkFunction = attrs@{ name, package, manifest, code, ... }:
+  mkFunction = attrs@{ name, package, manifest, code, deploy ? true, ... }:
     let
       manifestGenerator = pkgs.callPackage ./manifest.nix {
         inherit name;
@@ -30,10 +30,13 @@ let
     base.mkComponent (
       attrs // {
         package = packageWithManifest;
-        deployment = {
-          function = deployFunction { package = packageWithManifest; };
-        };
-      }
+      } // (
+        if deploy then {
+          deployment = {
+            function = deployFunction { package = packageWithManifest; };
+          };
+        } else { }
+      )
     );
 in
 base.extend.mkExtension {
