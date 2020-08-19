@@ -1,0 +1,11 @@
+[package]
+name = "quinn"
+version = "0.1.0"
+authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
+edition = "2018"
+
+[dependencies]
+tokio = { version = "0.2", features = ["macros"] }
+
+gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
+
