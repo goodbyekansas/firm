@@ -52,6 +52,11 @@ let
 
       windowsPackages = [ ];
     };
+
+    quinn = project.declareComponent ./services/quinn/quinn.nix {
+      protocols = protocols.rust.withServices;
+      protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
+    };
   };
   capturedLomaxPackage = components.lomax.package;
 
