@@ -1,0 +1,20 @@
+{
+    "nedryland": {
+        "ref": "master",
+        "repo": "git@github.com:goodbyekansas/nedryland",
+        "rev": "2e8e844cfeebb3e45a43deb680f41b47dce534d4",
+        "type": "git"
+    },
+    "niv": {
+        "branch": "master",
+        "description": "Easy dependency management for Nix projects",
+        "homepage": "https://github.com/nmattia/niv",
+        "owner": "nmattia",
+        "repo": "niv",
+        "rev": "b50a0107691487d4948c2078a77afdc0d1f20e8b",
+        "sha256": "0cr2a6rp9g8jjadwvb65j5fjlby64mqj48wyfm5p265iqjhvqn9q",
+        "type": "tarball",
+        "url": "https://github.com/nmattia/niv/archive/b50a0107691487d4948c2078a77afdc0d1f20e8b.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
+    }
+}
