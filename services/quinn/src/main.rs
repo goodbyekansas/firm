@@ -58,7 +58,12 @@ impl FunctionsRegistry for FunctionsRegistryService {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "[::1]:50051".parse().unwrap();
+    let addr = format!(
+        "0.0.0.0:{}",
+        std::env::var("PORT").unwrap_or_else(|_| String::from("50051"))
+    )
+    .parse()
+    .unwrap();
     let svc = FunctionsRegistryService::default();
 
     println!("Quinn listening on {}", addr);
