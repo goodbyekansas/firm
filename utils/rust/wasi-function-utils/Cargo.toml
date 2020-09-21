@@ -1,5 +1,5 @@
 [package]
-name = "gbk"
+name = "wasi-function-utils"
 version = "0.1.0"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"

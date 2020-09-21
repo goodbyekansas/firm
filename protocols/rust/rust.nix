@@ -25,7 +25,7 @@ base.mkComponent {
     inherit rustProtoCompiler;
 
     buildPhase = ''
-      $rustProtoCompiler/bin/compiler -I ./ ${if includeServices then "--build-services" else ""} -o ./gbk-protocols/src **/*.proto
+      $rustProtoCompiler/bin/rust-protobuf-compiler -I ./ ${if includeServices then "--build-services" else ""} -o ./gbk-protocols/src **/*.proto
       substitute rust/Cargo.toml ./gbk-protocols/Cargo.toml --subst-var-by includeTonic ${if includeServices then "'tonic = \"0.3\"'" else "''"}
 
       # generate a useable lib.rs

@@ -16,7 +16,7 @@ let
   components = rec {
     inherit protocols;
 
-    wasiFunctionUtils = project.declareComponent ./utils/rust/gbk/gbk.nix {
+    wasiFunctionUtils = project.declareComponent ./utils/rust/wasi-function-utils/wasi-function-utils.nix {
       protocols = protocols.rust.onlyMessages;
     };
     avery = project.declareComponent ./services/avery/avery.nix {
