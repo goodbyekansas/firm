@@ -7,64 +7,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2.0.0
+    - uses: actions/checkout@v2
     - name: Install Nix
-      uses: cachix/install-nix-action@v6
+      uses: cachix/install-nix-action@v10
     - name: Format the Firm 💋
       run:  nix-shell -p nixpkgs-fmt --command "nixpkgs-fmt . --check"
 
-  build:
+  build-package-with-checks:
+    name: "Build all components with checks"
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        component: [
-          avery,
-          bendini,
-          lomax,
-          quinn,
-          wasiFunctionUtils,
-          protocols.python,
-          protocols.rust.withServices,
-          protocols.rustProtoCompiler,
-          protocols.rust.testHelpers,
-        ]
-
     steps:
-    - name: Install SSH key
-      uses: shimataro/ssh-key-action@v2
-      with:
-        key: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
-        known_hosts: ${{ secrets.KNOWN_HOSTS }}
-    - uses: actions/checkout@v2.0.0
+
+    - name: Clone the repo
+      uses: actions/checkout@v2
+
+    - name: Setup ssh agent
+      env:
+        CI_ACCESS_KEY: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
+      run: .github/workflows/ssh_agent.sh
+
+    - name: Set up nix builders ssh connection
+      run: .github/workflows/setup-builders-ssh.sh
+
     - name: Install Nix
-      uses: cachix/install-nix-action@v8
-    - name: Remove rustup since it interferes with the build
-      run: rustup self uninstall -y
-    - name: Disable Nix sandboxing
+      uses: cachix/install-nix-action@v10
+
+    - name: Create Nix configuration
       run: |
         mkdir -p ~/.config/nix
-        echo "sandbox = false" > ~/.config/nix/nix.conf
-    - name: Create Cache Folder
-      run: |
-        sudo mkdir -p /var/cache/nedryland-rust
-        sudo chown $(id -un):nixbld /var/cache/nedryland-rust
-        sudo chmod g+rwx /var/cache/nedryland-rust
-    - name: Cache rust output
-      uses: actions/cache@v1.1.2
-      with:
-        path: /var/cache/nedryland-rust
-        key: rust-v3-${{ runner.os }}-${{matrix.component}}-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          rust-v3-${{ runner.os }}-${{matrix.component}}-
-    - name: Build, test and cache ${{ matrix.component }} package
-      uses: cachix/cachix-action@v5
+        cp .github/workflows/nix.conf ~/.config/nix/nix.conf
+
+    - name: Setup cachix
+      uses: cachix/cachix-action@v6
       with:
         name: firm
-        nixBuildArgs: --verbose --show-trace
-        attributes: "${{ matrix.component }}.packageWithChecks"
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
-    - name: Set correct permissions of cache directory
-      run: sudo chmod -R o+rX /var/cache/nedryland-rust
-    - name: Cache hack to avoid empty cache
-      run: sudo rmdir /var/cache/nedryland-rust || true
+
+    - name: Generate list of derivations to build
+      run: nix-instantiate -A packageWithChecks --add-root ./derivations/drv --indirect
+
+    - name: Create Github checks for each derivation
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: .github/workflows/github-package-status.bash pre ${{ github.repository }} ${{ github.sha }} ${{ github.job }} ./derivations
+
+    - name: Build all derivations
+      run: nix build -L ./derivations/* --show-trace --max-jobs 0
+
+    - name: Finish Github checks for each derivation
+      if: ${{ always() }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: .github/workflows/github-package-status.bash post ${{ github.repository }} ./derivations
