@@ -7,7 +7,7 @@ let
     name = "firm";
     configFile = ./firm.toml;
     baseExtensions = [
-      (import ./nedryland/function.nix)
+      (import ./extensions/function.nix)
     ];
   };
   protocols = import ./protocols project;
