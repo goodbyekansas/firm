@@ -1,6 +1,6 @@
 { base, pkgs, protocols }:
 base.languages.rust.mkUtility {
-  name = "gbk";
+  name = "wasi-function-utils";
   src = ./.;
   defaultTarget = "wasm32-wasi";
   targets = [ "wasm32-wasi" ];
