@@ -137,7 +137,7 @@ macro_rules! register_request {
             inputs: vec![],
             outputs: vec![],
             attachment_ids: vec![$(
-                FunctionAttachmentId {
+                gbk_protocols::functions::FunctionAttachmentId {
                     id: String::from($attach),
                 }
             ),*],

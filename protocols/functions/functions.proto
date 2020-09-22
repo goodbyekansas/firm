@@ -110,8 +110,15 @@ message AttachmentStreamUpload {
   bytes content = 2;
 }
 
+enum AuthMethod {
+  NONE = 0;
+  BASIC = 1;
+  OAUTH2 = 2;
+}
+
 message AttachmentUploadResponse {
   string url = 1;
+  AuthMethod auth_method = 2;
 }
 
 message RegisterAttachmentRequest {

@@ -17,7 +17,7 @@ use uuid::Uuid;
 use gbk_protocols::{
     functions::{
         functions_registry_server::FunctionsRegistry, AttachmentStreamUpload, AttachmentUpload,
-        AttachmentUploadResponse, ExecutionEnvironment, Function as ProtoFunction,
+        AttachmentUploadResponse, AuthMethod, ExecutionEnvironment, Function as ProtoFunction,
         FunctionAttachment, FunctionAttachmentId, FunctionDescriptor, FunctionId, FunctionInput,
         FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterAttachmentRequest,
         RegisterRequest, RegistryListResponse,
@@ -212,6 +212,7 @@ impl FunctionsRegistryService {
                 .as_ref()
                 .map(|att| att.url.clone())
                 .unwrap_or_default(),
+            auth_method: AuthMethod::None as i32,
         }))
     }
 

@@ -1,70 +1,20 @@
 #![deny(warnings)]
 
-use tonic::{transport::Server, Status};
-
 use gbk_protocols::{
-    functions::functions_registry_server::{FunctionsRegistry, FunctionsRegistryServer},
-    tonic,
+    functions::functions_registry_server::FunctionsRegistryServer, tonic::transport::Server,
 };
-
-#[derive(Default)]
-pub struct FunctionsRegistryService {}
-
-#[tonic::async_trait]
-impl FunctionsRegistry for FunctionsRegistryService {
-    async fn list(
-        &self,
-        _request: tonic::Request<gbk_protocols::functions::ListRequest>,
-    ) -> Result<tonic::Response<gbk_protocols::functions::RegistryListResponse>, tonic::Status>
-    {
-        Err(Status::new(tonic::Code::Unimplemented, "TODO"))
-    }
-    async fn get(
-        &self,
-        _request: tonic::Request<gbk_protocols::functions::FunctionId>,
-    ) -> Result<tonic::Response<gbk_protocols::functions::FunctionDescriptor>, tonic::Status> {
-        Err(Status::new(tonic::Code::Unimplemented, "TODO"))
-    }
-    async fn register(
-        &self,
-        _request: tonic::Request<gbk_protocols::functions::RegisterRequest>,
-    ) -> Result<tonic::Response<gbk_protocols::functions::FunctionId>, tonic::Status> {
-        Err(Status::new(tonic::Code::Unimplemented, "TODO"))
-    }
-    async fn register_attachment(
-        &self,
-        _request: tonic::Request<gbk_protocols::functions::RegisterAttachmentRequest>,
-    ) -> Result<tonic::Response<gbk_protocols::functions::FunctionAttachmentId>, tonic::Status>
-    {
-        Err(Status::new(tonic::Code::Unimplemented, "TODO"))
-    }
-    async fn upload_streamed_attachment(
-        &self,
-        _request: tonic::Request<
-            tonic::Streaming<gbk_protocols::functions::AttachmentStreamUpload>,
-        >,
-    ) -> Result<tonic::Response<gbk_protocols::functions::AttachmentUploadResponse>, tonic::Status>
-    {
-        Err(Status::new(tonic::Code::Unimplemented, "TODO"))
-    }
-    async fn upload_attachment_url(
-        &self,
-        _request: tonic::Request<gbk_protocols::functions::AttachmentUpload>,
-    ) -> Result<tonic::Response<gbk_protocols::functions::AttachmentUploadResponse>, tonic::Status>
-    {
-        Err(Status::new(tonic::Code::Unimplemented, "TODO"))
-    }
-}
+use quinn::{config, registry};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config = config::Configuration::new()?;
+
     let addr = format!(
         "0.0.0.0:{}",
-        std::env::var("PORT").unwrap_or_else(|_| String::from("50051"))
+        std::env::var("PORT").unwrap_or_else(|_| config.port.to_string())
     )
-    .parse()
-    .unwrap();
-    let svc = FunctionsRegistryService::default();
+    .parse()?;
+    let svc = registry::FunctionRegistryService::new(config)?;
 
     println!("Quinn listening on {}", addr);
 
