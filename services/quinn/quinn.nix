@@ -5,7 +5,7 @@ base.languages.rust.mkService {
   src = ./.;
   rustDependencies = [ protocols protocolsTestHelpers ];
 
-  nativeBuildInputs = [ pkgs.postgresql pkgs.coreutils ];
+  nativeBuildInputs = [ pkgs.postgresql pkgs.coreutils pkgs.pkg-config pkgs.openssl ];
 
   extraChecks = ''
     source scripts/postgres.bash
