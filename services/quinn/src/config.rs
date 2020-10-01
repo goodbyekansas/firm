@@ -34,7 +34,9 @@ impl Configuration {
         let mut s = Config::new();
         s.merge(Environment::with_prefix("REGISTRY").separator("__"))?;
         let mut c: Configuration = s.try_into()?;
-        let secret_resolvers: &[&dyn SecretResolver] = &[&GcpSecretResolver {}];
+        let secret_resolvers: &[&dyn SecretResolver] = &[&GcpSecretResolver::new(
+            log.new(o!("scope" => "secret-resolver", "type" => "gcp")),
+        )];
 
         c.functions_storage_uri = resolve_secrets(
             c.functions_storage_uri,
@@ -118,7 +120,15 @@ trait SecretResolver {
     fn prefix(&self) -> &'static str;
 }
 
-struct GcpSecretResolver {}
+struct GcpSecretResolver {
+    log: Logger,
+}
+
+impl GcpSecretResolver {
+    fn new(log: Logger) -> Self {
+        Self { log }
+    }
+}
 
 macro_rules! create_resolve_error {
     ($message: expr, $value: ident, $type: ident) => {
@@ -132,23 +142,30 @@ macro_rules! create_resolve_error {
 
 impl SecretResolver for GcpSecretResolver {
     fn resolve(&self, content: &str) -> Result<String, SecretResolveError> {
-        block_on(
-            reqwest::Client::new()
-                .get(
-                    reqwest::Url::parse(&format!(
-                        "https://secretmanager.googleapis.com/v1/{}:access",
-                        content
-                    ))
-                    .map_err(|e| {
-                        create_resolve_error!(
-                            format!("Failed parse gcp secrets url: {}", e),
-                            content,
-                            self
-                        )
-                    })?,
-                )
-                .send(),
-        )
+        let url = &format!("https://secretmanager.googleapis.com/v1/{}:access", content);
+        block_on({
+            info!(self.log, "Fetching secret from url: {}", url);
+            reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .map_err(|e| {
+                    create_resolve_error!(
+                        format!("Failed to create client to get gcp secret: {}", e),
+                        content,
+                        self
+                    )
+                })?
+                .get(reqwest::Url::parse(url).map_err(|e| {
+                    create_resolve_error!(
+                        format!("Failed parse gcp secrets url: {}", e),
+                        content,
+                        self
+                    )
+                })?)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+        })
+        .and_then(|response| response.error_for_status())
         .map_err(|e| {
             create_resolve_error!(
                 format!("Failed to obtain secret from google apis: {}", e),

@@ -90,7 +90,7 @@ pub enum StorageError {
     InvalidAttachmentStorage(String),
 }
 
-pub fn create_storage<S: AsRef<str>>(
+pub async fn create_storage<S: AsRef<str>>(
     uri: S,
     log: Logger,
 ) -> Result<Box<dyn FunctionStorage>, StorageError> {
@@ -103,16 +103,18 @@ pub fn create_storage<S: AsRef<str>>(
         "postgres" | "postgresql" => {
             info!(log, "creating postgresql backend");
             postgres::PostgresStorage::new_with_init(&uri, log.new(o!("type" => "postgresql")))
+                .await
                 .map(Box::new)?
         }
         st => return Err(StorageError::UnsupportedStorage(st.to_owned())),
     })
 }
 
+#[async_trait::async_trait]
 pub trait FunctionStorage: Send + Sync {
-    fn insert(&mut self, function_data: FunctionData) -> Result<Uuid, StorageError>;
-    fn insert_attachment(
-        &mut self,
+    async fn insert(&self, function_data: FunctionData) -> Result<Uuid, StorageError>;
+    async fn insert_attachment(
+        &self,
         function_attachment_data: FunctionAttachmentData,
     ) -> Result<Uuid, StorageError>;
 }
@@ -197,13 +199,15 @@ mod tests {
             bucket_name, uuid_str
         );
         let gcs_storage = GCSStorage::new(bucket_name);
-        let mock_storage = create_storage("memory://".to_owned(), null_logger!()).unwrap();
+        let mock_storage =
+            futures::executor::block_on(create_storage("memory://".to_owned(), null_logger!()))
+                .unwrap();
         let res =
             gcs_storage.get_upload_url(Uuid::parse_str(uuid_str).unwrap(), mock_storage.as_ref());
 
         assert!(res.is_ok());
         let resp = res.unwrap();
-        assert_eq!(resp.url, expected_storage_path.to_owned());
+        assert_eq!(resp.url, expected_storage_path);
         assert_eq!(resp.auth_method, super::AuthMethod::Oauth2 as i32);
     }
 
