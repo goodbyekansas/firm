@@ -258,7 +258,15 @@ impl SecretResolver for GcpSecretResolver {
             })
         })
         .and_then(|json| {
-            json.get("data")
+            json.get("payload")
+                .ok_or_else(|| {
+                    create_resolve_error!(
+                        "Failed to get payload field from google apis secret request",
+                        content,
+                        self
+                    )
+                })?
+                .get("data")
                 .ok_or_else(|| {
                     create_resolve_error!(
                         "Failed to get data field from google apis secret request",
