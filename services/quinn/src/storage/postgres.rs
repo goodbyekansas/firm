@@ -4,6 +4,7 @@ use gbk_protocols::functions::ArgumentType as ProtoArgType;
 use postgres::NoTls;
 use postgres_types::{FromSql, ToSql};
 use r2d2_postgres::PostgresConnectionManager;
+use slog::{info, Logger};
 
 use super::{FunctionAttachmentData, FunctionData, FunctionStorage, StorageError};
 
@@ -118,26 +119,38 @@ impl From<HStore> for HashMap<String, Option<String>> {
 
 pub struct PostgresStorage {
     connection_pool: r2d2::Pool<PostgresConnectionManager<NoTls>>,
+    log: slog::Logger,
 }
 
 impl PostgresStorage {
-    pub fn new(uri: &url::Url) -> Result<Self, StorageError> {
-        let config = uri
+    pub fn new(uri: &url::Url, log: Logger) -> Result<Self, StorageError> {
+        let config: postgres::Config = uri
             .to_string()
             .parse()
             .map_err(|e| StorageError::ConnectionError(format!("Invalid postgresql url: {}", e)))?;
+
+        info!(
+            log,
+            "connecting to postgresql database {} at {:#?}",
+            config.get_dbname().unwrap_or("<default>"),
+            config.get_hosts()
+        );
         let manager = PostgresConnectionManager::new(config, NoTls);
         let storage = Self {
             connection_pool: r2d2::Pool::new(manager).map_err(|e| {
                 StorageError::ConnectionError(format!("Failed to create postgresql pool: {}", e))
             })?,
+
+            log,
         };
 
         Ok(storage)
     }
 
-    pub fn new_with_init(uri: &url::Url) -> Result<Self, StorageError> {
-        let storage = Self::new(uri)?;
+    pub fn new_with_init(uri: &url::Url, log: Logger) -> Result<Self, StorageError> {
+        let storage = Self::new(uri, log)?;
+
+        info!(storage.log, "initializing database");
         storage.create_tables()?;
 
         Ok(storage)
@@ -151,6 +164,7 @@ impl PostgresStorage {
             ))
         })?;
 
+        info!(self.log, "executing sql file sql/create-tables.sql");
         client
             .batch_execute(include_str!("sql/create-tables.sql"))
             .map_err(|e| {
@@ -250,19 +264,25 @@ mod tests {
     use crate::config::Configuration;
     use crate::storage::ExecutionEnvironment;
 
+    macro_rules! null_logger {
+        () => {{
+            slog::Logger::root(slog::Discard, slog::o!())
+        }};
+    }
+
     lazy_static! {
         static ref SQL_MUTEX: Mutex<()> = Mutex::new(());
     }
 
     macro_rules! with_db {
         ($database:ident, $body:block) => {{
-            let config = Configuration::new().unwrap();
+            let config = Configuration::new(null_logger!()).unwrap();
             let url = Url::parse(&config.functions_storage_uri).unwrap();
 
             {
                 let guard = SQL_MUTEX.lock().unwrap();
                 if let Err(e) = panic::catch_unwind(|| {
-                    let $database = PostgresStorage::new_with_init(&url);
+                    let $database = PostgresStorage::new_with_init(&url, null_logger!());
                     if let Ok(ref db) = $database {
                         db.clear().unwrap();
                     }

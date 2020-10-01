@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use semver::Version;
+use slog::{info, o, Logger};
 use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
@@ -89,12 +90,20 @@ pub enum StorageError {
     InvalidAttachmentStorage(String),
 }
 
-pub fn create_storage<S: AsRef<str>>(uri: S) -> Result<Box<dyn FunctionStorage>, StorageError> {
+pub fn create_storage<S: AsRef<str>>(
+    uri: S,
+    log: Logger,
+) -> Result<Box<dyn FunctionStorage>, StorageError> {
     let uri = Url::parse(uri.as_ref())?;
     Ok(match uri.scheme() {
-        "memory" => Box::new(memory::MemoryStorage::new()),
+        "memory" => {
+            info!(log, "creating memory storage backend");
+            Box::new(memory::MemoryStorage::new(log.new(o!("type" => "memory"))))
+        }
         "postgres" | "postgresql" => {
-            postgres::PostgresStorage::new_with_init(&uri).map(Box::new)?
+            info!(log, "creating postgresql backend");
+            postgres::PostgresStorage::new_with_init(&uri, log.new(o!("type" => "postgresql")))
+                .map(Box::new)?
         }
         st => return Err(StorageError::UnsupportedStorage(st.to_owned())),
     })
@@ -149,17 +158,20 @@ impl FunctionAttachmentStorage for GCSStorage {
 
 pub fn create_attachment_storage<S: AsRef<str>>(
     uri: S,
+    log: Logger,
 ) -> Result<Box<dyn FunctionAttachmentStorage>, StorageError> {
     let uri = Url::parse(uri.as_ref())?;
     Ok(match uri.scheme() {
-        "gcs" => uri
-            .host_str()
-            .ok_or_else(|| {
-                StorageError::InvalidAttachmentStorage(
-                    "gcs attachment storage requires bucket name".to_owned(),
-                )
-            })
-            .map(|bucket_name| Box::new(GCSStorage::new(bucket_name)))?,
+        "gcs" => {
+            info!(log, "creating Google Cloud Storage backend");
+            uri.host_str()
+                .ok_or_else(|| {
+                    StorageError::InvalidAttachmentStorage(
+                        "gcs attachment storage requires bucket name".to_owned(),
+                    )
+                })
+                .map(|bucket_name| Box::new(GCSStorage::new(bucket_name)))?
+        }
         st => return Err(StorageError::UnsupportedStorage(st.to_owned())),
     })
 }
@@ -170,6 +182,12 @@ mod tests {
 
     use super::*;
 
+    macro_rules! null_logger {
+        () => {{
+            slog::Logger::root(slog::Discard, slog::o!())
+        }};
+    }
+
     #[test]
     fn test_gcs_bucket_url() {
         let uuid_str = "1a52540c-7edd-4f9e-916b-f9aaf165890e";
@@ -179,7 +197,7 @@ mod tests {
             bucket_name, uuid_str
         );
         let gcs_storage = GCSStorage::new(bucket_name);
-        let mock_storage = create_storage("memory://".to_owned()).unwrap();
+        let mock_storage = create_storage("memory://".to_owned(), null_logger!()).unwrap();
         let res =
             gcs_storage.get_upload_url(Uuid::parse_str(uuid_str).unwrap(), mock_storage.as_ref());
 
@@ -191,10 +209,10 @@ mod tests {
 
     #[test]
     fn test_create_attachment_storage() {
-        let res = create_attachment_storage("gcs://kallebula");
+        let res = create_attachment_storage("gcs://kallebula", null_logger!());
         assert!(res.is_ok());
 
-        let res = create_attachment_storage("super-sune://");
+        let res = create_attachment_storage("super-sune://", null_logger!());
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),

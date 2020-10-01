@@ -8,11 +8,17 @@ use quinn::{config, registry::FunctionRegistryService};
 
 use gbk_protocols_test_helpers::{exec_env, register_attachment_request, register_request};
 
+macro_rules! null_logger {
+    () => {{
+        slog::Logger::root(slog::Discard, slog::o!())
+    }};
+}
+
 macro_rules! registry_with_memory_storage {
     () => {{
-        let mut config = config::Configuration::new().unwrap();
+        let mut config = config::Configuration::new(null_logger!()).unwrap();
         config.functions_storage_uri = "memory://".to_owned();
-        FunctionRegistryService::new(config).unwrap()
+        FunctionRegistryService::new(config, null_logger!()).unwrap()
     }};
 }
 

@@ -5,7 +5,8 @@ base.languages.rust.mkService {
   src = ./.;
   rustDependencies = [ protocols protocolsTestHelpers ];
 
-  nativeBuildInputs = [ pkgs.postgresql pkgs.coreutils pkgs.pkg-config pkgs.openssl ];
+  nativeBuildInputs = [ pkgs.postgresql pkgs.coreutils pkgs.pkg-config pkgs.openssl ]
+    ++ pkgs.stdenv.lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.darwin.apple_sdk.frameworks.Security;
 
   extraChecks = ''
     source scripts/postgres.bash

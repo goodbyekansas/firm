@@ -2,6 +2,7 @@ use config::{Config, ConfigError, Environment};
 use futures::executor::block_on;
 use regex::Regex;
 use serde::Deserialize;
+use slog::{info, o, Logger};
 use thiserror::Error;
 
 fn default_port() -> u64 {
@@ -29,16 +30,26 @@ pub struct Configuration {
 }
 
 impl Configuration {
-    pub fn new() -> Result<Self, config::ConfigError> {
+    pub fn new(log: Logger) -> Result<Self, config::ConfigError> {
         let mut s = Config::new();
         s.merge(Environment::with_prefix("REGISTRY").separator("__"))?;
         let mut c: Configuration = s.try_into()?;
         let secret_resolvers: &[&dyn SecretResolver] = &[&GcpSecretResolver {}];
 
-        c.functions_storage_uri = resolve_secrets(c.functions_storage_uri, secret_resolvers)
-            .map_err(|e| ConfigError::Foreign(Box::new(e)))?;
-        c.attachment_storage_uri = resolve_secrets(c.attachment_storage_uri, secret_resolvers)
-            .map_err(|e| ConfigError::Foreign(Box::new(e)))?;
+        c.functions_storage_uri = resolve_secrets(
+            c.functions_storage_uri,
+            secret_resolvers,
+            log.new(o!("scope" => "resolve-secret", "field" => "functions_storage_uri")),
+        )
+        .map_err(|e| ConfigError::Foreign(Box::new(e)))?;
+
+        c.attachment_storage_uri = resolve_secrets(
+            c.attachment_storage_uri,
+            secret_resolvers,
+            log.new(o!("scope" => "resolve-secret", "field" => "attachment_storage_uri")),
+        )
+        .map_err(|e| ConfigError::Foreign(Box::new(e)))?;
+
         Ok(c)
     }
 }
@@ -62,6 +73,7 @@ pub enum SecretResolveError {
 fn resolve_secrets<S: AsRef<str>>(
     content: S,
     resolvers: &[&dyn SecretResolver],
+    log: Logger,
 ) -> Result<String, SecretResolveError> {
     let reg = Regex::new(r"\{\{\s*(?P<type>\w+):(?P<value>\w+)\s*\}\}")
         .expect("Regex was invalid for resolving secrets.");
@@ -83,10 +95,21 @@ fn resolve_secrets<S: AsRef<str>>(
                         .ok_or_else(|| {
                             SecretResolveError::FailedToFindResolver(t.as_str().to_owned())
                         })
-                        .map(|resolver| (v, resolver))
+                        .map(|resolver| {
+                            info!(
+                                log,
+                                "found resolver for secret {} with type {}",
+                                v.as_str(),
+                                t.as_str()
+                            );
+                            (v, resolver)
+                        })
                 })
                 .and_then(|(v, resolver)| resolver.resolve(v.as_str()))
-                .map(|real_value| reg.replace(&acc, real_value.as_str()).to_string())
+                .map(|real_value| {
+                    info!(log, "successfully resolved secret");
+                    reg.replace(&acc, real_value.as_str()).to_string()
+                })
         })
 }
 
@@ -201,13 +224,19 @@ mod tests {
 
     use super::*;
 
+    macro_rules! null_logger {
+        () => {{
+            slog::Logger::root(slog::Discard, slog::o!())
+        }};
+    }
+
     struct MockResolver {
         secrets: HashMap<String, String>,
     }
 
     impl SecretResolver for MockResolver {
         fn resolve(&self, content: &str) -> Result<String, SecretResolveError> {
-            self.secrets.get(content).map(|s| s.clone()).ok_or_else(|| {
+            self.secrets.get(content).cloned().ok_or_else(|| {
                 SecretResolveError::FailedToResolveValue {
                     value: String::from(content),
                     type_: self.prefix().to_owned(),
@@ -238,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_not_finding_resolver() {
-        let res = resolve_secrets("Something{{mock:bune}}", &[]);
+        let res = resolve_secrets("Something{{mock:bune}}", &[], null_logger!());
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
@@ -251,6 +280,7 @@ mod tests {
             &[&MockResolver {
                 secrets: HashMap::new(),
             }],
+            null_logger!(),
         );
         assert!(res.is_err());
         assert!(matches!(
@@ -264,7 +294,11 @@ mod tests {
         // Test single
         let mut secrets = HashMap::new();
         secrets.insert(String::from("bune"), String::from("mega-secret"));
-        let res = resolve_secrets("Something={{ mock:bune }}", &[&MockResolver { secrets }]);
+        let res = resolve_secrets(
+            "Something={{ mock:bune }}",
+            &[&MockResolver { secrets }],
+            null_logger!(),
+        );
 
         assert!(res.is_ok());
         let content = res.unwrap();
@@ -279,6 +313,22 @@ mod tests {
             &[&MockResolver {
                 secrets: secrets.clone(),
             }],
+            null_logger!(),
+        );
+
+        assert!(res.is_ok());
+        let content = res.unwrap();
+        assert_eq!(content, "Something=mega-secret:ryck=bad-secret");
+
+        // newlines in string
+        let res = resolve_secrets(
+            r#"Something={{
+              mock:first
+            }}:ryck={{mock:second}}"#,
+            &[&MockResolver {
+                secrets: secrets.clone(),
+            }],
+            null_logger!(),
         );
 
         assert!(res.is_ok());
@@ -289,6 +339,7 @@ mod tests {
         let res = resolve_secrets(
             "Something={{ mock:first }}:ryck={{ mock:second}}&sule={{mock:first  }}",
             &[&MockResolver { secrets }],
+            null_logger!(),
         );
 
         assert!(res.is_ok());
@@ -301,7 +352,11 @@ mod tests {
 
     #[test]
     fn test_failing_resolving_value() {
-        let res = resolve_secrets("Something={{ mock:bune }}", &[&FailingMockResolver {}]);
+        let res = resolve_secrets(
+            "Something={{ mock:bune }}",
+            &[&FailingMockResolver {}],
+            null_logger!(),
+        );
 
         assert!(res.is_err());
         assert!(matches!(
