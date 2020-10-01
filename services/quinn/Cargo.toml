@@ -5,22 +5,25 @@ authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
 [dependencies]
+base64 = "0.12"
 config = "0.10.1"
-regex = "1"
-semver = "0.10"
-serde = { version = "1.0", features = ["derive"] }
-thiserror = "1"
-tokio = { version = "0.2", features = ["macros"] }
-url = "2"
-uuid = { version = "0.8", features = ["v4"] }
+futures = "0.3"
 postgres = "0.17"
 postgres-types = { version = "0.1", features = ["derive", "with-uuid-0_8"] }
 r2d2 = "0.8"
 r2d2_postgres = "0.16"
+regex = "1"
 reqwest = { version = "0.10", features = ["json"]}
-futures = "0.3"
+semver = "0.10"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
-base64 = "0.12"
+slog = "2"
+slog-async = "2"
+slog-term = "2"
+thiserror = "1"
+tokio = { version = "0.2", features = ["macros"] }
+url = "2"
+uuid = { version = "0.8", features = ["v4"] }
 
 gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
 

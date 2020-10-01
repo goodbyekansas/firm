@@ -1,3 +1,4 @@
+use slog::{o, Logger};
 use tonic::Status;
 
 use gbk_protocols::{functions::functions_registry_server::FunctionsRegistry, tonic};
@@ -20,15 +21,21 @@ pub struct FunctionRegistryService {
 }
 
 impl FunctionRegistryService {
-    pub fn new(config: config::Configuration) -> Result<Self, String> {
+    pub fn new(config: config::Configuration, log: Logger) -> Result<Self, String> {
         Ok(Self {
             function_storage: Arc::new(RwLock::new(
-                storage::create_storage(&config.functions_storage_uri)
-                    .map_err(|e| format!("Failed to create storage backend: {}", e))?,
+                storage::create_storage(
+                    &config.functions_storage_uri,
+                    log.new(o!("storage" => "functions")),
+                )
+                .map_err(|e| format!("Failed to create storage backend: {}", e))?,
             )),
             function_attachment_storage: Arc::new(RwLock::new(
-                storage::create_attachment_storage(&config.attachment_storage_uri)
-                    .map_err(|e| format!("Failed to create attachment storage backed! {}", e))?,
+                storage::create_attachment_storage(
+                    &config.attachment_storage_uri,
+                    log.new(o!("storage" => "attachments")),
+                )
+                .map_err(|e| format!("Failed to create attachment storage backed! {}", e))?,
             )),
         })
     }

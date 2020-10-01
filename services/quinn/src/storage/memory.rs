@@ -1,5 +1,6 @@
 use std::collections::hash_map::{Entry, HashMap};
 
+use slog::Logger;
 use uuid::Uuid;
 
 use super::{Function, FunctionAttachmentData, FunctionData, FunctionStorage, StorageError};
@@ -16,7 +17,7 @@ struct FunctionKey {
 }
 
 impl MemoryStorage {
-    pub fn new() -> Self {
+    pub fn new(_log: Logger) -> Self {
         Self {
             functions: HashMap::new(),
             attachments: HashMap::new(),
