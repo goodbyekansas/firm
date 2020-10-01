@@ -77,7 +77,8 @@ fn resolve_secrets<S: AsRef<str>>(
     resolvers: &[&dyn SecretResolver],
     log: Logger,
 ) -> Result<String, SecretResolveError> {
-    let reg = Regex::new(r"\{\{\s*(?P<type>\w+):(?P<value>\w+)\s*\}\}")
+    // woho I'm in the regex \&/ #Solaire
+    let reg = Regex::new(r"\{\{\s*(?P<type>\w+):(?P<value>[\w\.\-\?\&/_=]+)\s*\}\}")
         .expect("Regex was invalid for resolving secrets.");
 
     reg.captures_iter(content.as_ref())
@@ -355,7 +356,9 @@ mod tests {
         // test same value used twice
         let res = resolve_secrets(
             "Something={{ mock:first }}:ryck={{ mock:second}}&sule={{mock:first  }}",
-            &[&MockResolver { secrets }],
+            &[&MockResolver {
+                secrets: secrets.clone(),
+            }],
             null_logger!(),
         );
 
@@ -364,6 +367,21 @@ mod tests {
         assert_eq!(
             content,
             "Something=mega-secret:ryck=bad-secret&sule=mega-secret"
+        );
+
+        secrets.insert(
+            String::from("test/some-chars/1234_check.this"),
+            String::from("cardboard"),
+        );
+        let res = resolve_secrets(
+            "Something={{ mock:test/some-chars/1234_check.this }}:ryck={{ mock:second}}&sule={{mock:first  }}",
+            &[&MockResolver { secrets }],
+            null_logger!(),
+        );
+        let content = res.unwrap();
+        assert_eq!(
+            content,
+            "Something=cardboard:ryck=bad-secret&sule=mega-secret"
         );
     }
 
