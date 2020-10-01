@@ -116,6 +116,16 @@ fn resolve_secrets<S: AsRef<str>>(
         })
 }
 
+macro_rules! create_resolve_error {
+    ($message: expr, $value: expr, $type: ident) => {
+        SecretResolveError::FailedToResolveValue {
+            value: $value.to_owned(),
+            type_: $type.prefix().to_owned(),
+            message: String::from($message),
+        }
+    };
+}
+
 trait SecretResolver {
     fn resolve(&self, content: &str) -> Result<String, SecretResolveError>;
     fn prefix(&self) -> &'static str;
@@ -129,21 +139,81 @@ impl GcpSecretResolver {
     fn new(log: Logger) -> Self {
         Self { log }
     }
-}
 
-macro_rules! create_resolve_error {
-    ($message: expr, $value: ident, $type: ident) => {
-        SecretResolveError::FailedToResolveValue {
-            value: $value.to_owned(),
-            type_: $type.prefix().to_owned(),
-            message: String::from($message),
-        }
-    };
+    fn get_access_token(&self) -> Result<String, SecretResolveError> {
+        let url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token?scopes=https://www.googleapis.com/auth/cloud-platform";
+        block_on({
+                info!(self.log, "Fetching auth token from url: {}", url);
+                reqwest::Client::builder()
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .build()
+                    .map_err(|e| {
+                        create_resolve_error!(
+                            format!("Failed to create client to get gcp auth token: {}", e),
+                            String::new(),
+                            self
+                        )
+                    })?
+                    .get(reqwest::Url::parse(url).map_err(|e| {
+                        create_resolve_error!(
+                            format!("Failed parse gcp auth token url: {}", e),
+                            String::new(),
+                            self
+                        )
+                    })?)
+                    .header("Metadata-Flavor", "Google")
+                    .timeout(std::time::Duration::from_secs(10))
+                    .send()
+            })
+            .and_then(|response| response.error_for_status())
+            .map_err(|e| {
+                create_resolve_error!(
+                    format!("Failed to obtain auth token from google apis: {}", e),
+                    String::new(),
+                    self
+                )
+            })
+            .and_then(|response| {
+                block_on(response.json::<serde_json::Value>()).map_err(|e| {
+                    create_resolve_error!(
+                        format!(
+                            "Failed to parse auth json payload from google apis: {}",
+                            e
+                        ),
+                        String::new(),
+                        self
+                    )
+                })
+            })
+            .and_then(|json| {
+                json.get("access_token")
+                    .ok_or_else(|| {
+                        create_resolve_error!(
+                            "Failed to get data field from google apis auth request",
+                            String::new(),
+                            self
+                        )
+                    })
+                    .map(|j| j.clone())
+            })
+            .and_then(|data| {
+                data.as_str()
+                    .ok_or_else(|| {
+                        create_resolve_error!(
+                            "Failed to get access_token field from google apis auth token request to string",
+                            String::new(),
+                            self
+                        )
+                    })
+                    .map(|d| d.to_owned())
+            })
+    }
 }
 
 impl SecretResolver for GcpSecretResolver {
     fn resolve(&self, content: &str) -> Result<String, SecretResolveError> {
         let url = &format!("https://secretmanager.googleapis.com/v1/{}:access", content);
+        let access_token = self.get_access_token()?;
         block_on({
             info!(self.log, "Fetching secret from url: {}", url);
             reqwest::Client::builder()
@@ -163,6 +233,7 @@ impl SecretResolver for GcpSecretResolver {
                         self
                     )
                 })?)
+                .header("Authorization", format!("Bearer {}", access_token)) // 🐻
                 .timeout(std::time::Duration::from_secs(10))
                 .send()
         })
