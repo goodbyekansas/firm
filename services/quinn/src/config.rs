@@ -39,16 +39,16 @@ impl Configuration {
         )];
 
         c.functions_storage_uri = resolve_secrets(
-            c.functions_storage_uri,
+            &c.functions_storage_uri,
             secret_resolvers,
-            log.new(o!("scope" => "resolve-secret", "field" => "functions_storage_uri")),
+            log.new(o!("scope" => "resolve-secret", "field" => "functions_storage_uri", "uri" => c.functions_storage_uri.clone())),
         )
         .map_err(|e| ConfigError::Foreign(Box::new(e)))?;
 
         c.attachment_storage_uri = resolve_secrets(
-            c.attachment_storage_uri,
+            &c.attachment_storage_uri,
             secret_resolvers,
-            log.new(o!("scope" => "resolve-secret", "field" => "attachment_storage_uri")),
+            log.new(o!("scope" => "resolve-secret", "field" => "attachment_storage_uri", "uri" => c.attachment_storage_uri.clone())),
         )
         .map_err(|e| ConfigError::Foreign(Box::new(e)))?;
 
