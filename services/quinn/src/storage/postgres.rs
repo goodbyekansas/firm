@@ -1,10 +1,11 @@
 use std::collections::hash_map::HashMap;
 
+use bb8_postgres::PostgresConnectionManager;
+use futures::future::TryFutureExt;
 use gbk_protocols::functions::ArgumentType as ProtoArgType;
-use postgres::NoTls;
 use postgres_types::{FromSql, ToSql};
-use r2d2_postgres::PostgresConnectionManager;
 use slog::{info, Logger};
+use tokio_postgres::NoTls;
 
 use super::{FunctionAttachmentData, FunctionData, FunctionStorage, StorageError};
 
@@ -118,26 +119,27 @@ impl From<HStore> for HashMap<String, Option<String>> {
 }
 
 pub struct PostgresStorage {
-    connection_pool: r2d2::Pool<PostgresConnectionManager<NoTls>>,
+    connection_pool: bb8::Pool<PostgresConnectionManager<NoTls>>,
     log: slog::Logger,
 }
 
 impl PostgresStorage {
-    pub fn new(uri: &url::Url, log: Logger) -> Result<Self, StorageError> {
-        let config: postgres::Config = uri
+    pub async fn new(uri: &url::Url, log: Logger) -> Result<Self, StorageError> {
+        let config: tokio_postgres::Config = uri
             .to_string()
             .parse()
             .map_err(|e| StorageError::ConnectionError(format!("Invalid postgresql url: {}", e)))?;
 
         info!(
             log,
-            "connecting to postgresql database {} at {:#?}",
+            "connecting to postgresql database \"{}\" at {:#?} as user {}.",
             config.get_dbname().unwrap_or("<default>"),
-            config.get_hosts()
+            config.get_hosts(),
+            config.get_user().unwrap_or("<default_user>"),
         );
         let manager = PostgresConnectionManager::new(config, NoTls);
         let storage = Self {
-            connection_pool: r2d2::Pool::new(manager).map_err(|e| {
+            connection_pool: bb8::Pool::builder().build(manager).await.map_err(|e| {
                 StorageError::ConnectionError(format!("Failed to create postgresql pool: {}", e))
             })?,
 
@@ -147,47 +149,60 @@ impl PostgresStorage {
         Ok(storage)
     }
 
-    pub fn new_with_init(uri: &url::Url, log: Logger) -> Result<Self, StorageError> {
-        let storage = Self::new(uri, log)?;
+    pub async fn new_with_init(uri: &url::Url, log: Logger) -> Result<Self, StorageError> {
+        let storage = Self::new(uri, log).await?;
 
         info!(storage.log, "initializing database");
-        storage.create_tables()?;
+        storage.create_tables().await?;
 
         Ok(storage)
     }
 
-    fn create_tables(&self) -> Result<(), StorageError> {
-        let mut client = self.connection_pool.get().map_err(|e| {
-            StorageError::ConnectionError(format!(
-                "Failed obtain connection to initialize database: {}",
-                e
-            ))
-        })?;
-
+    async fn create_tables(&self) -> Result<(), StorageError> {
         info!(self.log, "executing sql file sql/create-tables.sql");
-        client
-            .batch_execute(include_str!("sql/create-tables.sql"))
+        self.connection_pool
+            .get()
             .map_err(|e| {
-                StorageError::Unknown(format!("Failed to run database initialization: {}", e))
+                StorageError::ConnectionError(format!(
+                    "Failed obtain connection to initialize database: {}",
+                    e
+                ))
             })
+            .and_then(|c| async move {
+                c.batch_execute(include_str!("sql/create-tables.sql"))
+                    .map_err(|e| {
+                        StorageError::Unknown(format!(
+                            "Failed to run database initialization: {}",
+                            e
+                        ))
+                    })
+                    .await
+            })
+            .await
     }
 
     #[cfg(all(test, feature = "postgres-tests"))]
-    fn clear(&self) -> Result<(), StorageError> {
-        let mut client = self.connection_pool.get().map_err(|e| {
+    async fn clear(&self) -> Result<(), StorageError> {
+        let client = self.connection_pool.get().await.map_err(|e| {
             StorageError::Unknown(format!("Failed obtain connection to clear database: {}", e))
         })?;
         client
             .batch_execute("select clear_tables();")
+            .await
             .map_err(|e| StorageError::Unknown(format!("Failed to clear database: {}", e)))
     }
 }
 
+#[async_trait::async_trait]
 impl FunctionStorage for PostgresStorage {
-    fn insert(&mut self, function_data: FunctionData) -> Result<uuid::Uuid, StorageError> {
-        let mut client = self.connection_pool.get().map_err(|e| {
-            StorageError::Unknown(format!("Failed to obtain sql connection from pool: {}", e))
-        })?;
+    async fn insert(&self, function_data: FunctionData) -> Result<uuid::Uuid, StorageError> {
+        let client = self
+            .connection_pool
+            .get()
+            .map_err(|e| {
+                StorageError::Unknown(format!("Failed to obtain sql connection from pool: {}", e))
+            })
+            .await?;
         let metadata: HashMap<String, Option<String>> = HStore(function_data.metadata).into();
         let ee: ExecutionEnvironment = function_data.execution_environment.into();
 
@@ -216,9 +231,10 @@ impl FunctionStorage for PostgresStorage {
                     &function_data.attachments,
                 ],
             )
+            .await
             .map_err(|e| match e.code() {
                 Some(c) => {
-                    if c == &postgres::error::SqlState::UNIQUE_VIOLATION {
+                    if c == &tokio_postgres::error::SqlState::UNIQUE_VIOLATION {
                         StorageError::VersionExists { name, version }
                     } else {
                         StorageError::Unknown(e.to_string())
@@ -229,13 +245,17 @@ impl FunctionStorage for PostgresStorage {
             .map(|r| r.get(0))
     }
 
-    fn insert_attachment(
-        &mut self,
+    async fn insert_attachment(
+        &self,
         function_attachment_data: FunctionAttachmentData,
     ) -> Result<uuid::Uuid, StorageError> {
-        let mut client = self.connection_pool.get().map_err(|e| {
-            StorageError::Unknown(format!("Failed to obtain sql connection from pool: {}", e))
-        })?;
+        let client = self
+            .connection_pool
+            .get()
+            .map_err(|e| {
+                StorageError::Unknown(format!("Failed to obtain sql connection from pool: {}", e))
+            })
+            .await?;
 
         let metadata: HashMap<String, Option<String>> =
             HStore(function_attachment_data.metadata).into();
@@ -246,6 +266,7 @@ impl FunctionStorage for PostgresStorage {
                 "select insert_attachment($1, $2, $3)",
                 &[&function_attachment_data.name, &metadata, &checksums],
             )
+            .await
             .map_err(|e| StorageError::Unknown(format!("Failed to insert attachment: {}", e)))
             .map(|r| r.get(0))
     }
@@ -276,15 +297,18 @@ mod tests {
 
     macro_rules! with_db {
         ($database:ident, $body:block) => {{
+            let mut basic_rt = tokio::runtime::Builder::new()
+                .basic_scheduler()
+                .build()
+                .unwrap();
             let config = Configuration::new(null_logger!()).unwrap();
             let url = Url::parse(&config.functions_storage_uri).unwrap();
-
-            {
+            basic_rt.block_on(async {
                 let guard = SQL_MUTEX.lock().unwrap();
-                if let Err(e) = panic::catch_unwind(|| {
-                    let $database = PostgresStorage::new_with_init(&url, null_logger!());
+                if let Err(e) = panic::catch_unwind(|| async {
+                    let $database = PostgresStorage::new_with_init(&url, null_logger!()).await;
                     if let Ok(ref db) = $database {
-                        db.clear().unwrap();
+                        db.clear().await.unwrap();
                     }
 
                     $body
@@ -292,7 +316,7 @@ mod tests {
                     drop(guard);
                     panic::resume_unwind(e);
                 }
-            }
+            })
         }};
     }
 
@@ -314,7 +338,7 @@ mod tests {
     #[test]
     fn insert_function() {
         with_db!(db, {
-            let mut storage = db.unwrap();
+            let storage = db.unwrap();
             let data = FunctionData {
                 name: "Super Snek!".to_owned(),
                 version: Version::new(1, 2, 3),
@@ -330,7 +354,7 @@ mod tests {
                 attachments: vec![],
             };
 
-            let res = storage.insert(data);
+            let res = storage.insert(data).await;
             assert!(res.is_ok());
 
             // Insert another function with same name and version (which shouldn't work)
@@ -349,7 +373,7 @@ mod tests {
                 attachments: vec![],
             };
 
-            let res = storage.insert(same_data);
+            let res = storage.insert(same_data).await;
 
             assert!(matches!(res.unwrap_err(), StorageError::VersionExists { .. }));
 
@@ -369,7 +393,7 @@ mod tests {
                 attachments: vec![],
             };
 
-            let res = storage.insert(data);
+            let res = storage.insert(data).await;
             assert!(res.is_ok());
 
             // Insert different function but with same name as other
@@ -388,7 +412,7 @@ mod tests {
                 attachments: vec![],
             };
 
-            let res = storage.insert(data);
+            let res = storage.insert(data).await;
             assert!(res.is_ok());
 
             // Test to use all fields
@@ -401,7 +425,7 @@ mod tests {
                 },
             };
 
-            let r = storage.insert_attachment(attachment1);
+            let r = storage.insert_attachment(attachment1).await;
             assert!(r.is_ok());
             let att1_id = r.unwrap();
 
@@ -414,7 +438,7 @@ mod tests {
                 },
             };
 
-            let r = storage.insert_attachment(attachment2);
+            let r = storage.insert_attachment(attachment2).await;
             assert!(r.is_ok());
             let att2_id = r.unwrap();
 
@@ -457,7 +481,7 @@ mod tests {
                 attachments: vec![att1_id, att2_id],
             };
 
-            let res = storage.insert(data);
+            let res = storage.insert(data).await;
             assert!(res.is_ok());
         });
     }

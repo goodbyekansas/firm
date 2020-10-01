@@ -23,7 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .parse()?;
     let svc =
-        registry::FunctionRegistryService::new(config, log.new(o!("component" => "registry")))?;
+        registry::FunctionRegistryService::new(config, log.new(o!("component" => "registry")))
+            .await?;
 
     info!(log, "Quinn initialized and listening on {}", addr);
 

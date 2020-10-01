@@ -83,6 +83,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3441f0f7b02788e948e47f457ca01f1d7e6d92c693bc132c22b087d3141c03ff"
 
 [[package]]
+name = "bb8"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "374bba43fc924d90393ee7768e6f75d223a98307a488fe5bc34b66c3e96932a6"
+dependencies = [
+ "async-trait",
+ "futures",
+ "tokio",
+]
+
+[[package]]
+name = "bb8-postgres"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39a233af6ea3952e20d01863c87b4f6689b2f806249688b0908b5f02d4fa41ac"
+dependencies = [
+ "async-trait",
+ "bb8",
+ "futures",
+ "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1061,20 +1085,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d36492546b6af1463394d46f0c834346f31548646f6ba10849802c9c9a27ac33"
 
 [[package]]
-name = "postgres"
-version = "0.17.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14d864cf6c2eabf1323afe4145ff273aad1898e4f2a3bcb30347715df8624a07"
-dependencies = [
- "bytes",
- "fallible-iterator",
- "futures",
- "log",
- "tokio",
- "tokio-postgres",
-]
-
-[[package]]
 name = "postgres-derive"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1170,16 +1180,16 @@ dependencies = [
 name = "quinn"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "base64",
+ "bb8",
+ "bb8-postgres",
  "config",
  "futures",
  "gbk-protocols",
  "gbk-protocols-test-helpers",
  "lazy_static",
- "postgres",
  "postgres-types",
- "r2d2",
- "r2d2_postgres",
  "regex",
  "reqwest",
  "semver",
@@ -1190,6 +1200,7 @@ dependencies = [
  "slog-term",
  "thiserror",
  "tokio",
+ "tokio-postgres",
  "url",
  "uuid",
 ]
@@ -1201,27 +1212,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa563d17ecb180e500da1cfd2b028310ac758de548efdd203e18f283af693f37"
 dependencies = [
  "proc-macro2",
-]
-
-[[package]]
-name = "r2d2"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "545c5bc2b880973c9c10e4067418407a0ccaa3091781d1671d46eb35107cb26f"
-dependencies = [
- "log",
- "parking_lot",
- "scheduled-thread-pool",
-]
-
-[[package]]
-name = "r2d2_postgres"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "707d27f66f43bac1081141f6d9611fffcce7da2841ae97c7ac53619d098efe8f"
-dependencies = [
- "postgres",
- "r2d2",
 ]
 
 [[package]]
@@ -1387,15 +1377,6 @@ checksum = "8f05ba609c234e60bee0d547fe94a4c7e9da733d1c962cf6e59efa4cd9c8bc75"
 dependencies = [
  "lazy_static",
  "winapi 0.3.9",
-]
-
-[[package]]
-name = "scheduled-thread-pool"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc6f74fd1204073fa02d5d5d68bec8021be4c38690b61264b2fdb48083d0e7d7"
-dependencies = [
- "parking_lot",
 ]
 
 [[package]]

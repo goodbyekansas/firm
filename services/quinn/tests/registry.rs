@@ -1,7 +1,5 @@
 use gbk_protocols::{
-    functions::{
-        functions_registry_server::FunctionsRegistry, AttachmentUpload, FunctionAttachmentId,
-    },
+    functions::{functions_registry_server::FunctionsRegistry, AttachmentUpload},
     tonic,
 };
 use quinn::{config, registry::FunctionRegistryService};
@@ -18,7 +16,7 @@ macro_rules! registry_with_memory_storage {
     () => {{
         let mut config = config::Configuration::new(null_logger!()).unwrap();
         config.functions_storage_uri = "memory://".to_owned();
-        FunctionRegistryService::new(config, null_logger!()).unwrap()
+        futures::executor::block_on(FunctionRegistryService::new(config, null_logger!())).unwrap()
     }};
 }
 

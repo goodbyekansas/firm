@@ -1,4 +1,7 @@
-use std::collections::hash_map::{Entry, HashMap};
+use std::{
+    collections::hash_map::{Entry, HashMap},
+    sync::RwLock,
+};
 
 use slog::Logger;
 use uuid::Uuid;
@@ -6,8 +9,8 @@ use uuid::Uuid;
 use super::{Function, FunctionAttachmentData, FunctionData, FunctionStorage, StorageError};
 
 pub struct MemoryStorage {
-    functions: HashMap<FunctionKey, Function>,
-    attachments: HashMap<Uuid, FunctionAttachmentData>,
+    functions: RwLock<HashMap<FunctionKey, Function>>,
+    attachments: RwLock<HashMap<Uuid, FunctionAttachmentData>>,
 }
 
 #[derive(Eq, PartialEq, Hash)]
@@ -19,19 +22,27 @@ struct FunctionKey {
 impl MemoryStorage {
     pub fn new(_log: Logger) -> Self {
         Self {
-            functions: HashMap::new(),
-            attachments: HashMap::new(),
+            functions: RwLock::new(HashMap::new()),
+            attachments: RwLock::new(HashMap::new()),
         }
     }
 }
 
+#[async_trait::async_trait]
 impl FunctionStorage for MemoryStorage {
-    fn insert(&mut self, function_data: FunctionData) -> Result<Uuid, StorageError> {
+    async fn insert(&self, function_data: FunctionData) -> Result<Uuid, StorageError> {
         let fk = FunctionKey {
             name: function_data.name.clone(),
             version: function_data.version.clone(),
         };
-        match self.functions.entry(fk) {
+        match self
+            .functions
+            .write()
+            .map_err(|e| {
+                StorageError::Unknown(format!("Failed to acquire write lock for functions: {}", e))
+            })?
+            .entry(fk)
+        {
             Entry::Occupied(entry) => Err(StorageError::VersionExists {
                 name: entry.key().name.clone(),
                 version: entry.key().version.clone(),
@@ -44,12 +55,22 @@ impl FunctionStorage for MemoryStorage {
         }
     }
 
-    fn insert_attachment(
-        &mut self,
+    async fn insert_attachment(
+        &self,
         function_attachment_data: super::FunctionAttachmentData,
     ) -> Result<Uuid, StorageError> {
-        let id = Uuid::new_v4();
-        self.attachments.insert(id, function_attachment_data);
-        Ok(id)
+        self.attachments
+            .write()
+            .map_err(|e| {
+                StorageError::Unknown(format!(
+                    "Failed to acquire write lock for attachments: {}",
+                    e
+                ))
+            })
+            .map(|mut attachments| {
+                let id = Uuid::new_v4();
+                attachments.insert(id, function_attachment_data);
+                id
+            })
     }
 }

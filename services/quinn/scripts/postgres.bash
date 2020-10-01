@@ -30,7 +30,7 @@ start_postgres_server() {
     echo $datadir >$datadir_file
     echo $socket_dir >$socket_dir_file
 
-    echo "🎆 Server started! Use this connection string: postres:///functions?host=$socket_dir&user=$(id -un)"
+    echo "🎆 Server started! Use this connection string: postgres:///functions?host=$socket_dir&user=$(id -un)"
     echo "To stop it, run stop_postgres_server $server_name"
     echo "To connect to to it run psql_to_server $server_name"
 }
