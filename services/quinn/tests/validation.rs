@@ -68,7 +68,7 @@ fn valid_function_names() {
 }
 
 #[test]
-fn test_validate_version() {
+fn validate_version() {
     assert!(validation::validate_version("").is_err());
     assert!(validation::validate_version("1.0,3").is_err());
     assert!(validation::validate_version("1.0.5-alpha").is_ok());

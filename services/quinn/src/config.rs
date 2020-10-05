@@ -30,7 +30,7 @@ pub struct Configuration {
 }
 
 impl Configuration {
-    pub fn new(log: Logger) -> Result<Self, config::ConfigError> {
+    pub async fn new(log: Logger) -> Result<Self, config::ConfigError> {
         let mut s = Config::new();
         s.merge(Environment::with_prefix("REGISTRY").separator("__"))?;
         let mut c: Configuration = s.try_into()?;
@@ -363,7 +363,7 @@ mod tests {
     }
 
     #[test]
-    fn test_not_finding_resolver() {
+    fn not_finding_resolver() {
         let res = resolve_secrets("Something{{mock:bune}}", &[], null_logger!());
         assert!(res.is_err());
         assert!(matches!(
@@ -387,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolver() {
+    fn resolver() {
         // Test single
         let mut secrets = HashMap::new();
         secrets.insert(String::from("bune"), String::from("mega-secret"));
@@ -465,7 +465,7 @@ mod tests {
     }
 
     #[test]
-    fn test_failing_resolving_value() {
+    fn failing_resolving_value() {
         let res = resolve_secrets(
             "Something={{ mock:bune }}",
             &[&FailingMockResolver {}],

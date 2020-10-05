@@ -1,5 +1,3 @@
-#![deny(warnings)]
-
 use slog::{error, info, o, Drain, Logger};
 
 use gbk_protocols::{
@@ -11,9 +9,7 @@ use std::error::Error;
 async fn run(log: Logger) -> Result<(), Box<dyn Error>> {
     let config_log = log.new(o!("component" => "config"));
 
-    // TODO make configuration parsing async
-    let config =
-        tokio::task::spawn_blocking(move || config::Configuration::new(config_log)).await??;
+    let config = config::Configuration::new(config_log).await?;
 
     let addr = format!(
         "0.0.0.0:{}",

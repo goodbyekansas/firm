@@ -3,11 +3,14 @@ use std::{
     convert::{TryFrom, TryInto},
 };
 
+use gbk_protocols::{functions::FunctionDescriptor, tonic};
+
 use crate::{
-    storage::{self, StorageError},
+    storage::{self, AttachmentStorage, FunctionStorage, StorageError},
     validation,
 };
-use gbk_protocols::tonic;
+use futures::FutureExt;
+use storage::{Function, FunctionAttachment};
 
 trait CheckEmptyString {
     fn check_empty(self, field_name: &str) -> Result<String, tonic::Status>;
@@ -23,6 +26,52 @@ impl CheckEmptyString for String {
         } else {
             Ok(self)
         }
+    }
+}
+
+impl TryFrom<gbk_protocols::functions::ListRequest> for storage::Filters {
+    type Error = tonic::Status;
+
+    fn try_from(req: gbk_protocols::functions::ListRequest) -> Result<Self, Self::Error> {
+        Ok(Self {
+            name: req.name_filter,
+            metadata: req
+                .metadata_key_filter
+                .into_iter()
+                .map(|n| (n, None))
+                .chain(req.metadata_filter.into_iter().map(|(k, v)| (k, Some(v))))
+                .collect(),
+            offset: req.offset as usize,
+            limit: if req.limit == 0 {
+                100
+            } else {
+                req.limit as usize
+            },
+            exact_name_match: req.exact_name_match,
+            version_requirement: req
+                .version_requirement
+                .map(|req| {
+                    semver::VersionReq::parse(&req.expression).map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::InvalidArgument,
+                            format!(
+                                "Invalid semantic version requirement \"{}\": {}",
+                                &req.expression, e
+                            ),
+                        )
+                    })
+                })
+                .transpose()?,
+            order_descending: match gbk_protocols::functions::OrderingDirection::from_i32(
+                req.order_direction,
+            ) {
+                Some(gbk_protocols::functions::OrderingDirection::Descending) => true,
+                Some(gbk_protocols::functions::OrderingDirection::Ascending) => false,
+                None => true,
+            },
+            order_by: gbk_protocols::functions::OrderingKey::from_i32(req.order_by)
+                .unwrap_or(gbk_protocols::functions::OrderingKey::Name),
+        })
     }
 }
 
@@ -192,7 +241,117 @@ impl From<StorageError> for tonic::Status {
             StorageError::VersionExists { .. } => {
                 tonic::Status::new(tonic::Code::InvalidArgument, se.to_string())
             }
+            StorageError::FunctionNotFound { .. } | StorageError::AttachmentNotFound { .. } => {
+                tonic::Status::new(tonic::Code::NotFound, se.to_string())
+            }
             _ => tonic::Status::new(tonic::Code::Unknown, format!("Storage error: {}", se)),
         }
+    }
+}
+
+#[async_trait::async_trait]
+pub trait ToFunctionDescriptor {
+    async fn to_function_descriptor(
+        self,
+        function_store: &dyn FunctionStorage,
+        attachment_store: &dyn AttachmentStorage,
+    ) -> Result<FunctionDescriptor, StorageError>;
+}
+
+struct AttachmentResolver<'a>(&'a dyn AttachmentStorage, FunctionAttachment);
+
+impl<'a> From<AttachmentResolver<'a>> for gbk_protocols::functions::FunctionAttachment {
+    fn from(attachment_resolver: AttachmentResolver) -> Self {
+        let (attachment_storage, att) = (attachment_resolver.0, attachment_resolver.1);
+        Self {
+            id: Some(gbk_protocols::functions::FunctionAttachmentId {
+                id: att.id.to_string(),
+            }),
+            name: att.data.name.clone(),
+            url: attachment_storage
+                .get_download_url(&att)
+                .unwrap()
+                .to_string(),
+            metadata: att.data.metadata,
+            checksums: Some(gbk_protocols::functions::Checksums {
+                sha256: att.data.checksums.sha256.to_string(),
+            }),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToFunctionDescriptor for &Function {
+    #[allow(clippy::eval_order_dependence)] // clippy firing on things it shouldn't (https://github.com/rust-lang/rust-clippy/issues/4637)
+    async fn to_function_descriptor(
+        self,
+        function_store: &dyn FunctionStorage,
+        attachment_store: &dyn AttachmentStorage,
+    ) -> Result<FunctionDescriptor, StorageError> {
+        Ok(FunctionDescriptor {
+            execution_environment: Some(gbk_protocols::functions::ExecutionEnvironment {
+                name: self.function_data.execution_environment.name.clone(),
+                entrypoint: self.function_data.execution_environment.entrypoint.clone(),
+                args: self
+                    .function_data
+                    .execution_environment
+                    .function_arguments
+                    .iter()
+                    .map(|(k, v)| gbk_protocols::functions::FunctionArgument {
+                        name: k.clone(),
+                        value: v.as_bytes().to_vec(),
+                        r#type: gbk_protocols::functions::ArgumentType::String as i32,
+                    })
+                    .collect(),
+            }),
+            code: futures::future::OptionFuture::from(
+                self.function_data
+                    .code
+                    .map(|id| async move { function_store.get_attachment(&id).await }),
+            )
+            .await
+            .transpose()?
+            .map(|attachment_data| AttachmentResolver(attachment_store, attachment_data).into()),
+            function: Some(gbk_protocols::functions::Function {
+                id: Some(gbk_protocols::functions::FunctionId {
+                    value: self.id.to_string(),
+                }),
+                name: self.function_data.name.clone(),
+                version: self.function_data.version.to_string(),
+                metadata: self.function_data.metadata.clone(),
+                inputs: self
+                    .function_data
+                    .inputs
+                    .iter()
+                    .map(|i| gbk_protocols::functions::FunctionInput {
+                        name: i.name.clone(),
+                        default_value: i.default_value.clone(),
+                        from_execution_environment: i.from_execution_environment,
+                        required: i.required,
+                        r#type: i.argument_type as i32,
+                    })
+                    .collect(),
+                outputs: self
+                    .function_data
+                    .outputs
+                    .iter()
+                    .map(|o| gbk_protocols::functions::FunctionOutput {
+                        name: o.name.clone(),
+                        r#type: o.argument_type as i32,
+                    })
+                    .collect(),
+            }),
+            attachments: futures::future::try_join_all(self.function_data.attachments.iter().map(
+                |attachment_id| async move {
+                    function_store
+                        .get_attachment(attachment_id)
+                        .map(|at_res| {
+                            at_res.map(|at| AttachmentResolver(attachment_store, at).into())
+                        })
+                        .await
+                },
+            ))
+            .await?,
+        })
     }
 }
