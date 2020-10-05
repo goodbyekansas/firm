@@ -79,8 +79,15 @@ postgres_tests() {
     get_dirs $name
 
     uri="postgres:///functions?host=$(cat $socket_dir_file)&user=$(id -un)"
-    REGISTRY_functions_storage_uri=$uri cargo test --features="postgres-tests" --lib
+    REGISTRY_functions_storage_uri=$uri cargo test --features="postgres-tests" --lib "$@"
     stop_postgres_server $name
+}
+
+start_postgres_server_with_data() {
+    start_postgres_server "$1"
+    get_dirs "$1"
+    uri="postgres:///functions?host=$(cat $socket_dir_file)&user=$(id -un)"
+    REGISTRY_functions_storage_uri=$uri cargo run --bin seed -- "$@"
 }
 
 # TODO add trap to stop servers when exiting shell
