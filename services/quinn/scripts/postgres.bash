@@ -19,9 +19,10 @@ start_postgres_server() {
 
     get_dirs $server_name
 
-    if [ -f datadir_file ]; then
+    if [ -f "$datadir_file" ]; then
         echo "You already have a server running with name $server_name."
         echo "Stop it with stop_postgres_server $server_name"
+        return 1
     fi
 
     pg_ctl -D $datadir initdb | sed "s/^/  🐘 [postgres] /" || return 1
@@ -71,7 +72,10 @@ psql_to_server() {
     psql -h $(cat $socket_dir_file) functions "$@"
 }
 
-postgres_tests() {
+postgres_tests() (
+    # need to set this to make sure that we shut down
+    # the postgres server
+    set +e
     id=$(dd bs=18 count=1 if=/dev/urandom status=none | base64 | tr +/ _.)
     name="cargo-test-$id"
 
@@ -80,8 +84,12 @@ postgres_tests() {
 
     uri="postgres:///functions?host=$(cat $socket_dir_file)&user=$(id -un)"
     REGISTRY_functions_storage_uri=$uri cargo test --features="postgres-tests" --lib "$@"
+    status=$?
+
     stop_postgres_server $name
-}
+    set -e
+    exit $status
+)
 
 start_postgres_server_with_data() {
     start_postgres_server "$1"
