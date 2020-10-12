@@ -11,7 +11,8 @@ eval $(ssh-agent -s)
 ##
 echo "$CI_ACCESS_KEY" | tr -d '\r' | ssh-add -
 ##
-echo "::set-env name=SSH_AUTH_SOCK::$SSH_AUTH_SOCK"
+
+echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
 
 # set up for root
 sudo mkdir -p /root/.ssh
