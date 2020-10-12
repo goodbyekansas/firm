@@ -41,6 +41,7 @@ impl Configuration {
         c.functions_storage_uri = resolve_secrets(
             &c.functions_storage_uri,
             secret_resolvers,
+            true,
             log.new(o!("scope" => "resolve-secret", "field" => "functions_storage_uri", "uri" => c.functions_storage_uri.clone())),
         )
         .map_err(|e| ConfigError::Foreign(Box::new(e)))?;
@@ -48,6 +49,7 @@ impl Configuration {
         c.attachment_storage_uri = resolve_secrets(
             &c.attachment_storage_uri,
             secret_resolvers,
+            true,
             log.new(o!("scope" => "resolve-secret", "field" => "attachment_storage_uri", "uri" => c.attachment_storage_uri.clone())),
         )
         .map_err(|e| ConfigError::Foreign(Box::new(e)))?;
@@ -75,6 +77,7 @@ pub enum SecretResolveError {
 fn resolve_secrets<S: AsRef<str>>(
     content: S,
     resolvers: &[&dyn SecretResolver],
+    is_uri: bool,
     log: Logger,
 ) -> Result<String, SecretResolveError> {
     // woho I'm in the regex \&/ #Solaire
@@ -111,6 +114,11 @@ fn resolve_secrets<S: AsRef<str>>(
                 .and_then(|(v, resolver)| resolver.resolve(v.as_str()))
                 .map(|real_value| {
                     info!(log, "successfully resolved secret");
+                    let real_value: String = if is_uri {
+                        url::form_urlencoded::byte_serialize(real_value.as_bytes()).collect()
+                    } else {
+                        real_value
+                    };
                     reg.replace(&acc, real_value.as_str()).to_string()
                 })
         })
@@ -364,7 +372,7 @@ mod tests {
 
     #[test]
     fn not_finding_resolver() {
-        let res = resolve_secrets("Something{{mock:bune}}", &[], null_logger!());
+        let res = resolve_secrets("Something{{mock:bune}}", &[], false, null_logger!());
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
@@ -377,6 +385,7 @@ mod tests {
             &[&MockResolver {
                 secrets: HashMap::new(),
             }],
+            false,
             null_logger!(),
         );
         assert!(res.is_err());
@@ -387,6 +396,34 @@ mod tests {
     }
 
     #[test]
+    fn resolve_secrets_uri() {
+        let mut secrets = HashMap::new();
+        secrets.insert(
+            String::from("i_has_uri_escape_stuff"),
+            String::from("__@__LOL!__%__:__"),
+        );
+        let res = resolve_secrets(
+            "KalleSula{{mock:i_has_uri_escape_stuff}}",
+            &[&MockResolver {
+                secrets: secrets.clone(),
+            }],
+            true,
+            null_logger!(),
+        )
+        .unwrap();
+        assert_eq!(res, "KalleSula__%40__LOL%21__%25__%3A__");
+
+        let res = resolve_secrets(
+            "KalleSula{{mock:i_has_uri_escape_stuff}}",
+            &[&MockResolver { secrets }],
+            false,
+            null_logger!(),
+        )
+        .unwrap();
+        assert_eq!(res, "KalleSula__@__LOL!__%__:__");
+    }
+
+    #[test]
     fn resolver() {
         // Test single
         let mut secrets = HashMap::new();
@@ -394,6 +431,7 @@ mod tests {
         let res = resolve_secrets(
             "Something={{ mock:bune }}",
             &[&MockResolver { secrets }],
+            false,
             null_logger!(),
         );
 
@@ -410,6 +448,7 @@ mod tests {
             &[&MockResolver {
                 secrets: secrets.clone(),
             }],
+            false,
             null_logger!(),
         );
 
@@ -425,6 +464,7 @@ mod tests {
             &[&MockResolver {
                 secrets: secrets.clone(),
             }],
+            false,
             null_logger!(),
         );
 
@@ -438,6 +478,7 @@ mod tests {
             &[&MockResolver {
                 secrets: secrets.clone(),
             }],
+            false,
             null_logger!(),
         );
 
@@ -455,6 +496,7 @@ mod tests {
         let res = resolve_secrets(
             "Something={{ mock:test/some-chars/1234_check.this }}:ryck={{ mock:second}}&sule={{mock:first  }}",
             &[&MockResolver { secrets }],
+            false,
             null_logger!(),
         );
         let content = res.unwrap();
@@ -469,6 +511,7 @@ mod tests {
         let res = resolve_secrets(
             "Something={{ mock:bune }}",
             &[&FailingMockResolver {}],
+            false,
             null_logger!(),
         );
 
