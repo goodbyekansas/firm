@@ -19,6 +19,9 @@ let
     wasiFunctionUtils = project.declareComponent ./utils/rust/wasi-function-utils/wasi-function-utils.nix {
       protocols = protocols.rust.onlyMessages;
     };
+    tonicMiddleware = project.declareComponent ./utils/rust/tonic-middleware/tonic-middleware.nix {
+      protocols = protocols.rust.withServices; # This brings tonic which we will need. A bit hard to see.
+    };
     avery = project.declareComponent ./services/avery/avery.nix {
       protocols = protocols.rust.withServices;
       protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
@@ -27,6 +30,7 @@ let
       protocols = protocols.rust.withServices;
     };
     lomax = project.declareComponent ./clients/lomax/lomax.nix {
+      inherit tonicMiddleware;
       protocols = protocols.rust.withServices;
       protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
     };
@@ -47,8 +51,8 @@ let
     };
   };
   capturedLomaxPackage = components.lomax.package;
-
-  setupFunctionDeployment = { components, endpoint ? "tcp://[::1]", port ? 1939 }: (builtins.mapAttrs
+  # TODO credentials must be removed. Need to have a local auth service for that. attachmentCredentials must be removed once we got a proxy.
+  setupFunctionDeployment = { components, endpoint ? "tcp://[::1]", port ? 1939, credentials ? "", attachmentCredentials ? "" }: (builtins.mapAttrs
     (
       name:
       comp:
@@ -56,7 +60,7 @@ let
         if (builtins.hasAttr "deployment" comp) && (builtins.hasAttr "function" comp.deployment) then {
           deployment = comp.deployment // {
             function = comp.deployment.function {
-              inherit endpoint port;
+              inherit endpoint port credentials attachmentCredentials;
               lomax = capturedLomaxPackage;
             };
           };
@@ -69,10 +73,7 @@ in
 # create the build grid (accessed with nix-build, exposed through default.nix)
 project.mkGrid {
   inherit components;
-  deploy = rec {
-    local = [ ];
-    prod = [ ];
-  };
+  deploy = { };
 
   # create the project shells (accessed with nix-shell, exposed through shell.nix)
   extraShells = { };
