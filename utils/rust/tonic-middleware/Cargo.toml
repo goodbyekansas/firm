@@ -1,0 +1,11 @@
+[package]
+name = "tonic-middleware"
+version = "0.1.0"
+authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
+edition = "2018"
+
+[dependencies]
+http = "0.2"
+
+gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
+

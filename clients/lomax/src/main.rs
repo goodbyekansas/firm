@@ -1,34 +1,32 @@
 #![deny(warnings)]
 
+mod attachments;
 mod formatting;
 mod manifest;
 
 // std
-use std::{
-    collections::HashMap,
-    future::Future,
-    io::{Read, Seek, SeekFrom},
-    path::PathBuf,
-};
+use std::{collections::HashMap, future::Future, path::PathBuf};
 
 // 3rd party
 use futures::future::{join, try_join_all};
 use gbk_protocols::{
     functions::{
-        functions_registry_client::FunctionsRegistryClient, AttachmentStreamUpload,
-        FunctionAttachmentId, ListRequest, OrderingDirection, OrderingKey, RegisterRequest,
+        functions_registry_client::FunctionsRegistryClient, ListRequest, OrderingDirection,
+        OrderingKey, RegisterRequest,
     },
-    tonic::{self, transport::Channel},
+    tonic::{
+        self,
+        transport::{ClientTlsConfig, Endpoint},
+    },
 };
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use rand::seq::SliceRandom;
-use rand::thread_rng;
+use indicatif::{MultiProgress, ProgressBar};
 use structopt::StructOpt;
 use tokio::task;
+use tonic_middleware::HttpStatusInterceptor;
 
 // internal
 use formatting::DisplayExt;
-use manifest::{AttachmentInfo, FunctionManifest};
+use manifest::FunctionManifest;
 
 // arguments
 #[derive(StructOpt, Debug)]
@@ -79,110 +77,54 @@ where
     .0
 }
 
-async fn upload_attachment(
-    attachment: &AttachmentInfo,
-    mut client: FunctionsRegistryClient<Channel>,
-    progressbar: ProgressBar,
-) -> Result<FunctionAttachmentId, String> {
-    const VEHICLES: [&str; 12] = [
-        "🏇", "🏃", "🚙", "🚁", "🚕", "🚜", "🚌", "🚑", "🚚", "🚂", "🐌", "🚴",
-    ];
-    const CHUNK_SIZE: usize = 8192;
-
-    let registered_attachment = client
-        .register_attachment(tonic::Request::new(attachment.request.clone()))
-        .await
-        .map_err(|e| {
-            format!(
-                "Failed to register attachment \"{}\". Err: {}",
-                attachment.request.name, e
-            )
-        })?
-        .into_inner();
-
-    let mut file = std::fs::File::open(&attachment.path).map_err(|e| {
-        format!(
-            "Failed to read attachment {} file at \"{}\": {}",
-            attachment.request.name,
-            &attachment.path.display(),
-            e
-        )
-    })?;
-
-    let file_size = file
-        .seek(SeekFrom::End(0))
-        .and_then(|file_size| file.seek(SeekFrom::Start(0)).map(|_| file_size))
-        .map_err(|e| {
-            format!(
-                "Failed to get size of file \"{}\": {}",
-                attachment.path.display(),
-                e
-            )
-        })?;
-
-    let mut rng = thread_rng();
-    progressbar.set_length(file_size);
-    progressbar.set_style(
-        ProgressStyle::default_bar()
-            .template(
-                "{msg:.bold.green}\n{spinner:.green} [{elapsed_precise}] [{bar:.white.on_black/yellow}] {bytes}/{total_bytes} ({eta}, {bytes_per_sec})",
-            )
-            .progress_chars(&format!("-{}-", VEHICLES.choose(&mut rng).unwrap_or(&"💣"))),
-    );
-    progressbar.set_message(&format!("Uploading {}", attachment.request.name));
-    progressbar.set_position(0);
-
-    // generate an upload stream of chunks from the attachment file
-    let mut reader = std::io::BufReader::with_capacity(CHUNK_SIZE, file);
-    let attachment_id_clone = registered_attachment.clone();
-    let cloned_name = attachment.request.name.to_owned();
-    let upload_stream = async_stream::stream! {
-        let mut read_bytes = CHUNK_SIZE;
-
-        let mut uploaded = 0u64;
-        while read_bytes == CHUNK_SIZE {
-            let mut buf = vec![0u8;CHUNK_SIZE];
-            read_bytes = reader.read(&mut buf).unwrap(); // TODO: Do not unwrap
-            buf.truncate(read_bytes);
-            uploaded += read_bytes as u64;
-
-            yield AttachmentStreamUpload {
-                id: Some(attachment_id_clone.clone()),
-                content: buf,
-            };
-
-            progressbar.set_position(uploaded);
-        }
-        progressbar.finish_with_message(&format!("Done uploading {}!", cloned_name));
-    };
-
-    // actually do the upload
-    client
-        .upload_streamed_attachment(tonic::Request::new(upload_stream))
-        .await
-        .map_err(|e| {
-            format!(
-                "Failed to upload {} attachment: {}",
-                attachment.request.name, e
-            )
-        })?;
-
-    Ok(registered_attachment)
-}
-
 #[tokio::main]
 async fn main() -> Result<(), u32> {
     // parse arguments
     let args = LomaxArgs::from_args();
     let address = format!("{}:{}", args.address, args.port);
 
-    // call the client to connect and don't worry about async stuff
-    let mut client = FunctionsRegistryClient::connect(address.clone())
+    let channel = Endpoint::new(address.clone())
+        .map_err(|e| {
+            println!("Invalid URI supplied: {}", e);
+            2u32
+        })?
+        .tls_config(ClientTlsConfig::new())
+        .map_err(|e| {
+            println!("Failed to create TLS config: {}", e);
+            2u32
+        })?
+        .connect()
         .await
         .map_err(|e| {
-            println!("Failed to connect to Avery at \"{}\": {}", address, e);
+            println!("Failed to connect to registry at \"{}\": {}", address, e);
             2u32
         })?;
+
+    // When calling non pure grpc endpoints we may get content that is not application/grpc.
+    // Tonic doesn't handle these cases very well. We have to make a wrapper around
+    // to handle these edge cases. We convert it into normal tonic statuses that tonic can handle.
+    let channel = HttpStatusInterceptor::new(channel);
+    let bearer = std::env::var_os("OAUTH_TOKEN")
+        .map(|t| {
+            tonic::metadata::MetadataValue::from_str(&format!("Bearer {}", t.to_string_lossy()))
+                .map_err(|e| {
+                    println!("Failed to convert oauth token to metadata value: {}", e);
+                    2u32
+                })
+        })
+        .transpose()?;
+
+    let mut client = match bearer {
+        Some(bearer) => {
+            println!("Using provided oauth2 credentials 🐻");
+            FunctionsRegistryClient::with_interceptor(channel, move |mut req: tonic::Request<()>| {
+                req.metadata_mut().insert("authorization", bearer.clone());
+                Ok(req)
+            })
+        }
+
+        None => FunctionsRegistryClient::new(channel),
+    };
 
     match args.cmd {
         Command::List { .. } => {
@@ -241,7 +183,11 @@ async fn main() -> Result<(), u32> {
                 println!("Uploading code file from: {}", code.path.display());
 
                 let code_attachment = with_progressbars(|mpb| {
-                    upload_attachment(&code, client.clone(), mpb.add(ProgressBar::new(128)))
+                    attachments::upload_attachment(
+                        &code,
+                        client.clone(),
+                        mpb.add(ProgressBar::new(128)),
+                    )
                 })
                 .await
                 .map_err(|e| {
@@ -259,7 +205,7 @@ async fn main() -> Result<(), u32> {
             let attachments = with_progressbars(|mpb| {
                 try_join_all(attachments.iter().map(|a| {
                     let client_clone = client.clone();
-                    upload_attachment(a, client_clone, mpb.add(ProgressBar::new(128)))
+                    attachments::upload_attachment(a, client_clone, mpb.add(ProgressBar::new(128)))
                 }))
             })
             .await
