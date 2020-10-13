@@ -17,6 +17,7 @@ structopt = "0.3"
 thiserror = "1"
 tokio = { version = "0.2", features = ["blocking", "rt-threaded", "macros"] }
 toml = "0.5"
+tonic = { version = "0.3", features = ["tls", "tls-roots"] }
 
 gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
 
