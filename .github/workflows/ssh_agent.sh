@@ -13,6 +13,7 @@ echo "$CI_ACCESS_KEY" | tr -d '\r' | ssh-add -
 ##
 
 echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
+echo "NIX_SSHOPTS='-o ServerAliveInterval=15 -o ServerAliveCountMax=150'" >> $GITHUB_ENV
 
 # set up for root
 sudo mkdir -p /root/.ssh
