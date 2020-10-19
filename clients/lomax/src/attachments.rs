@@ -115,8 +115,7 @@ impl AuthBuilder for reqwest::RequestBuilder {
     fn build_auth(self, upload_info: &AttachmentUploadResponse) -> reqwest::RequestBuilder {
         match gbk_protocols::functions::AuthMethod::from_i32(upload_info.auth_method) {
             Some(gbk_protocols::functions::AuthMethod::Oauth2) => self.bearer_auth(
-                std::env::var_os("ATTACHMENT_UPLOAD_OAUTH_TOKEN")
-                    .or_else(|| std::env::var_os("OAUTH_TOKEN"))
+                std::env::var_os("OAUTH_TOKEN")
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default(),
             ),

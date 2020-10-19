@@ -1,8 +1,8 @@
 { base, pkgs }:
 let
   deployFunction = { package }:
-    # TODO credentials must be removed. Need to have a local auth service for that. attachmentCredentials must be removed once we got a proxy.
-    { lomax, endpoint, port, credentials, attachmentCredentials ? "" }: pkgs.stdenv.mkDerivation ({
+    # TODO credentials must be removed. Need to have a local auth service for that.
+    { lomax, endpoint, port, credentials }: pkgs.stdenv.mkDerivation ({
       name = "deploy-${package.name}";
       inputPackage = package;
       inherit lomax;
@@ -12,8 +12,7 @@ let
         mkdir -p $out
         $lomax/bin/lomax --address ${endpoint} --port ${builtins.toString port} register $inputPackage/manifest.toml 2>&1 | tee $out/command-output
       '';
-    } // (if credentials != "" then { OAUTH_TOKEN = credentials; } else { })
-    // (if attachmentCredentials != "" then { ATTACHMENT_UPLOAD_OAUTH_TOKEN = attachmentCredentials; } else { }));
+    } // (if credentials != "" then { OAUTH_TOKEN = credentials; } else { }));
 
   mkFunction = attrs@{ name, package, manifest, code, deploy ? true, ... }:
     let
