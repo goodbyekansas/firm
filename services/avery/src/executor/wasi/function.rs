@@ -10,25 +10,28 @@ use prost::Message;
 use tar::Archive;
 
 use super::{sandbox::Sandbox, WasmBuffer, WasmItemPtr, WasmString};
-use crate::executor::{AttachmentDownload, FunctionContextExt};
-use gbk_protocols::functions::{FunctionAttachment, FunctionContext, ReturnValue};
+use crate::executor::AttachmentDownload;
+use function_protocols::{
+    execution::{InputValue, OutputValue},
+    functions::Attachment,
+};
 
 use slog::{info, Logger};
 
-fn wasi_attachment_path_from_descriptor(attachment_data: &FunctionAttachment) -> String {
+fn wasi_attachment_path_from_descriptor(attachment_data: &Attachment) -> String {
     // Manually joining paths to ensure we always get a valid path for WASI (no backslash)
     format!("attachments/{}", &attachment_data.name)
 }
 
 fn native_attachment_path_from_descriptor(
-    attachment_data: &FunctionAttachment,
+    attachment_data: &Attachment,
     sandbox: &Sandbox,
 ) -> PathBuf {
     sandbox.path().join(&attachment_data.name)
 }
 
 fn download_and_map_at(
-    attachment_data: &FunctionAttachment,
+    attachment_data: &Attachment,
     path: &Path,
     unpack: bool,
     logger: &Logger,
@@ -75,7 +78,7 @@ fn download_and_map_at(
 }
 
 pub fn get_attachment_path_len(
-    function_context: &FunctionContext,
+    attachments: &[Attachment],
     attachment_name: WasmString,
     path_len: WasmItemPtr<u32>,
 ) -> WasiResult<()> {
@@ -83,8 +86,9 @@ pub fn get_attachment_path_len(
         .try_into()
         .map_err(|e| WasiError::FailedToReadStringPointer("attachment_name".to_owned(), e))?;
 
-    let attachment_data = function_context
-        .get_attachment(&attachment_key)
+    let attachment_data = attachments
+        .iter()
+        .find(|a| a.name == attachment_key)
         .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key))?;
     path_len.set(
         wasi_attachment_path_from_descriptor(&attachment_data)
@@ -94,7 +98,7 @@ pub fn get_attachment_path_len(
 }
 
 pub fn map_attachment(
-    function_context: &FunctionContext,
+    attachments: &[Attachment],
     sandbox: &Sandbox,
     attachment_name: WasmString,
     unpack: bool,
@@ -105,8 +109,9 @@ pub fn map_attachment(
         .try_into()
         .map_err(|e| WasiError::FailedToReadStringPointer("attachment_key".to_owned(), e))?;
 
-    let attachment_data = function_context
-        .get_attachment(&attachment_key)
+    let attachment_data = attachments
+        .iter()
+        .find(|a| a.name == attachment_key)
         .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key))?;
 
     download_and_map_at(
@@ -126,7 +131,7 @@ pub fn get_attachment_path_len_from_descriptor(
     attachment_descriptor: WasmBuffer,
     path_len: WasmItemPtr<u32>,
 ) -> WasiResult<()> {
-    let fa = FunctionAttachment::decode(attachment_descriptor.buffer())
+    let fa = Attachment::decode(attachment_descriptor.buffer())
         .map_err(WasiError::FailedToDecodeProtobuf)?;
 
     path_len.set(wasi_attachment_path_from_descriptor(&fa).as_bytes().len() as u32)
@@ -139,7 +144,7 @@ pub fn map_attachment_from_descriptor(
     path_buffer: &mut WasmBuffer,
     logger: &Logger,
 ) -> WasiResult<()> {
-    let fa = FunctionAttachment::decode(attachment_descriptor.buffer())
+    let fa = Attachment::decode(attachment_descriptor.buffer())
         .map_err(WasiError::FailedToDecodeProtobuf)?;
 
     download_and_map_at(
@@ -158,14 +163,15 @@ pub fn map_attachment_from_descriptor(
 pub fn get_input_len(
     key: WasmString,
     len: WasmItemPtr<u32>,
-    function_context: &FunctionContext,
+    arguments: &[InputValue],
 ) -> WasiResult<()> {
     let key: String = key
         .try_into()
         .map_err(|e| WasiError::FailedToReadStringPointer("input key".to_owned(), e))?;
 
-    function_context
-        .get_argument(&key)
+    arguments
+        .iter()
+        .find(|a| a.name == key)
         .ok_or_else(|| WasiError::FailedToFindKey(key))
         .and_then(|a| len.set(a.encoded_len() as u32))
 }
@@ -173,14 +179,15 @@ pub fn get_input_len(
 pub fn get_input(
     key: WasmString,
     value: &mut WasmBuffer,
-    function_context: &FunctionContext,
+    arguments: &[InputValue],
 ) -> WasiResult<()> {
     let key: String = key
         .try_into()
         .map_err(|e| WasiError::FailedToReadStringPointer("input key".to_owned(), e))?;
 
-    function_context
-        .get_argument(&key)
+    arguments
+        .iter()
+        .find(|a| a.name == key)
         .ok_or_else(|| WasiError::FailedToFindKey(key))
         .and_then(|a| {
             a.encode(&mut value.buffer_mut())
@@ -188,8 +195,8 @@ pub fn get_input(
         })
 }
 
-pub fn set_output(value: WasmBuffer) -> WasiResult<ReturnValue> {
-    ReturnValue::decode(value.buffer()).map_err(WasiError::FailedToDecodeProtobuf)
+pub fn set_output(value: WasmBuffer) -> WasiResult<OutputValue> {
+    OutputValue::decode(value.buffer()).map_err(WasiError::FailedToDecodeProtobuf)
 }
 
 pub fn set_error(msg: WasmString) -> WasiResult<String> {
@@ -203,8 +210,8 @@ mod tests {
 
     use std::convert::TryFrom;
 
-    use gbk_protocols::functions::{ArgumentType, FunctionArgument};
-    use gbk_protocols_test_helpers::function_attachment;
+    use function_protocols::{execution::InputValue, functions::Type};
+    use function_protocols_test_helpers::attachment;
 
     use tempfile::Builder;
     use wasmer_runtime::{memory::Memory, WasmPtr};
@@ -251,14 +258,11 @@ mod tests {
         get_input_len(
             invalid_wasm_string!(&mem),
             WasmItemPtr::new(&mem, WasmPtr::new(0)),
-            &FunctionContext::new(
-                vec![FunctionArgument {
-                    name: "chorizo korvén".to_owned(),
-                    r#type: ArgumentType::Bytes as i32,
-                    value: vec![1, 2, 3],
-                }],
-                vec![],
-            ),
+            &[InputValue {
+                name: "chorizo korvén".to_owned(),
+                r#type: Type::Bytes as i32,
+                value: vec![1, 2, 3],
+            }],
         )
         .unwrap();
     }
@@ -274,14 +278,11 @@ mod tests {
                 &mem,
                 WasmPtr::new(key.buffer_len() /* after the string in memory */),
             ),
-            &FunctionContext::new(
-                vec![FunctionArgument {
-                    name: "chorizo korvén".to_owned(),
-                    r#type: ArgumentType::Bytes as i32,
-                    value: vec![1, 2, 3],
-                }],
-                vec![],
-            ),
+            &[InputValue {
+                name: "chorizo korvén".to_owned(),
+                r#type: Type::Bytes as i32,
+                value: vec![1, 2, 3],
+            }],
         );
 
         assert!(res.is_err());
@@ -290,9 +291,9 @@ mod tests {
         // get existing input
         let mem = create_mem!();
         let key = wasm_string!(&mem, 0, "input1");
-        let function_argument = FunctionArgument {
+        let function_argument = InputValue {
             name: "input1".to_owned(),
-            r#type: ArgumentType::Bytes as i32,
+            r#type: Type::Bytes as i32,
             value: vec![1, 2, 3],
         };
 
@@ -302,11 +303,7 @@ mod tests {
                 key.buffer_len(), /* put it after the string in memory */
             ),
         );
-        let res = get_input_len(
-            key,
-            out_len.clone(),
-            &FunctionContext::new(vec![function_argument.clone()], vec![]),
-        );
+        let res = get_input_len(key, out_len.clone(), &[function_argument.clone()]);
         assert!(res.is_ok());
         assert_eq!(
             function_argument.encoded_len(),
@@ -317,19 +314,15 @@ mod tests {
         let mem = create_mem!();
         let key = wasm_string!(&mem, 0, "input1");
 
-        let function_argument = FunctionArgument {
+        let function_argument = InputValue {
             name: "input1".to_owned(),
-            r#type: ArgumentType::Bytes as i32,
+            r#type: Type::Bytes as i32,
             value: vec![1, 2, 3],
         };
 
         // creates a pointer that points beyond the end of memory
         let val = WasmItemPtr::new(&mem, WasmPtr::new(std::u32::MAX));
-        let res = get_input_len(
-            key,
-            val,
-            &FunctionContext::new(vec![function_argument], vec![]),
-        );
+        let res = get_input_len(key, val, &[function_argument]);
 
         assert!(res.is_err());
         assert!(matches!(
@@ -346,7 +339,7 @@ mod tests {
         let res = get_input(
             wasm_string!(&mem, 0, "input1"),
             &mut out_buffer!(&mem, 0u32, 0u32), // no point in creating a valid buffer
-            &FunctionContext::default(),
+            &[],
         );
 
         assert!(res.is_err());
@@ -354,9 +347,9 @@ mod tests {
 
         // testing failed to encode protobuf
         let mem = create_mem!();
-        let function_argument = FunctionArgument {
+        let function_argument = InputValue {
             name: "input1".to_owned(),
-            r#type: ArgumentType::Bytes as i32,
+            r#type: Type::Bytes as i32,
             value: vec![1, 2, 3],
         };
 
@@ -366,7 +359,7 @@ mod tests {
         let res = get_input(
             key.clone(),
             &mut out_buffer!(&mem, key.buffer_len(), (encoded_len - 1) as u32), // make buffer 1 too small
-            &FunctionContext::new(vec![function_argument], vec![]),
+            &[function_argument],
         );
 
         assert!(res.is_err());
@@ -378,9 +371,9 @@ mod tests {
         // testing getting valid input
         let mem = create_mem!();
 
-        let function_argument = FunctionArgument {
+        let function_argument = InputValue {
             name: "input1".to_owned(),
-            r#type: ArgumentType::Bytes as i32,
+            r#type: Type::Bytes as i32,
             value: vec![1, 2, 3],
         };
 
@@ -391,11 +384,7 @@ mod tests {
         function_argument.encode(&mut reference_value).unwrap();
 
         let out_ptr = out_buffer!(&mem, key.buffer_len(), encoded_len as u32);
-        let res = get_input(
-            key,
-            &mut out_ptr.clone(),
-            &FunctionContext::new(vec![function_argument], vec![]),
-        );
+        let res = get_input(key, &mut out_ptr.clone(), &[function_argument]);
 
         assert!(res.is_ok());
 
@@ -406,9 +395,9 @@ mod tests {
     #[test]
     fn test_set_output() {
         let mem = create_mem!();
-        let return_value = ReturnValue {
+        let return_value = OutputValue {
             name: "sune".to_owned(),
-            r#type: ArgumentType::Int as i32,
+            r#type: Type::Int as i32,
             value: vec![1, 2, 3, 4, 5, 6, 7, 8],
         };
 
@@ -432,14 +421,11 @@ mod tests {
         std::fs::write(file_path, "hejhej").unwrap();
         let mem = create_mem!();
         let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
-        let fc = FunctionContext::new(
-            vec![],
-            vec![function_attachment!(
-                format!("file://{}", file_path.display()),
-                "sune",
-                "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
-            )],
-        );
+        let attachments = vec![attachment!(
+            format!("file://{}", file_path.display()),
+            "sune",
+            "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
+        )];
 
         let attachment_name = wasm_string!(&mem, 0, "sune");
         let expected_path = "attachments/sune";
@@ -449,7 +435,7 @@ mod tests {
 
         // Test that we get the expected file path
         let res = map_attachment(
-            &fc,
+            &attachments,
             &sandbox,
             attachment_name,
             false,
@@ -465,7 +451,7 @@ mod tests {
         // Test non existing attachment
         let mem = create_mem!();
         let res = map_attachment(
-            &fc,
+            &attachments,
             &sandbox,
             wasm_string!(&mem, 0, "i-am-not-here"),
             false,
@@ -481,17 +467,14 @@ mod tests {
         // Test bad attachment transport
         let mem = create_mem!();
         let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
-        let fc = FunctionContext::new(
-            vec![],
-            vec![function_attachment!(
-                "fule://din-mamma",
-                "sune",
-                "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
-            )],
-        );
+        let attachments = vec![attachment!(
+            "fule://din-mamma",
+            "sune",
+            "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
+        )];
 
         let res = map_attachment(
-            &fc,
+            &attachments,
             &sandbox,
             wasm_string!(&mem, 0, "sune"),
             false,
@@ -508,18 +491,15 @@ mod tests {
     #[test]
     fn test_get_attachment_path_len() {
         let mem = create_mem!();
-        let fc = FunctionContext::new(
-            vec![],
-            vec![function_attachment!(
-                "file://doesnt-matter",
-                "sune",
-                "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
-            )],
-        );
+        let attachments = vec![attachment!(
+            "file://doesnt-matter",
+            "sune",
+            "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
+        )];
 
         let attachment_name = wasm_string!(&mem, 0, "sune");
         let out_path_len = WasmItemPtr::new(&mem, WasmPtr::new(attachment_name.buffer_len()));
-        let res = get_attachment_path_len(&fc, attachment_name, out_path_len.clone());
+        let res = get_attachment_path_len(&attachments, attachment_name, out_path_len.clone());
 
         assert!(res.is_ok());
         assert_eq!(
@@ -530,7 +510,7 @@ mod tests {
         // Test non existing attachment
         let attachment_name = wasm_string!(&mem, 0, "i-am-not-there");
         let out_path_len = WasmItemPtr::new(&mem, WasmPtr::new(attachment_name.buffer_len()));
-        let res = get_attachment_path_len(&fc, attachment_name, out_path_len);
+        let res = get_attachment_path_len(&attachments, attachment_name, out_path_len);
 
         assert!(res.is_err());
         assert!(matches!(

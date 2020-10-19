@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use semver::Version;
 use slog::{info, o, Logger};
@@ -6,8 +6,9 @@ use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
 
-pub use gbk_protocols::functions::{
-    ArgumentType, AttachmentUploadResponse, AuthMethod, FunctionDescriptor, OrderingKey,
+pub use function_protocols::{
+    functions::{AttachmentUrl, AuthMethod, Type},
+    registry::{AttachmentHandle, OrderingKey},
 };
 
 mod gcs;
@@ -15,88 +16,109 @@ mod https;
 mod memory;
 mod postgres;
 
-#[derive(Debug, Clone)]
-pub struct Function {
-    pub id: Uuid,
-    pub function_data: FunctionData,
+#[derive(Eq, PartialEq, Hash, Debug, Clone)]
+pub struct FunctionId {
+    pub name: String,
+    pub version: semver::Version,
 }
 
-#[derive(Debug, Clone)]
-pub struct FunctionData {
+impl Display for FunctionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}:{}", self.name, self.version)
+    }
+}
+
+impl From<&Function> for FunctionId {
+    fn from(f: &Function) -> Self {
+        Self {
+            name: f.name.clone(),
+            version: f.version.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Function {
     pub name: String,
     pub version: Version,
-    pub execution_environment: ExecutionEnvironment,
+    pub runtime: Runtime,
     pub inputs: Vec<FunctionInput>,
     pub outputs: Vec<FunctionOutput>,
     pub metadata: HashMap<String, String>,
     pub code: Option<Uuid>,
     pub attachments: Vec<Uuid>,
+    pub created_at: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FunctionInput {
     pub name: String,
+    pub description: String,
     pub required: bool,
-    pub argument_type: ArgumentType,
-    pub default_value: String,
-    pub from_execution_environment: bool,
+    pub argument_type: Type,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FunctionOutput {
     pub name: String,
-    pub argument_type: ArgumentType,
+    pub description: String,
+    pub argument_type: Type,
 }
 
-#[derive(Debug, Clone)]
-pub struct ExecutionEnvironment {
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Runtime {
     pub name: String,
     pub entrypoint: String,
-    pub function_arguments: HashMap<String, String>,
+    pub arguments: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Checksums {
     pub sha256: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FunctionAttachment {
     pub id: Uuid,
-    pub function_ids: Vec<Uuid>,
     pub data: FunctionAttachmentData,
+    pub created_at: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct FunctionAttachmentData {
     pub name: String,
     pub metadata: HashMap<String, String>,
     pub checksums: Checksums,
 }
 
-#[derive(Debug, Clone)]
-pub struct Filters {
-    pub name: String,
-    pub metadata: HashMap<String, Option<String>>,
-    pub offset: usize,
-    pub limit: usize,
-    pub exact_name_match: bool,
-    pub version_requirement: Option<semver::VersionReq>,
-    pub order_descending: bool,
-    pub order_by: OrderingKey,
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+pub struct NameFilter {
+    pub pattern: String,
+    pub exact_match: bool,
 }
 
-impl Default for Filters {
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Ordering {
+    pub key: OrderingKey,
+    pub reverse: bool,
+    pub offset: usize,
+    pub limit: usize,
+}
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct Filters {
+    pub name: Option<NameFilter>,
+    pub version_requirement: Option<semver::VersionReq>,
+    pub order: Option<Ordering>,
+    pub metadata: HashMap<String, Option<String>>,
+}
+
+impl Default for Ordering {
     fn default() -> Self {
         Self {
-            name: String::default(),
-            metadata: HashMap::default(),
+            key: OrderingKey::NameVersion,
+            reverse: false,
             offset: 0,
             limit: 100,
-            exact_name_match: false,
-            version_requirement: Option::default(),
-            order_descending: false,
-            order_by: OrderingKey::Name,
         }
     }
 }
@@ -150,12 +172,12 @@ pub async fn create_storage<S: AsRef<str>>(
 
 #[async_trait::async_trait]
 pub trait FunctionStorage: Send + Sync {
-    async fn insert(&self, function_data: FunctionData) -> Result<Uuid, StorageError>;
+    async fn insert(&self, function_data: Function) -> Result<Function, StorageError>;
     async fn insert_attachment(
         &self,
         function_attachment_data: FunctionAttachmentData,
-    ) -> Result<Uuid, StorageError>;
-    async fn get(&self, id: &Uuid) -> Result<Function, StorageError>;
+    ) -> Result<FunctionAttachment, StorageError>;
+    async fn get(&self, id: &FunctionId) -> Result<Function, StorageError>;
     async fn get_attachment(&self, id: &Uuid) -> Result<FunctionAttachment, StorageError>;
     async fn list(&self, filters: &Filters) -> Result<Vec<Function>, StorageError>;
 }
@@ -164,8 +186,11 @@ pub trait AttachmentStorage: Send + Sync + std::fmt::Debug {
     fn get_upload_url(
         &self,
         attachment: &FunctionAttachment,
-    ) -> Result<AttachmentUploadResponse, StorageError>;
-    fn get_download_url(&self, attachment: &FunctionAttachment) -> Result<Url, StorageError>;
+    ) -> Result<AttachmentUrl, StorageError>;
+    fn get_download_url(
+        &self,
+        attachment: &FunctionAttachment,
+    ) -> Result<AttachmentUrl, StorageError>;
 }
 
 pub fn create_attachment_storage<S: AsRef<str>>(

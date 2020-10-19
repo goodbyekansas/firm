@@ -1,4 +1,4 @@
-#[link(wasm_import_module = "gbk")]
+#[link(wasm_import_module = "firm")]
 extern "C" {
 
     pub fn get_attachment_path_len(

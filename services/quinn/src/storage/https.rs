@@ -1,7 +1,6 @@
 use url::Url;
 
-use super::{AttachmentStorage, FunctionAttachment, StorageError};
-use gbk_protocols::functions::{AttachmentUploadResponse, AuthMethod};
+use super::{AttachmentStorage, AttachmentUrl, AuthMethod, FunctionAttachment, StorageError};
 
 #[derive(Debug)]
 pub struct HttpsStorage {
@@ -28,15 +27,21 @@ impl AttachmentStorage for HttpsStorage {
     fn get_upload_url(
         &self,
         attachment: &FunctionAttachment,
-    ) -> Result<AttachmentUploadResponse, StorageError> {
-        Ok(AttachmentUploadResponse {
+    ) -> Result<AttachmentUrl, StorageError> {
+        Ok(AttachmentUrl {
             url: self.base.join(&attachment.id.to_string())?.to_string(),
             auth_method: self.auth_method as i32,
         })
     }
 
-    fn get_download_url(&self, attachment: &FunctionAttachment) -> Result<Url, StorageError> {
-        Ok(self.base.join(&attachment.id.to_string())?)
+    fn get_download_url(
+        &self,
+        attachment: &FunctionAttachment,
+    ) -> Result<AttachmentUrl, StorageError> {
+        Ok(AttachmentUrl {
+            url: self.base.join(&attachment.id.to_string())?.to_string(),
+            auth_method: self.auth_method as i32,
+        })
     }
 }
 
@@ -58,7 +63,6 @@ mod tests {
 
         let res = https_storage.get_upload_url(&FunctionAttachment {
             id: Uuid::parse_str(uuid_str).unwrap(),
-            function_ids: vec![],
             data: FunctionAttachmentData {
                 name: "Nej".to_owned(),
                 metadata: HashMap::new(),
@@ -66,6 +70,7 @@ mod tests {
                     sha256: "nej".to_owned(),
                 },
             },
+            created_at: 1337,
         });
 
         assert!(res.is_ok());
@@ -80,7 +85,6 @@ mod tests {
 
         let res = https_storage.get_upload_url(&FunctionAttachment {
             id: Uuid::parse_str(uuid_str).unwrap(),
-            function_ids: vec![],
             data: FunctionAttachmentData {
                 name: "Nej".to_owned(),
                 metadata: HashMap::new(),
@@ -88,6 +92,7 @@ mod tests {
                     sha256: "nej".to_owned(),
                 },
             },
+            created_at: 1337,
         });
 
         assert!(res.is_ok());

@@ -16,7 +16,7 @@ let
   components = rec {
     inherit protocols;
 
-    wasiFunctionUtils = project.declareComponent ./utils/rust/wasi-function-utils/wasi-function-utils.nix {
+    firmRust = project.declareComponent ./utils/rust/firm-rust/firm-rust.nix {
       protocols = protocols.rust.onlyMessages;
     };
     tonicMiddleware = project.declareComponent ./utils/rust/tonic-middleware/tonic-middleware.nix {
@@ -27,9 +27,6 @@ let
       protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
     };
     bendini = project.declareComponent ./clients/bendini/bendini.nix {
-      protocols = protocols.rust.withServices;
-    };
-    lomax = project.declareComponent ./clients/lomax/lomax.nix {
       inherit tonicMiddleware;
       protocols = protocols.rust.withServices;
       protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
@@ -39,7 +36,6 @@ let
       linuxPackages = [
         avery
         bendini
-        lomax
       ];
 
       windowsPackages = [ ];
@@ -50,7 +46,7 @@ let
       protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
     };
   };
-  capturedLomaxPackage = components.lomax.package;
+  capturedBendiniPackage = components.bendini.package;
   # TODO credentials must be removed. Need to have a local auth service for that.
   setupFunctionDeployment = { components, endpoint ? "tcp://[::1]", port ? 1939, credentials ? "" }: (builtins.mapAttrs
     (
@@ -61,7 +57,7 @@ let
           deployment = comp.deployment // {
             function = comp.deployment.function {
               inherit endpoint port credentials;
-              lomax = capturedLomaxPackage;
+              bendini = capturedBendiniPackage;
               local = endpoint == "tcp://[::1]";
             };
           };

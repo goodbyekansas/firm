@@ -13,9 +13,11 @@ use std::{
 use prost::Message;
 use thiserror::Error;
 
-pub use gbk_protocols::functions::ReturnValue;
-use gbk_protocols::functions::{
-    ArgumentType, FunctionArgument, FunctionAttachment, StartProcessRequest,
+pub use function_protocols::execution::OutputValue;
+use function_protocols::{
+    execution::InputValue,
+    functions::{Attachment, Type},
+    wasi::StartProcessRequest,
 };
 
 #[cfg(all(not(test), not(feature = "mock")))]
@@ -46,7 +48,7 @@ pub enum Error {
     FailedToDecodeResult(#[from] prost::DecodeError),
 
     #[error("Failed to encode: {0}")]
-    FailedToEncodeReturnValue(#[from] prost::EncodeError),
+    FailedToEncodeOutputValue(#[from] prost::EncodeError),
 
     #[error("Host error occured. Error code: {0}")]
     HostError(u32),
@@ -114,7 +116,7 @@ pub fn map_attachment_and_unpack<S: AsRef<str> + std::fmt::Display>(
 }
 
 fn _map_attachment_from_descriptor(
-    attachment_descriptor: &FunctionAttachment,
+    attachment_descriptor: &Attachment,
     unpack: bool,
 ) -> Result<PathBuf, Error> {
     let mut attachment_path_bytes_len: usize = 0;
@@ -144,14 +146,14 @@ fn _map_attachment_from_descriptor(
 
 /// Map an attachment from a descriptor that the WASI host does not know about.
 pub fn map_attachment_from_descriptor(
-    attachment_descriptor: &FunctionAttachment,
+    attachment_descriptor: &Attachment,
 ) -> Result<PathBuf, Error> {
     _map_attachment_from_descriptor(attachment_descriptor, false)
 }
 
 /// Map an attachment from a descriptor that the WASI host does not know about and unpack it.
 pub fn map_attachment_from_descriptor_and_unpack(
-    attachment_descriptor: &FunctionAttachment,
+    attachment_descriptor: &Attachment,
 ) -> Result<PathBuf, Error> {
     _map_attachment_from_descriptor(attachment_descriptor, true)
 }
@@ -243,48 +245,48 @@ pub fn run_host_process<S1: AsRef<str>, S2: AsRef<str>>(
     .map(|_| exit_code)
 }
 
-pub trait FromFunctionArgument: Sized {
-    fn from_arg(arg: &FunctionArgument) -> Option<Self>;
+pub trait FromInputValue: Sized {
+    fn from_arg(arg: &InputValue) -> Option<Self>;
 }
 
-pub trait ToReturnValue: Sized {
-    fn to_return_value(&self, name: &str) -> ReturnValue;
+pub trait ToOutputValue: Sized {
+    fn to_return_value(&self, name: &str) -> OutputValue;
 }
 
-impl FromFunctionArgument for String {
-    fn from_arg(arg: &FunctionArgument) -> Option<Self> {
-        match ArgumentType::from_i32(arg.r#type) {
-            Some(ArgumentType::String) => String::from_utf8(arg.value.clone()).ok(),
+impl FromInputValue for String {
+    fn from_arg(arg: &InputValue) -> Option<Self> {
+        match Type::from_i32(arg.r#type) {
+            Some(Type::String) => String::from_utf8(arg.value.clone()).ok(),
             _ => None,
         }
     }
 }
 
-impl<'a, T> ToReturnValue for &'a T
+impl<'a, T> ToOutputValue for &'a T
 where
-    T: ToReturnValue + 'a,
+    T: ToOutputValue + 'a,
 {
-    fn to_return_value(&self, name: &str) -> ReturnValue {
+    fn to_return_value(&self, name: &str) -> OutputValue {
         T::to_return_value(self, name)
     }
 }
 
-impl ToReturnValue for &str {
-    fn to_return_value(&self, name: &str) -> ReturnValue {
-        ReturnValue {
+impl ToOutputValue for &str {
+    fn to_return_value(&self, name: &str) -> OutputValue {
+        OutputValue {
             name: name.to_owned(),
             value: self.as_bytes().to_vec(),
-            r#type: ArgumentType::String as i32,
+            r#type: Type::String as i32,
         }
     }
 }
 
-impl ToReturnValue for String {
-    fn to_return_value(&self, name: &str) -> ReturnValue {
-        ReturnValue {
+impl ToOutputValue for String {
+    fn to_return_value(&self, name: &str) -> OutputValue {
+        OutputValue {
             name: name.to_owned(),
             value: self.as_bytes().to_vec(),
-            r#type: ArgumentType::String as i32,
+            r#type: Type::String as i32,
         }
     }
 }
@@ -304,10 +306,10 @@ macro_rules! bytes_as_64_bit_array {
     }};
 }
 
-impl FromFunctionArgument for i64 {
-    fn from_arg(arg: &FunctionArgument) -> Option<Self> {
-        match ArgumentType::from_i32(arg.r#type) {
-            Some(ArgumentType::Int) => {
+impl FromInputValue for i64 {
+    fn from_arg(arg: &InputValue) -> Option<Self> {
+        match Type::from_i32(arg.r#type) {
+            Some(Type::Int) => {
                 if arg.value.len() == 8 {
                     Some(i64::from_le_bytes(bytes_as_64_bit_array!(arg.value)))
                 } else {
@@ -319,20 +321,20 @@ impl FromFunctionArgument for i64 {
     }
 }
 
-impl ToReturnValue for i64 {
-    fn to_return_value(&self, name: &str) -> ReturnValue {
-        ReturnValue {
+impl ToOutputValue for i64 {
+    fn to_return_value(&self, name: &str) -> OutputValue {
+        OutputValue {
             name: name.to_owned(),
             value: self.to_le_bytes().to_vec(),
-            r#type: ArgumentType::Int as i32,
+            r#type: Type::Int as i32,
         }
     }
 }
 
-impl FromFunctionArgument for f64 {
-    fn from_arg(arg: &FunctionArgument) -> Option<Self> {
-        match ArgumentType::from_i32(arg.r#type) {
-            Some(ArgumentType::Float) => {
+impl FromInputValue for f64 {
+    fn from_arg(arg: &InputValue) -> Option<Self> {
+        match Type::from_i32(arg.r#type) {
+            Some(Type::Float) => {
                 if arg.value.len() == 8 {
                     Some(f64::from_le_bytes(bytes_as_64_bit_array!(arg.value)))
                 } else {
@@ -344,55 +346,55 @@ impl FromFunctionArgument for f64 {
     }
 }
 
-impl ToReturnValue for f64 {
-    fn to_return_value(&self, name: &str) -> ReturnValue {
-        ReturnValue {
+impl ToOutputValue for f64 {
+    fn to_return_value(&self, name: &str) -> OutputValue {
+        OutputValue {
             name: name.to_owned(),
             value: self.to_le_bytes().to_vec(),
-            r#type: ArgumentType::Float as i32,
+            r#type: Type::Float as i32,
         }
     }
 }
 
-impl FromFunctionArgument for bool {
-    fn from_arg(arg: &FunctionArgument) -> Option<Self> {
-        match ArgumentType::from_i32(arg.r#type) {
-            Some(ArgumentType::Bool) => arg.value.first().map(|b| *b != 0),
+impl FromInputValue for bool {
+    fn from_arg(arg: &InputValue) -> Option<Self> {
+        match Type::from_i32(arg.r#type) {
+            Some(Type::Bool) => arg.value.first().map(|b| *b != 0),
             _ => None,
         }
     }
 }
 
-impl ToReturnValue for bool {
-    fn to_return_value(&self, name: &str) -> ReturnValue {
-        ReturnValue {
+impl ToOutputValue for bool {
+    fn to_return_value(&self, name: &str) -> OutputValue {
+        OutputValue {
             name: name.to_owned(),
             value: vec![*self as u8],
-            r#type: ArgumentType::Bool as i32,
+            r#type: Type::Bool as i32,
         }
     }
 }
 
-impl FromFunctionArgument for Vec<u8> {
-    fn from_arg(arg: &FunctionArgument) -> Option<Self> {
-        match ArgumentType::from_i32(arg.r#type) {
-            Some(ArgumentType::Bytes) => Some(arg.value.clone()),
+impl FromInputValue for Vec<u8> {
+    fn from_arg(arg: &InputValue) -> Option<Self> {
+        match Type::from_i32(arg.r#type) {
+            Some(Type::Bytes) => Some(arg.value.clone()),
             _ => None,
         }
     }
 }
 
-impl ToReturnValue for Vec<u8> {
-    fn to_return_value(&self, name: &str) -> ReturnValue {
-        ReturnValue {
+impl ToOutputValue for Vec<u8> {
+    fn to_return_value(&self, name: &str) -> OutputValue {
+        OutputValue {
             name: name.to_owned(),
             value: self.to_vec(),
-            r#type: ArgumentType::Bytes as i32,
+            r#type: Type::Bytes as i32,
         }
     }
 }
 
-pub fn get_input<S: AsRef<str>, T: FromFunctionArgument>(key: S) -> Result<T, Error> {
+pub fn get_input<S: AsRef<str>, T: FromInputValue>(key: S) -> Result<T, Error> {
     let mut size: u64 = 0;
     host_call!(raw::get_input_len(
         key.as_ref().as_ptr(),
@@ -410,17 +412,17 @@ pub fn get_input<S: AsRef<str>, T: FromFunctionArgument>(key: S) -> Result<T, Er
     unsafe {
         value_buffer.set_len(size as usize);
     }
-    FunctionArgument::decode(value_buffer.as_slice())
+    InputValue::decode(value_buffer.as_slice())
         .map_err(|e| e.into())
         .and_then(|a| T::from_arg(&a).ok_or_else(Error::ConversionError))
 }
 
-pub fn set_output<S: AsRef<str>, T: ToReturnValue>(name: S, value: T) -> Result<(), Error> {
+pub fn set_output<S: AsRef<str>, T: ToOutputValue>(name: S, value: T) -> Result<(), Error> {
     let ret_value = value.borrow().to_return_value(name.as_ref());
     set_output_with_return_value(&ret_value)
 }
 
-pub fn set_output_with_return_value(ret_value: &ReturnValue) -> Result<(), Error> {
+pub fn set_output_with_return_value(ret_value: &OutputValue) -> Result<(), Error> {
     let mut value = Vec::with_capacity(ret_value.encoded_len());
     ret_value.encode(&mut value)?;
     host_call!(raw::set_output(value.as_mut_ptr(), value.len()))
@@ -433,52 +435,63 @@ pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
     ))
 }
 
-pub mod execution_environment {
-
+pub mod executor {
     use std::path::PathBuf;
 
-    use gbk_protocols::functions::{FunctionArgument, FunctionAttachment, FunctionContext};
+    use function_protocols::{
+        execution::InputValue,
+        functions::Attachment,
+        wasi::{Attachments, InputValues},
+    };
     use prost::Message;
 
-    use crate::{get_input, map_attachment_from_descriptor, Error, FromFunctionArgument};
+    use crate::{get_input, map_attachment_from_descriptor, Error, FromInputValue};
 
     pub trait AttachmentDownload {
         fn download(&self) -> Result<PathBuf, Error>;
     }
 
-    impl AttachmentDownload for FunctionAttachment {
+    impl AttachmentDownload for Attachment {
         fn download(&self) -> Result<PathBuf, Error> {
             map_attachment_from_descriptor(self)
         }
     }
 
     /// Special function inputs for
-    /// functions that are execution environments
+    /// functions that are executors
     #[derive(Debug)]
-    pub struct ExecutionEnvironmentArgs {
-        code: FunctionAttachment,
+    pub struct ExecutorArgs {
+        code: Attachment,
         sha256: String,
         entrypoint: String,
-        context: FunctionContext,
+        arguments: Vec<InputValue>,
+        attachments: Vec<Attachment>,
     }
 
-    impl ExecutionEnvironmentArgs {
+    impl ExecutorArgs {
         /// Create execution environment args from the wasi host
         pub fn from_wasi_host() -> Result<Self, Error> {
             Ok(Self {
                 code: get_input("_code").and_then(|a: Vec<u8>| {
-                    FunctionAttachment::decode(a.as_slice()).map_err(|e| e.into())
+                    Attachment::decode(a.as_slice()).map_err(|e| e.into())
                 })?,
                 sha256: get_input("_sha256")?,
                 entrypoint: get_input("_entrypoint")?,
-                context: get_input("_context").and_then(|a: Vec<u8>| {
-                    FunctionContext::decode(a.as_slice()).map_err(|e| e.into())
+                arguments: get_input("_arguments").and_then(|a: Vec<u8>| {
+                    InputValues::decode(a.as_slice())
+                        .map_err(|e| e.into())
+                        .map(|v| v.values)
+                })?,
+                attachments: get_input("_attachments").and_then(|a: Vec<u8>| {
+                    Attachments::decode(a.as_slice())
+                        .map_err(|e| e.into())
+                        .map(|a| a.attachments)
                 })?,
             })
         }
 
         /// Get the code that the execution environment is expected to execute
-        pub fn code(&self) -> &FunctionAttachment {
+        pub fn code(&self) -> &Attachment {
             &self.code
         }
 
@@ -495,19 +508,15 @@ pub mod execution_environment {
         /// Get an argument designated by `key` for the
         /// function that the execution environment is
         /// expected to execute
-        pub fn argument<S: AsRef<str>, T: FromFunctionArgument>(&self, key: S) -> Result<T, Error> {
+        pub fn argument<S: AsRef<str>, T: FromInputValue>(&self, key: S) -> Result<T, Error> {
             self.get_argument_descriptor(key)
                 .and_then(|a| T::from_arg(a).ok_or_else(Error::ConversionError))
         }
 
         /// Get an argument descriptor designated by `key` for the function that
         /// the execution environment is expected to execute
-        pub fn get_argument_descriptor<S: AsRef<str>>(
-            &self,
-            key: S,
-        ) -> Result<&FunctionArgument, Error> {
-            self.context
-                .arguments
+        pub fn get_argument_descriptor<S: AsRef<str>>(&self, key: S) -> Result<&InputValue, Error> {
+            self.arguments
                 .iter()
                 .find(|a| a.name == key.as_ref())
                 .ok_or_else(|| Error::FailedToFindInput(key.as_ref().to_owned()))
@@ -516,9 +525,8 @@ pub mod execution_environment {
         pub fn get_attachment_descriptor<S: AsRef<str>>(
             &self,
             name: S,
-        ) -> Result<&FunctionAttachment, Error> {
-            self.context
-                .attachments
+        ) -> Result<&Attachment, Error> {
+            self.attachments
                 .iter()
                 .find(|a| a.name == name.as_ref())
                 .ok_or_else(|| Error::FailedToFindAttachment(name.as_ref().to_owned()))
@@ -575,8 +583,11 @@ pub mod net {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use execution_environment::AttachmentDownload;
-    use gbk_protocols::functions::{FunctionAttachment, FunctionContext};
+    use executor::AttachmentDownload;
+    use function_protocols::{
+        functions::{Attachment, AttachmentUrl, AuthMethod},
+        wasi::InputValues,
+    };
     use mock::MockResultRegistry;
 
     #[test]
@@ -614,21 +625,20 @@ mod tests {
     #[test]
     fn test_host_path_exists() {
         let datapata = "/sune/super-sune/mega-sune";
-        let datapata2 = datapata.clone();
         MockResultRegistry::set_host_path_exists_impl(move |path| {
             assert_eq!(path, datapata);
             Ok(true)
         });
 
-        assert!(host_path_exists(datapata2).unwrap());
+        assert!(host_path_exists(datapata).unwrap());
 
         MockResultRegistry::set_host_path_exists_impl(|_| Ok(false));
 
-        assert!(!host_path_exists(datapata2).unwrap());
+        assert!(!host_path_exists(datapata).unwrap());
 
         MockResultRegistry::set_host_path_exists_impl(|_| Err(123456));
 
-        let res = host_path_exists(datapata2);
+        let res = host_path_exists(datapata);
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), Error::HostError(123456)));
     }
@@ -661,7 +671,7 @@ mod tests {
         assert_eq!(res.unwrap(), 1337);
 
         // test failing
-        MockResultRegistry::set_start_host_process_impl(|_req| Err(1));
+        MockResultRegistry::set_start_host_process_impl(|_req| -> Result<u64, u32> { Err(1) });
 
         let res = start_host_process("Sune", &["bune", "rune"], &env);
         assert!(res.is_err());
@@ -679,7 +689,7 @@ mod tests {
             assert!(req.environment_variables.contains_key("ur"));
             assert_eq!(req.environment_variables["ur"], "sula".to_owned());
 
-            Ok(25)
+            Ok(25i32)
         });
 
         let res = run_host_process("Sune", &["bune", "rune"], &env);
@@ -696,9 +706,9 @@ mod tests {
 
     #[test]
     fn test_get_input() {
-        let fa = FunctionArgument {
+        let fa = InputValue {
             name: "namn".to_owned(),
-            r#type: ArgumentType::String as i32,
+            r#type: Type::String as i32,
             value: "🏌️‍♂️".as_bytes().to_vec(),
         };
         let falen = fa.encoded_len();
@@ -737,10 +747,7 @@ mod tests {
         MockResultRegistry::set_set_output_impl(move |res| {
             assert_eq!(res.name, name);
             assert_eq!(std::str::from_utf8(&res.value).unwrap(), value);
-            assert_eq!(
-                ArgumentType::from_i32(res.r#type).unwrap(),
-                ArgumentType::String
-            );
+            assert_eq!(Type::from_i32(res.r#type).unwrap(), Type::String);
             Ok(())
         });
 
@@ -753,10 +760,7 @@ mod tests {
         MockResultRegistry::set_set_output_impl(move |res| {
             assert_eq!(res.name, name);
             assert_eq!(res.value, value.to_le_bytes());
-            assert_eq!(
-                ArgumentType::from_i32(res.r#type).unwrap(),
-                ArgumentType::Int
-            );
+            assert_eq!(Type::from_i32(res.r#type).unwrap(), Type::Int);
             Ok(())
         });
 
@@ -771,10 +775,7 @@ mod tests {
         MockResultRegistry::set_set_output_impl(move |res| {
             assert_eq!(res.name, name);
             assert_eq!(res.value, value);
-            assert_eq!(
-                ArgumentType::from_i32(res.r#type).unwrap(),
-                ArgumentType::Bytes
-            );
+            assert_eq!(Type::from_i32(res.r#type).unwrap(), Type::Bytes);
             Ok(())
         });
 
@@ -788,11 +789,11 @@ mod tests {
         MockResultRegistry::set_set_output_impl(move |res| {
             assert_eq!(res.name, name);
             assert_eq!(res.value.len(), 8);
-            assert_eq!(f64::from_le_bytes(bytes_as_64_bit_array!(res.value)), value);
-            assert_eq!(
-                ArgumentType::from_i32(res.r#type).unwrap(),
-                ArgumentType::Float
+            assert!(
+                (f64::from_le_bytes(bytes_as_64_bit_array!(res.value)) - value).abs()
+                    < f64::EPSILON
             );
+            assert_eq!(Type::from_i32(res.r#type).unwrap(), Type::Float);
             Ok(())
         });
 
@@ -807,10 +808,7 @@ mod tests {
             assert_eq!(res.name, name);
             assert_eq!(res.value.len(), 1);
             assert_eq!(res.value[0], value as u8);
-            assert_eq!(
-                ArgumentType::from_i32(res.r#type).unwrap(),
-                ArgumentType::Bool
-            );
+            assert_eq!(Type::from_i32(res.r#type).unwrap(), Type::Bool);
             Ok(())
         });
 
@@ -897,63 +895,69 @@ mod tests {
             Ok("sune.txt".to_owned())
         });
 
-        let args = FunctionContext {
-            arguments: vec![
-                FunctionArgument {
+        let arguments = InputValues {
+            values: vec![
+                InputValue {
                     name: "sune".to_owned(),
-                    r#type: ArgumentType::Bool as i32,
+                    r#type: Type::Bool as i32,
                     value: vec![0u8],
                 },
-                FunctionArgument {
+                InputValue {
                     name: "rune".to_owned(),
-                    r#type: ArgumentType::String as i32,
+                    r#type: Type::String as i32,
                     value: "datta!".as_bytes().to_vec(),
                 },
             ],
-
-            attachments: vec![],
         };
 
-        let mut buff = Vec::with_capacity(args.encoded_len());
-        args.encode(&mut buff).unwrap();
+        let mut buff = Vec::with_capacity(arguments.encoded_len());
+        arguments.encode(&mut buff).unwrap();
 
-        let code_attachment = FunctionAttachment {
-            id: None,
+        let code_attachment = Attachment {
             checksums: None,
             metadata: HashMap::new(),
             name: "code".to_owned(),
-            url: "fake:///".to_owned(),
+            url: Some(AttachmentUrl {
+                url: "fake:///".to_owned(),
+                auth_method: AuthMethod::None as i32,
+            }),
+            created_at: 0,
         };
 
         let mut code_buff = Vec::with_capacity(code_attachment.encoded_len());
         code_attachment.encode(&mut code_buff).unwrap();
 
         MockResultRegistry::set_inputs(&[
-            FunctionArgument {
+            InputValue {
                 name: "_code".to_owned(),
-                r#type: ArgumentType::Bytes as i32,
+                r#type: Type::Bytes as i32,
                 value: code_buff,
             },
-            FunctionArgument {
+            InputValue {
                 name: "_sha256".to_owned(),
-                r#type: ArgumentType::String as i32,
+                r#type: Type::String as i32,
                 value: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     .as_bytes()
                     .to_vec(),
             },
-            FunctionArgument {
+            InputValue {
                 name: "_entrypoint".to_owned(),
-                r#type: ArgumentType::String as i32,
+                r#type: Type::String as i32,
                 value: "windows.exe".as_bytes().to_vec(),
             },
-            FunctionArgument {
-                name: "_context".to_owned(),
-                r#type: ArgumentType::Bytes as i32,
+            InputValue {
+                name: "_arguments".to_owned(),
+                r#type: Type::Bytes as i32,
                 value: buff,
+            },
+            InputValue {
+                name: "_attachments".to_owned(),
+                r#type: Type::Bytes as i32,
+                value: vec![],
             },
         ]);
 
-        let eargs = execution_environment::ExecutionEnvironmentArgs::from_wasi_host();
+        let eargs = executor::ExecutorArgs::from_wasi_host();
         assert!(eargs.is_ok());
 
         let eargs = eargs.unwrap();
@@ -976,18 +980,20 @@ mod tests {
 
     #[test]
     fn test_map_attachment_from_descriptor() {
-        let random_attachment = FunctionAttachment {
-            id: None,
+        let random_attachment = Attachment {
             checksums: None,
             metadata: HashMap::new(),
             name: "foot".to_owned(),
-            url: "fake:///".to_owned(),
+            url: Some(AttachmentUrl {
+                url: "fake:///".to_owned(),
+                auth_method: AuthMethod::None as i32,
+            }),
+            created_at: 0,
         };
         let random_attachment2 = random_attachment.clone();
 
         MockResultRegistry::set_map_attachment_from_descriptor_impl(move |att, _| {
             let attachment_path = PathBuf::from("attachments").join(&att.name);
-            assert_eq!(att.id, random_attachment.id);
             assert_eq!(att.checksums, random_attachment.checksums);
             assert_eq!(att.metadata, random_attachment.metadata);
             assert_eq!(att.name, random_attachment.name);

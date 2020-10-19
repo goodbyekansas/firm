@@ -7,10 +7,12 @@ use std::{
 use serde::Deserialize;
 use thiserror::Error;
 
-use gbk_protocols::functions::{
-    ArgumentType, Checksums as ProtoChecksums, ExecutionEnvironment as ProtoExecutionEnvironment,
-    FunctionArgument, FunctionInput as ProtoFunctionInput, FunctionOutput as ProtoFunctionOutput,
-    RegisterAttachmentRequest, RegisterRequest,
+use function_protocols::{
+    functions::{
+        Checksums as ProtoChecksums, Input as ProtoInput, Output as ProtoOutput,
+        Runtime as ProtoRuntime, Type,
+    },
+    registry::{AttachmentData, FunctionData},
 };
 
 #[derive(Debug, Error)]
@@ -29,7 +31,7 @@ pub enum ManifestError {
 }
 
 #[derive(Debug, Deserialize)]
-enum FunctionArgumentType {
+enum ArgumentType {
     #[serde(rename = "string")]
     String,
 
@@ -56,13 +58,12 @@ pub struct FunctionManifest {
     version: String,
 
     #[serde(default)]
-    inputs: HashMap<String, FunctionInput>,
+    inputs: HashMap<String, Input>,
 
     #[serde(default)]
-    outputs: HashMap<String, FunctionOutput>,
+    outputs: HashMap<String, Output>,
 
-    #[serde(rename = "execution-environment")]
-    execution_environment: ExecutionEnvironment,
+    runtime: Runtime,
 
     #[serde(default)]
     metadata: HashMap<String, String>,
@@ -84,19 +85,22 @@ struct Attachment {
 }
 
 #[derive(Debug, Deserialize)]
-struct FunctionInput {
-    r#type: FunctionArgumentType,
+struct Input {
+    r#type: ArgumentType,
 
     #[serde(default)]
     required: bool,
 
-    #[serde(default, rename = "default")]
-    default_value: String,
+    #[serde(default)]
+    description: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct FunctionOutput {
-    r#type: FunctionArgumentType,
+struct Output {
+    r#type: ArgumentType,
+
+    #[serde(default)]
+    description: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -113,7 +117,7 @@ impl From<&Checksums> for ProtoChecksums {
 }
 
 #[derive(Debug, Deserialize)]
-struct ExecutionEnvironment {
+struct Runtime {
     r#type: String,
 
     #[serde(default)]
@@ -126,7 +130,7 @@ struct ExecutionEnvironment {
 #[derive(Debug, PartialEq)]
 pub struct AttachmentInfo {
     pub path: PathBuf,
-    pub request: RegisterAttachmentRequest,
+    pub request: AttachmentData,
 }
 
 impl FunctionManifest {
@@ -178,7 +182,7 @@ impl FunctionManifest {
                 self.get_attachment_path(&code)
                     .map(|absolute| AttachmentInfo {
                         path: absolute,
-                        request: RegisterAttachmentRequest {
+                        request: AttachmentData {
                             name: "code".to_owned(),
                             metadata: code.metadata.clone(),
                             checksums: Some(ProtoChecksums::from(&code.checksums)),
@@ -194,7 +198,7 @@ impl FunctionManifest {
             .map(|(n, a)| {
                 self.get_attachment_path(&a).map(|absolute| AttachmentInfo {
                     path: absolute,
-                    request: RegisterAttachmentRequest {
+                    request: AttachmentData {
                         name: n.clone(),
                         metadata: a.metadata.clone(),
                         checksums: Some(ProtoChecksums::from(&a.checksums)),
@@ -205,45 +209,36 @@ impl FunctionManifest {
     }
 }
 
-impl From<&FunctionManifest> for RegisterRequest {
+impl From<&FunctionManifest> for FunctionData {
     fn from(fm: &FunctionManifest) -> Self {
-        RegisterRequest {
+        FunctionData {
             name: fm.name.clone(),
             version: fm.version.clone(),
             metadata: fm.metadata.clone(),
             inputs: fm
                 .inputs
                 .iter()
-                .map(|(name, input)| ProtoFunctionInput {
+                .map(|(name, input)| ProtoInput {
                     name: name.clone(),
+                    description: input.description.clone(),
                     required: input.required,
-                    r#type: ArgumentType::from(&input.r#type) as i32,
-                    default_value: input.default_value.clone(),
-                    from_execution_environment: false, // This is weird. This should only be set from the function registry
+                    r#type: Type::from(&input.r#type) as i32,
                 })
                 .collect(),
             outputs: fm
                 .outputs
                 .iter()
-                .map(|(name, output)| ProtoFunctionOutput {
+                .map(|(name, output)| ProtoOutput {
                     name: name.clone(),
-                    r#type: ArgumentType::from(&output.r#type) as i32,
+                    description: output.description.clone(),
+                    r#type: Type::from(&output.r#type) as i32,
                 })
                 .collect(),
-            code: None,
-            execution_environment: Some(ProtoExecutionEnvironment {
-                name: fm.execution_environment.r#type.clone(),
-                args: fm
-                    .execution_environment
-                    .args
-                    .iter()
-                    .map(|(k, v)| FunctionArgument {
-                        name: k.to_owned(),
-                        r#type: ArgumentType::String as i32,
-                        value: v.as_bytes().to_vec(),
-                    })
-                    .collect(),
-                entrypoint: fm.execution_environment.entrypoint.clone(),
+            code_attachment_id: None,
+            runtime: Some(ProtoRuntime {
+                name: fm.runtime.r#type.clone(),
+                arguments: fm.runtime.args.clone(),
+                entrypoint: fm.runtime.entrypoint.clone(),
             }),
             attachment_ids: vec![],
         }
@@ -252,26 +247,26 @@ impl From<&FunctionManifest> for RegisterRequest {
 
 // this is here to get compile time checks that the two enum types
 // are identical
-impl From<ArgumentType> for FunctionArgumentType {
-    fn from(at: ArgumentType) -> Self {
+impl From<Type> for ArgumentType {
+    fn from(at: Type) -> Self {
         match at {
-            ArgumentType::String => FunctionArgumentType::String,
-            ArgumentType::Bool => FunctionArgumentType::Bool,
-            ArgumentType::Int => FunctionArgumentType::Int,
-            ArgumentType::Float => FunctionArgumentType::Float,
-            ArgumentType::Bytes => FunctionArgumentType::Bytes,
+            Type::String => ArgumentType::String,
+            Type::Bool => ArgumentType::Bool,
+            Type::Int => ArgumentType::Int,
+            Type::Float => ArgumentType::Float,
+            Type::Bytes => ArgumentType::Bytes,
         }
     }
 }
 
-impl From<&FunctionArgumentType> for ArgumentType {
-    fn from(at: &FunctionArgumentType) -> Self {
+impl From<&ArgumentType> for Type {
+    fn from(at: &ArgumentType) -> Self {
         match *at {
-            FunctionArgumentType::String => ArgumentType::String,
-            FunctionArgumentType::Bool => ArgumentType::Bool,
-            FunctionArgumentType::Int => ArgumentType::Int,
-            FunctionArgumentType::Float => ArgumentType::Float,
-            FunctionArgumentType::Bytes => ArgumentType::Bytes,
+            ArgumentType::String => Type::String,
+            ArgumentType::Bool => Type::Bool,
+            ArgumentType::Int => Type::Int,
+            ArgumentType::Float => Type::Float,
+            ArgumentType::Bytes => Type::Bytes,
         }
     }
 }
@@ -284,9 +279,7 @@ mod tests {
 
     use tempfile::{NamedTempFile, TempDir};
 
-    use gbk_protocols_test_helpers::{
-        exec_env, function_input, function_output, register_attachment_request,
-    };
+    use function_protocols_test_helpers::{attachment_data, input, output, runtime};
 
     macro_rules! write_toml_to_tempfile {
         ($toml: expr) => {{
@@ -309,7 +302,7 @@ mod tests {
         let toml = r#"
         name = "start-blender"
         version = "0.1.0"
-        [execution-environment]
+        [runtime]
         type = "wasm"
         "#;
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
@@ -324,7 +317,7 @@ mod tests {
         [outputs]
           [outputs.pid]
 
-        [execution-environment]
+        [runtime]
         type = "wasm"
         "#;
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
@@ -347,15 +340,15 @@ mod tests {
           [outputs.pid]
           type="int"
 
-        [execution-environment]
+        [runtime]
         type = "wasm"
 
-        [execution-environment.args]
+        [runtime.args]
         sune = "bune"
         "#;
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
         assert!(r.is_ok());
-        assert_eq!(r.unwrap().execution_environment.args["sune"], "bune");
+        assert_eq!(r.unwrap().runtime.args["sune"], "bune");
 
         let r = FunctionManifest::parse(Path::new(""));
         assert!(r.is_err());
@@ -368,7 +361,7 @@ mod tests {
         let toml = r#"
         name = "start-blender"
         version = "0.1.0"
-        [execution-environment]
+        [runtime]
         type = "wasm"
 
         [code]
@@ -417,47 +410,46 @@ mod tests {
         let toml = r#"
         name = "super-simple"
         version = "0.1.0"
-        [execution-environment]
+        [runtime]
         type = "wasm"
         "#;
 
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
-        let rr = RegisterRequest::from(&r.unwrap());
+        let rr = FunctionData::from(&r.unwrap());
         assert_eq!(rr.name, "super-simple");
         assert_eq!(rr.version, "0.1.0");
 
-        assert_eq!(rr.execution_environment, Some(exec_env!("wasm")));
+        assert_eq!(rr.runtime, Some(runtime!("wasm")));
 
         let toml = r#"
         name = "super-simple"
         version = "0.1.0"
-        [execution-environment]
+        [runtime]
         type = "wasm"
         [inputs.korv]
+        description = "korv"
         type = "string"
         required = true
         [inputs.aaa]
+        description = "aaa"
         type = "float"
-        default = "2.3"
         [outputs.ost]
+        description = "ost"
         type = "int"
         "#;
 
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
-        let rr = RegisterRequest::from(&r.unwrap());
+        let rr = FunctionData::from(&r.unwrap());
         assert_eq!(
             rr.inputs.iter().find(|i| i.name == "korv").unwrap(),
-            &function_input!("korv", true, ArgumentType::String)
+            &input!("korv", true, Type::String)
         );
         assert_eq!(
             rr.inputs.iter().find(|i| i.name == "aaa").unwrap(),
-            &function_input!("aaa", false, ArgumentType::Float, "2.3")
+            &input!("aaa", Type::Float)
         );
 
-        assert_eq!(
-            rr.outputs.first().unwrap(),
-            &function_output!("ost", ArgumentType::Int)
-        );
+        assert_eq!(rr.outputs.first().unwrap(), &output!("ost", Type::Int));
     }
 
     #[test]
@@ -473,7 +465,7 @@ mod tests {
             r#"
         name = "start-blender"
         version = "0.1.0"
-        [execution-environment]
+        [runtime]
         type = "wasm"
 
         [code]
@@ -506,7 +498,7 @@ mod tests {
             r.code().unwrap().unwrap(),
             AttachmentInfo {
                 path: codepath.canonicalize().unwrap(),
-                request: register_attachment_request!("code", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"is_code" => "true"})
+                request: attachment_data!("code", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"is_code" => "true"})
             }
         );
         assert_eq!(
@@ -516,7 +508,7 @@ mod tests {
                 .unwrap(),
             &AttachmentInfo {
                 path: fkalle.path().canonicalize().unwrap(),
-                request: register_attachment_request!("kalle", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"someMetadata" => "sune", "cool" => "chorizo korvén"})
+                request: attachment_data!("kalle", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"someMetadata" => "sune", "cool" => "chorizo korvén"})
             }
         );
         assert_eq!(
@@ -526,7 +518,7 @@ mod tests {
                 .unwrap(),
             &AttachmentInfo {
                 path: foran.path().canonicalize().unwrap(),
-                request: register_attachment_request!("oran", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"surname" => "jonsson"})
+                request: attachment_data!("oran", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"surname" => "jonsson"})
             }
         );
     }

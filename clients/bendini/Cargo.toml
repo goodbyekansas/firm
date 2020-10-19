@@ -1,19 +1,31 @@
 [package]
 name = "bendini"
 version = "0.1.0"
-authors = ["Dane Bettis <dane.bettis@goodbyekansas.com>"]
+authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+ansi_term = "0.12"
+async-stream = "0.3"
+atty = "0.2"
+futures = "0.3"
+indicatif = "0.15"
 prost = "0.6"
+rand = "0.7"
+reqwest = { version = "0.10", features = ["rustls-tls"], default-features = false }
 serde = { version = "1", features = ["derive"] }
 structopt = "0.3"
-termcolor = "1"
 thiserror = "1"
-tokio = { version = "0.2", features = ["rt-threaded"] }
+tokio = { version = "0.2", features = ["blocking", "rt-threaded", "macros"] }
 toml = "0.5"
-uuid = { version = "0.8", features = ["v4"] }
+url = "2"
 
-gbk-protocols = { path = "nix-deps/rust-protobuf-definitions" }
+function-protocols = { path = "nix-deps/rust-protobuf-definitions" }
+tonic-middleware = { path = "nix-deps/tonic-middleware" }
+
+[dev-dependencies]
+tempfile = "3"
+function-protocols-test-helpers = { path = "nix-deps/rust-protobuf-test-helpers" }
+

@@ -14,62 +14,260 @@ use thiserror::Error;
 use url::Url;
 
 use crate::executor::wasi::WasiExecutor;
-use gbk_protocols::{
-    functions::{
-        execute_response::Result as ProtoResult, functions_registry_server::FunctionsRegistry,
-        ArgumentType, FunctionArgument, FunctionAttachment, FunctionContext, FunctionDescriptor,
-        FunctionInput, FunctionOutput, FunctionResult, ListRequest, OrderingDirection, OrderingKey,
-        VersionRequirement,
+use function_protocols::{
+    execution::{
+        execution_result::Result as ProtoResult,
+        execution_server::Execution as ExecutionServiceTrait, ExecutionError, ExecutionId,
+        ExecutionParameters, ExecutionResult, InputValue, OutputValue, OutputValues,
     },
+    functions::{Attachment, AuthMethod, Function, Input, Output, Type},
+    registry::{registry_server::Registry, Filters, Ordering, OrderingKey, VersionRequirement},
     tonic,
+    wasi::{Attachments, InputValues},
 };
 use ExecutorError::AttachmentReadError;
 
+pub struct ExecutionService {
+    log: Logger,
+    registry: Box<dyn Registry>,
+}
+
+impl ExecutionService {
+    pub fn new(log: Logger, registry: Box<dyn Registry>) -> Self {
+        Self { log, registry }
+    }
+
+    /// Lookup an executor for the given `runtime_name`
+    ///
+    /// If an executor is not supported, an error is returned
+    pub async fn lookup_executor_for_runtime(
+        &self,
+        runtime_name: &str,
+    ) -> Result<Box<dyn FunctionExecutor>, ExecutorError> {
+        let functions = self.traverse_runtimes(runtime_name).await?;
+
+        // TODO: now we are assuming that the stop condition for the above function
+        // was "wasi". This may not be true later
+        let executor = Box::new(WasiExecutor::new(
+            functions
+                .last()
+                .map(|(_fd, logger)| logger)
+                .unwrap_or(&self.log)
+                .new(o!("executor" => "wasi")),
+        ));
+
+        Ok(functions
+            .into_iter()
+            .fold(executor, |prev_executor, (fd, fd_logger)| {
+                Box::new(FunctionAdapter::new(prev_executor, fd, fd_logger))
+            }))
+    }
+
+    async fn traverse_runtimes(
+        &self,
+        runtime_name: &str,
+    ) -> Result<Vec<(Function, Logger)>, ExecutorError> {
+        let mut runtime = runtime_name.to_owned();
+        let mut functions = vec![];
+        let mut ids = HashSet::new();
+
+        loop {
+            match runtime.as_str() {
+                "wasi" => break,
+                rt => {
+                    let function = self
+                        .get_executor_function_for_runtime(rt, None) // TODO: runtime version requirements
+                        .await
+                        .ok_or_else(|| ExecutorError::ExecutorNotFound(rt.to_owned()))?;
+
+                    runtime = function
+                        .runtime
+                        .as_ref()
+                        .ok_or_else(|| ExecutorError::MissingRuntime("".to_owned()))?
+                        .name
+                        .clone();
+
+                    functions.push((
+                        function.clone(),
+                        functions
+                            .last()
+                            .map(|(_fd, logger)| logger)
+                            .unwrap_or(&self.log)
+                            .new(o!("executor" => runtime.clone())),
+                    ));
+
+                    if !ids.insert(format!("{}-{}", &function.name, &function.version)) {
+                        return Err(ExecutorError::ExecutorDependencyCycle(DependencyCycle {
+                            dependencies: functions
+                                .iter()
+                                .map(|(f, _log)| {
+                                    (
+                                        f.name.clone(),
+                                        f.runtime
+                                            .as_ref()
+                                            .map(|rt| rt.name.clone())
+                                            .unwrap_or_else(|| {
+                                                "invalid execution environment".to_owned()
+                                            }),
+                                    )
+                                })
+                                .collect(),
+                        }));
+                    }
+                }
+            }
+        }
+
+        functions.reverse();
+        Ok(functions)
+    }
+
+    async fn get_executor_function_for_runtime(
+        &self,
+        runtime: &str,
+        version_requirement: Option<VersionReq>,
+    ) -> Option<Function> {
+        let mut execution_env_metadata = HashMap::new();
+        execution_env_metadata.insert("executor-for".to_owned(), runtime.to_owned());
+
+        let result = self
+            .registry
+            .list(tonic::Request::new(Filters {
+                name_filter: None,
+                version_requirement: version_requirement.map(|vr| VersionRequirement {
+                    expression: vr.to_string(),
+                }),
+                metadata_filter: execution_env_metadata,
+                order: Some(Ordering {
+                    key: OrderingKey::NameVersion as i32,
+                    reverse: false,
+                    offset: 0,
+                    limit: 1,
+                }),
+            }))
+            .await
+            .ok()?
+            .into_inner();
+
+        result.functions.first().cloned()
+    }
+}
+
+#[tonic::async_trait]
+impl ExecutionServiceTrait for ExecutionService {
+    async fn execute(
+        &self,
+        request: tonic::Request<ExecutionParameters>,
+    ) -> Result<tonic::Response<ExecutionResult>, tonic::Status> {
+        // lookup function
+        let payload = request.into_inner();
+        let args = payload.arguments;
+        let function = payload.function.ok_or_else(|| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                "Execute request needs to contain a function.",
+            )
+        })?;
+
+        // validate args
+        validate_args(function.inputs.iter(), &args).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!(
+                    "Invalid function arguments: {}",
+                    e.iter()
+                        .map(|ae| format!("{}", ae))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                ),
+            )
+        })?;
+
+        let runtime = function.runtime.as_ref().ok_or_else(|| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                "Function descriptor did not contain any runtime specification.",
+            )
+        })?;
+
+        let function_name = function.name.clone();
+
+        // lookup executor and run
+        self.lookup_executor_for_runtime(&runtime.name)
+            .await
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to lookup function executor: {}", e),
+                )
+            })
+            .and_then(|executor| {
+                let res = executor.execute(
+                    ExecutorParameters {
+                        function_name: function_name.clone(),
+                        entrypoint: runtime.entrypoint.to_owned(),
+                        code: function.code.clone(),
+                        arguments: runtime.arguments.clone(),
+                    },
+                    args,
+                    function.attachments.clone(),
+                );
+                match res {
+                    Ok(Ok(r)) => validate_results(function.outputs.iter(), &r)
+                        .map(|_| {
+                            tonic::Response::new(ExecutionResult {
+                                // TODO: We do not have a cookie for this yet. Should be a cookie for looking up logs of the execution etc.
+                                execution_id: Some(ExecutionId {
+                                    uuid: uuid::Uuid::new_v4().to_string(),
+                                }),
+                                result: Some(ProtoResult::Ok(OutputValues { values: r })),
+                            })
+                        })
+                        .map_err(|e| {
+                            tonic::Status::new(
+                                tonic::Code::InvalidArgument,
+                                format!(
+                                    "Function \"{}\" generated invalid result: {}",
+                                    &function_name,
+                                    e.iter()
+                                        .map(|ae| format!("{}", ae))
+                                        .collect::<Vec<String>>()
+                                        .join(", ")
+                                ),
+                            )
+                        }),
+                    Ok(Err(e)) => Ok(tonic::Response::new(ExecutionResult {
+                        // TODO: We do not have a cookie for this yet. Should be a cookie for looking up logs of the execution etc.
+                        execution_id: Some(ExecutionId {
+                            uuid: uuid::Uuid::new_v4().to_string(),
+                        }),
+                        result: Some(ProtoResult::Error(ExecutionError { msg: e })),
+                    })),
+
+                    Err(e) => Err(tonic::Status::new(
+                        tonic::Code::Internal,
+                        format!("Failed to execute function {}: {}", &function_name, e),
+                    )),
+                }
+            })
+    }
+}
+
 #[derive(Default, Debug)]
-pub struct ExecutorContext {
+pub struct ExecutorParameters {
     pub function_name: String,
     pub entrypoint: String,
-    pub code: Option<FunctionAttachment>,
-    pub arguments: Vec<FunctionArgument>,
-}
-
-pub trait FunctionContextExt {
-    fn new(
-        function_arguments: Vec<FunctionArgument>,
-        function_attachments: Vec<FunctionAttachment>,
-    ) -> Self;
-
-    fn get_argument<S: AsRef<str>>(&self, key: S) -> Option<&FunctionArgument>;
-
-    fn get_attachment<S: AsRef<str>>(&self, key: S) -> Option<&FunctionAttachment>;
-}
-
-impl FunctionContextExt for FunctionContext {
-    fn new(
-        function_arguments: Vec<FunctionArgument>,
-        function_attachments: Vec<FunctionAttachment>,
-    ) -> Self {
-        Self {
-            arguments: function_arguments,
-            attachments: function_attachments,
-        }
-    }
-
-    fn get_argument<S: AsRef<str>>(&self, key: S) -> Option<&FunctionArgument> {
-        self.arguments.iter().find(|a| a.name == key.as_ref())
-    }
-
-    fn get_attachment<S: AsRef<str>>(&self, key: S) -> Option<&FunctionAttachment> {
-        self.attachments.iter().find(|a| a.name == key.as_ref())
-    }
+    pub code: Option<Attachment>,
+    pub arguments: HashMap<String, String>,
 }
 
 pub trait FunctionExecutor: Debug {
     fn execute(
         &self,
-        executor_context: ExecutorContext,
-        function_context: FunctionContext,
-    ) -> Result<ProtoResult, ExecutorError>;
+        executor_context: ExecutorParameters,
+        arguments: Vec<InputValue>,
+        attachments: Vec<Attachment>,
+    ) -> Result<Result<Vec<OutputValue>, String>, ExecutorError>;
 }
 
 pub trait AttachmentDownload {
@@ -79,14 +277,22 @@ pub trait AttachmentDownload {
 /// Download function attachment from the given URL
 ///
 /// TODO: This is a huge security hole ⛳️ and needs to be managed properly (gpg sign 🔏 things?)
-impl AttachmentDownload for FunctionAttachment {
+impl AttachmentDownload for Attachment {
     fn download(&self) -> Result<Vec<u8>, ExecutorError> {
-        let url =
-            Url::parse(&self.url).map_err(|e| ExecutorError::InvalidCodeUrl(e.to_string()))?;
-        match url.scheme() {
-            "file" => {
-                let content = fs::read(url.path())
-                    .map_err(|e| AttachmentReadError(url.to_string(), e.to_string()))?;
+        let url = self
+            .url
+            .as_ref()
+            .ok_or_else(|| ExecutorError::InvalidCodeUrl("Attachment missing url.".to_owned()))
+            .and_then(|u| {
+                Url::parse(&u.url)
+                    .map_err(|e| ExecutorError::InvalidCodeUrl(e.to_string()))
+                    .map(|b| (b, AuthMethod::from_i32(u.auth_method)))
+            })?;
+
+        match (url.0.scheme(), url.1) {
+            ("file", _) => {
+                let content = fs::read(url.0.path())
+                    .map_err(|e| AttachmentReadError(url.0.to_string(), e.to_string()))?;
 
                 // TODO: this should be generalized when we
                 // have other transports (like http(s))
@@ -113,7 +319,8 @@ impl AttachmentDownload for FunctionAttachment {
 
                 Ok(content)
             }
-            s => Err(ExecutorError::UnsupportedTransport(s.to_owned())),
+            // ("https", Some(auth)) => {}, // TODO: Support Oauth methods for http
+            (s, _) => Err(ExecutorError::UnsupportedTransport(s.to_owned())),
         }
     }
 }
@@ -121,20 +328,16 @@ impl AttachmentDownload for FunctionAttachment {
 #[derive(Debug)]
 pub struct FunctionAdapter {
     executor: Box<dyn FunctionExecutor>,
-    function_descriptor: FunctionDescriptor,
+    executor_function: Function,
     logger: Logger,
 }
 
 /// Adapter for functions to act as executors
 impl FunctionAdapter {
-    pub fn new(
-        executor: Box<dyn FunctionExecutor>,
-        function_descriptor: FunctionDescriptor,
-        logger: Logger,
-    ) -> Self {
+    pub fn new(executor: Box<dyn FunctionExecutor>, function: Function, logger: Logger) -> Self {
         Self {
             executor,
-            function_descriptor,
+            executor_function: function,
             logger,
         }
     }
@@ -143,10 +346,11 @@ impl FunctionAdapter {
 impl FunctionExecutor for FunctionAdapter {
     fn execute(
         &self,
-        executor_context: ExecutorContext,
-        function_context: FunctionContext,
-    ) -> Result<ProtoResult, ExecutorError> {
-        let mut function_arguments = vec![];
+        executor_context: ExecutorParameters,
+        arguments: Vec<InputValue>,
+        attachments: Vec<Attachment>,
+    ) -> Result<Result<Vec<OutputValue>, String>, ExecutorError> {
+        let mut executor_function_arguments = vec![];
 
         // not having any code for the function is a valid case used for example to execute
         // external functions (gcp, aws lambdas, etc)
@@ -154,231 +358,95 @@ impl FunctionExecutor for FunctionAdapter {
             let mut code_buf = Vec::with_capacity(code.encoded_len());
             code.encode(&mut code_buf)?;
 
-            function_arguments.push(FunctionArgument {
+            executor_function_arguments.push(InputValue {
                 name: "_code".to_owned(),
-                r#type: ArgumentType::Bytes as i32,
+                r#type: Type::Bytes as i32,
                 value: code_buf,
             });
 
             let checksums = code.checksums.ok_or(ExecutorError::MissingChecksums)?;
-            function_arguments.push(FunctionArgument {
+            executor_function_arguments.push(InputValue {
                 name: "_sha256".to_owned(),
-                r#type: ArgumentType::String as i32,
+                r#type: Type::String as i32,
                 value: checksums.sha256.as_bytes().to_vec(),
             });
         }
 
-        function_arguments.push(FunctionArgument {
+        executor_function_arguments.push(InputValue {
             name: "_entrypoint".to_owned(),
-            r#type: ArgumentType::String as i32,
+            r#type: Type::String as i32,
             value: executor_context.entrypoint.as_bytes().to_vec(),
         });
 
-        let mut manifest_executor_arguments = executor_context.arguments;
-        function_arguments.append(&mut manifest_executor_arguments);
+        executor_function_arguments.append(
+            &mut executor_context
+                .arguments
+                .into_iter()
+                .map(|(k, v)| InputValue {
+                    name: k,
+                    r#type: Type::String as i32,
+                    value: v.as_bytes().to_vec(),
+                })
+                .collect(),
+        );
 
         // nest arguments and attachments
-        let mut buf: Vec<u8> = Vec::with_capacity(function_context.encoded_len());
-        function_context.encode(&mut buf)?;
-
-        function_arguments.push(FunctionArgument {
-            name: "_context".to_owned(),
-            r#type: ArgumentType::Bytes as i32,
-            value: buf,
+        let proto_args = InputValues { values: arguments };
+        let mut arguments_buf: Vec<u8> = Vec::with_capacity(proto_args.encoded_len());
+        proto_args.encode(&mut arguments_buf)?;
+        executor_function_arguments.push(InputValue {
+            name: "_arguments".to_owned(),
+            r#type: Type::Bytes as i32,
+            value: arguments_buf,
         });
 
-        let function_name = self
-            .function_descriptor
-            .function
-            .as_ref()
-            .ok_or(ExecutorError::FunctionDescriptorMissingFunction)?
-            .name
-            .clone();
+        let proto_attachments = Attachments { attachments };
+        let mut attachments_buf: Vec<u8> = Vec::with_capacity(proto_attachments.encoded_len());
+        proto_attachments.encode(&mut attachments_buf)?;
+        executor_function_arguments.push(InputValue {
+            name: "_attachments".to_owned(),
+            r#type: Type::Bytes as i32,
+            value: attachments_buf,
+        });
 
-        let function_exe_env = self
-            .function_descriptor
-            .execution_environment
-            .clone()
-            .ok_or_else(|| ExecutorError::MissingExecutionEnvironment(function_name.clone()))?;
+        let function_exe_env =
+            self.executor_function.runtime.clone().ok_or_else(|| {
+                ExecutorError::MissingRuntime(self.executor_function.name.clone())
+            })?;
 
         self.executor.execute(
-            ExecutorContext {
-                function_name,
+            ExecutorParameters {
+                function_name: self.executor_function.name.clone(),
                 entrypoint: function_exe_env.entrypoint,
-                code: self.function_descriptor.code.clone(),
-                arguments: function_exe_env.args,
+                code: self.executor_function.code.clone(),
+                arguments: function_exe_env.arguments,
             },
-            FunctionContext::new(
-                function_arguments,
-                self.function_descriptor.attachments.clone(),
-            ),
+            executor_function_arguments,
+            self.executor_function.attachments.clone(),
         )
     }
 }
 
-async fn get_function_with_execution_environment(
-    registry: &dyn FunctionsRegistry,
-    exec_env: &str,
-    version_requirement: Option<VersionReq>,
-) -> Option<FunctionDescriptor> {
-    let mut execution_env_metadata = HashMap::new();
-    execution_env_metadata.insert("type".to_owned(), "execution-environment".to_owned());
-    execution_env_metadata.insert("execution-environment".to_owned(), exec_env.to_owned());
-
-    let result = registry
-        .list(tonic::Request::new(ListRequest {
-            name_filter: "".to_owned(),
-            metadata_filter: execution_env_metadata,
-            metadata_key_filter: vec![],
-            offset: 0,
-            limit: 1,
-            exact_name_match: false,
-            version_requirement: version_requirement.map(|vr| VersionRequirement {
-                expression: vr.to_string(),
-            }),
-            order_direction: OrderingDirection::Descending as i32,
-            order_by: OrderingKey::Name as i32,
-        }))
-        .await
-        .ok()?
-        .into_inner();
-
-    result.functions.first().cloned()
-}
-
-async fn traverse_execution_environments<'a>(
-    logger: &'a Logger,
-    name: &'a str,
-    registry: &'a dyn FunctionsRegistry,
-) -> Result<Vec<(FunctionDescriptor, Logger)>, ExecutorError> {
-    let mut exec_env = name.to_owned();
-    let mut function_descriptors = vec![];
-    let mut ids = HashSet::new();
-
-    loop {
-        match exec_env.as_str() {
-            "wasi" => break,
-            ee => {
-                let function_descriptor =
-                    get_function_with_execution_environment(registry, ee, None)
-                        .await
-                        .ok_or_else(|| ExecutorError::ExecutorNotFound(ee.to_owned()))?;
-
-                exec_env = function_descriptor
-                    .execution_environment
-                    .as_ref()
-                    .ok_or_else(|| ExecutorError::MissingExecutionEnvironment("".to_owned()))?
-                    .name
-                    .clone();
-
-                function_descriptors.push((
-                    function_descriptor.clone(),
-                    function_descriptors
-                        .last()
-                        .map(|(_fd, logger)| logger)
-                        .unwrap_or(logger)
-                        .new(o!("executor" => exec_env.clone())),
-                ));
-
-                if !ids.insert(
-                    function_descriptor
-                        .function
-                        .and_then(|f| f.id)
-                        .map(|id| id.value)
-                        .unwrap_or_else(|| "invalid-function-id".to_owned()), // This should never happen lol
-                ) {
-                    return Err(ExecutorError::ExecutorDependencyCycle(DependencyCycle {
-                        dependencies: function_descriptors
-                            .iter()
-                            .map(|(fd, _log)| {
-                                (
-                                    fd.function
-                                        .as_ref()
-                                        .map(|f| f.name.clone())
-                                        .unwrap_or_else(|| "invalid function".to_owned()),
-                                    fd.execution_environment
-                                        .as_ref()
-                                        .map(|ee| ee.name.clone())
-                                        .unwrap_or_else(|| {
-                                            "invalid execution environment".to_owned()
-                                        }),
-                                )
-                            })
-                            .collect(),
-                    }));
-                }
-            }
-        }
-    }
-
-    function_descriptors.reverse();
-    Ok(function_descriptors)
-}
-
-pub async fn get_execution_env_inputs<'a>(
-    logger: Logger,
-    registry: &'a dyn FunctionsRegistry,
-    name: &'a str,
-) -> Result<Vec<FunctionInput>, ExecutorError> {
-    let function_descriptors = traverse_execution_environments(&logger, name, registry).await?;
-    Ok(function_descriptors
-        .into_iter()
-        .filter_map(|(fd, _logger)| fd.function.map(|f| f.inputs))
-        .flatten()
-        .map(|mut i| {
-            i.from_execution_environment = true;
-            i
-        })
-        .collect())
-}
-
-/// Lookup an executor for the given `name`
-///
-/// If an executor is not supported, an error is returned
-pub async fn lookup_executor<'a>(
-    logger: Logger,
-    name: &'a str,
-    registry: &'a dyn FunctionsRegistry,
-) -> Result<Box<dyn FunctionExecutor>, ExecutorError> {
-    let function_descriptors = traverse_execution_environments(&logger, name, registry).await?;
-
-    // TODO: now we are assuming that the stop condition for the above function
-    // was "wasi". This may not be true later
-    let executor = Box::new(WasiExecutor::new(
-        function_descriptors
-            .last()
-            .map(|(_fd, logger)| logger)
-            .unwrap_or(&logger)
-            .new(o!("executor" => "wasi")),
-    ));
-
-    Ok(function_descriptors
-        .into_iter()
-        .fold(executor, |prev_executor, (fd, fd_logger)| {
-            Box::new(FunctionAdapter::new(prev_executor, fd, fd_logger))
-        }))
-}
-
-fn validate_argument_type(arg_type: ArgumentType, argument_value: &[u8]) -> Result<(), String> {
+fn validate_argument_type(arg_type: Type, argument_value: &[u8]) -> Result<(), String> {
     match arg_type {
-        ArgumentType::String => str::from_utf8(&argument_value)
+        Type::String => str::from_utf8(&argument_value)
             .map(|_| ())
             .map_err(|_| arg_type.to_string()),
-        ArgumentType::Int | ArgumentType::Float => {
+        Type::Int | Type::Float => {
             if argument_value.len() == 8 {
                 Ok(())
             } else {
                 Err(arg_type.to_string())
             }
         }
-        ArgumentType::Bool => {
+        Type::Bool => {
             if argument_value.len() == 1 {
                 Ok(())
             } else {
                 Err(arg_type.to_string())
             }
         }
-        ArgumentType::Bytes => Ok(()), // really do not know a lot about bytes,
+        Type::Bytes => Ok(()), // really do not know a lot about bytes,
     }
 }
 
@@ -397,23 +465,22 @@ fn get_reasonable_value_string(argument_value: &[u8]) -> String {
 
 pub fn validate_results<'a, I>(
     outputs: I,
-    results: &FunctionResult,
+    results: &[OutputValue],
 ) -> Result<(), Vec<ExecutorError>>
 where
-    I: IntoIterator<Item = &'a FunctionOutput>,
+    I: IntoIterator<Item = &'a Output>,
 {
     let (_, errors): (Vec<_>, Vec<_>) = outputs
         .into_iter()
         .map(|output| {
             results
-                .values
                 .iter()
                 .find(|arg| arg.name == output.name)
                 .map_or_else(
                     || Err(ExecutorError::RequiredResultMissing(output.name.clone())),
                     |arg| {
                         if output.r#type == arg.r#type {
-                            ArgumentType::from_i32(arg.r#type).map_or_else(
+                            Type::from_i32(arg.r#type).map_or_else(
                                 || Err(ExecutorError::ResultTypeOutOfRange(arg.r#type)),
                                 |at| {
                                     validate_argument_type(at, &arg.value).map_err(|tp| {
@@ -446,12 +513,12 @@ where
 
 /// Validate arguments
 ///
-/// `inputs` is the functions' description of the arguments and `args` is the passed in arguments
-/// as an array of `FunctionArgument`. This function returns all validation errors as a
+/// `inputs` is the functions' description of the arguments and `args` is the passed-in arguments
+/// as an array of `InputValue`. This function returns all validation errors as a
 /// `Vec<ExecutionError>`.
-pub fn validate_args<'a, I>(inputs: I, args: &[FunctionArgument]) -> Result<(), Vec<ExecutorError>>
+fn validate_args<'a, I>(inputs: I, args: &[InputValue]) -> Result<(), Vec<ExecutorError>>
 where
-    I: IntoIterator<Item = &'a FunctionInput>,
+    I: IntoIterator<Item = &'a Input>,
 {
     // TODO: Currently we do not error on unknown arguments that were supplied
     // this can be done by generating a list of the arguments that we have used.
@@ -472,7 +539,7 @@ where
                 // argument was found in the sent in args, validate it
                 |arg| {
                     if input.r#type == arg.r#type {
-                        ArgumentType::from_i32(arg.r#type).map_or_else(
+                        Type::from_i32(arg.r#type).map_or_else(
                             || Err(ExecutorError::OutOfRangeArgumentType(arg.r#type)),
                             |at| {
                                 validate_argument_type(at, &arg.value).map_err(|tp| {
@@ -507,14 +574,14 @@ trait ProtoArgumentTypeToString {
     fn to_string(&self) -> String;
 }
 
-impl ProtoArgumentTypeToString for ArgumentType {
+impl ProtoArgumentTypeToString for Type {
     fn to_string(&self) -> String {
         match self {
-            ArgumentType::String => "string",
-            ArgumentType::Int => "int",
-            ArgumentType::Bool => "bool",
-            ArgumentType::Float => "float",
-            ArgumentType::Bytes => "bytes",
+            Type::String => "string",
+            Type::Int => "int",
+            Type::Bool => "bool",
+            Type::Float => "float",
+            Type::Bytes => "bytes",
         }
         .to_owned()
     }
@@ -522,7 +589,7 @@ impl ProtoArgumentTypeToString for ArgumentType {
 
 impl ProtoArgumentTypeToString for i32 {
     fn to_string(&self) -> String {
-        match ArgumentType::from_i32(*self) {
+        match Type::from_i32(*self) {
             Some(at) => ProtoArgumentTypeToString::to_string(&at),
             None => "invalid type".to_owned(),
         }
@@ -561,8 +628,8 @@ pub enum ExecutorError {
     #[error("Failed to find executor for execution environment \"{0}\"")]
     ExecutorNotFound(String),
 
-    #[error("Function \"{0}\" did not have an execution environment.")]
-    MissingExecutionEnvironment(String),
+    #[error("Function \"{0}\" did not have a runtime specified.")]
+    MissingRuntime(String),
 
     #[error("Out of range argument type found: {0}. Protobuf definitions out of date?")]
     OutOfRangeArgumentType(i32),
@@ -607,11 +674,11 @@ pub enum ExecutorError {
         value: String,
     },
 
-    #[error("Function descriptor is missing checksums.")]
+    #[error("Function is missing checksums.")]
     MissingChecksums,
 
-    #[error("Function descriptor is missing field function.")]
-    FunctionDescriptorMissingFunction,
+    #[error("Function is missing id.")]
+    FunctionMissingId,
 
     #[error("Failed to encode proto data: {0}")]
     EncodeError(#[from] prost::EncodeError),
@@ -636,15 +703,11 @@ pub enum ExecutorError {
 mod tests {
     use super::*;
 
-    use std::collections::HashMap;
+    use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-    use crate::registry::FunctionsRegistryService;
-    use gbk_protocols::functions::{
-        ExecutionEnvironment, Function, FunctionArgument, FunctionId, RegisterRequest, ReturnValue,
-    };
-    use gbk_protocols_test_helpers::{
-        attachment_file, code_file, function_attachment, register_request,
-    };
+    use crate::registry::RegistryService;
+    use function_protocols::{functions::Runtime, registry::FunctionData};
+    use function_protocols_test_helpers::{attachment, attachment_file, code_file, function_data};
 
     macro_rules! null_logger {
         () => {{
@@ -654,27 +717,26 @@ mod tests {
 
     macro_rules! registry {
         () => {{
-            FunctionsRegistryService::new(null_logger!())
+            RegistryService::new(null_logger!())
         }};
     }
 
     #[test]
     fn parse_required() {
-        let inputs = vec![FunctionInput {
+        let inputs = vec![Input {
             name: "very_important_argument".to_owned(),
-            r#type: ArgumentType::String as i32,
+            description: "This is importante!".to_owned(),
+            r#type: Type::String as i32,
             required: true,
-            default_value: String::new(),
-            from_execution_environment: false,
         }];
 
-        let args = vec![FunctionArgument {
+        let args = vec![InputValue {
             name: "very_important_argument".to_owned(),
-            r#type: ArgumentType::String as i32,
+            r#type: Type::String as i32,
             value: b"yes".to_vec(),
         }];
 
-        let r = validate_args(inputs.iter(), &vec![]);
+        let r = validate_args(inputs.iter(), &[]);
         assert!(r.is_err());
 
         let r = validate_args(inputs.iter(), &args);
@@ -683,82 +745,76 @@ mod tests {
 
     #[test]
     fn parse_optional() {
-        let inputs = vec![FunctionInput {
+        let inputs = vec![Input {
             name: "not_very_important_argument".to_owned(),
-            r#type: ArgumentType::String as i32,
+            description: "I do not like this".to_owned(),
+            r#type: Type::String as i32,
             required: false,
-            default_value: "something".to_owned(),
-            from_execution_environment: false,
         }];
 
-        let r = validate_args(inputs.iter(), &vec![]);
+        let r = validate_args(inputs.iter(), &[]);
         assert!(r.is_ok());
     }
 
     #[test]
     fn parse_types() {
         let inputs = vec![
-            FunctionInput {
+            Input {
                 name: "string_arg".to_owned(),
-                r#type: ArgumentType::String as i32,
+                description: "This is a string arg".to_owned(),
+                r#type: Type::String as i32,
                 required: true,
-                default_value: String::new(),
-                from_execution_environment: false,
             },
-            FunctionInput {
+            Input {
                 name: "bool_arg".to_owned(),
-                r#type: ArgumentType::Bool as i32,
+                description: "This is a bool arg".to_owned(),
+                r#type: Type::Bool as i32,
                 required: true,
-                default_value: String::new(),
-                from_execution_environment: false,
             },
-            FunctionInput {
+            Input {
                 name: "int_arg".to_owned(),
-                r#type: ArgumentType::Int as i32,
+                description: "This is an int arg".to_owned(),
+                r#type: Type::Int as i32,
                 required: true,
-                default_value: String::new(),
-                from_execution_environment: false,
             },
-            FunctionInput {
+            Input {
                 name: "float_arg".to_owned(),
-                r#type: ArgumentType::Float as i32,
+                description: "This is a floater 💩".to_owned(),
+                r#type: Type::Float as i32,
                 required: true,
-                default_value: String::new(),
-                from_execution_environment: false,
             },
-            FunctionInput {
+            Input {
                 name: "bytes_arg".to_owned(),
-                r#type: ArgumentType::Bytes as i32,
+                description: "This is a bytes argument".to_owned(),
+                r#type: Type::Bytes as i32,
                 required: false,
-                default_value: String::new(),
-                from_execution_environment: false,
             },
         ];
 
         let correct_args = vec![
-            FunctionArgument {
+            InputValue {
                 name: "string_arg".to_owned(),
-                r#type: ArgumentType::String as i32,
-                value: "yes".as_bytes().to_vec(),
+                r#type: Type::String as i32,
+                value: b"yes".to_vec(),
             },
-            FunctionArgument {
+            InputValue {
                 name: "bool_arg".to_owned(),
-                r#type: ArgumentType::Bool as i32,
+                r#type: Type::Bool as i32,
                 value: vec![true as u8],
             },
-            FunctionArgument {
+            InputValue {
                 name: "int_arg".to_owned(),
-                r#type: ArgumentType::Int as i32,
+                r#type: Type::Int as i32,
                 value: 4i64.to_le_bytes().to_vec(),
             },
-            FunctionArgument {
+            InputValue {
                 name: "float_arg".to_owned(),
-                r#type: ArgumentType::Float as i32,
+                r#type: Type::Float as i32,
                 value: 4.5f64.to_le_bytes().to_vec(),
             },
-            FunctionArgument {
+            InputValue {
                 name: "bytes_arg".to_owned(),
-                r#type: ArgumentType::Bytes as i32,
+                r#type: Type::Bytes as i32,
                 value: vec![13, 37, 13, 37, 13, 37],
             },
         ];
@@ -769,24 +825,24 @@ mod tests {
 
         // one has the wrong type 🤯
         let almost_correct_args = vec![
-            FunctionArgument {
+            InputValue {
                 name: "string_arg".to_owned(),
-                r#type: ArgumentType::String as i32,
-                value: "yes".as_bytes().to_vec(),
+                r#type: Type::String as i32,
+                value: b"yes".to_vec(),
             },
-            FunctionArgument {
+            InputValue {
                 name: "bool_arg".to_owned(),
-                r#type: ArgumentType::Bool as i32,
+                r#type: Type::Bool as i32,
                 value: 4i64.to_le_bytes().to_vec(),
             },
-            FunctionArgument {
+            InputValue {
                 name: "int_arg".to_owned(),
-                r#type: ArgumentType::Int as i32,
+                r#type: Type::Int as i32,
                 value: 4i64.to_le_bytes().to_vec(),
             },
-            FunctionArgument {
+            InputValue {
                 name: "float_arg".to_owned(),
-                r#type: ArgumentType::Float as i32,
+                r#type: Type::Float as i32,
                 value: 4.5f64.to_le_bytes().to_vec(),
             },
         ];
@@ -797,24 +853,24 @@ mod tests {
 
         // all of them has the wrong type 🚓💨
         let no_correct_args = vec![
-            FunctionArgument {
+            InputValue {
                 name: "string_arg".to_owned(),
-                r#type: ArgumentType::String as i32,
+                r#type: Type::String as i32,
                 value: vec![0, 159, 146, 150], // not a valid utf-8 string,
             },
-            FunctionArgument {
+            InputValue {
                 name: "bool_arg".to_owned(),
-                r#type: ArgumentType::Bool as i32,
+                r#type: Type::Bool as i32,
                 value: 4i64.to_le_bytes().to_vec(),
             },
-            FunctionArgument {
+            InputValue {
                 name: "int_arg".to_owned(),
-                r#type: ArgumentType::Int as i32,
+                r#type: Type::Int as i32,
                 value: vec![0, 159, 146, 150, 99], // too long to be an int,
             },
-            FunctionArgument {
+            InputValue {
                 name: "float_arg".to_owned(),
-                r#type: ArgumentType::Float as i32,
+                r#type: Type::Float as i32,
                 value: vec![0, 159, 146, 150, 99], // too long to be a float,
             },
         ];
@@ -827,21 +883,20 @@ mod tests {
     // Tests for validating results
     #[test]
     fn validate_outputs() {
-        let outputs = vec![FunctionOutput {
+        let outputs = vec![Output {
             name: "very_important_output".to_owned(),
-            r#type: ArgumentType::String as i32,
+            description: "Yes?".to_owned(),
+            r#type: Type::String as i32,
         }];
 
-        let result = FunctionResult {
-            values: vec![ReturnValue {
-                name: "very_important_output".to_owned(),
-                r#type: ArgumentType::String as i32,
-                value: vec![],
-            }],
-        };
+        let result = vec![OutputValue {
+            name: "very_important_output".to_owned(),
+            r#type: Type::String as i32,
+            value: vec![],
+        }];
 
         // no values
-        let r = validate_results(outputs.iter(), &FunctionResult { values: vec![] });
+        let r = validate_results(outputs.iter(), &[]);
         assert!(r.is_err());
 
         // ok values
@@ -849,13 +904,11 @@ mod tests {
         assert!(r.is_ok());
 
         // give bad type
-        let result = FunctionResult {
-            values: vec![ReturnValue {
-                name: "very_important_output".to_owned(),
-                r#type: ArgumentType::String as i32,
-                value: vec![0, 159, 146, 150], // not a valid utf-8 string,,
-            }],
-        };
+        let result = vec![OutputValue {
+            name: "very_important_output".to_owned(),
+            r#type: Type::String as i32,
+            value: vec![0, 159, 146, 150], // not a valid utf-8 string,,
+        }];
 
         let r = validate_results(outputs.iter(), &result);
         assert!(r.is_err());
@@ -867,7 +920,7 @@ mod tests {
     #[test]
     fn test_download() {
         // non-existent file
-        let attachment = function_attachment!("file://this-file-does-not-exist");
+        let attachment = attachment!("file://this-file-does-not-exist");
         let r = attachment.download();
         assert!(r.is_err());
         assert!(matches!(
@@ -876,13 +929,13 @@ mod tests {
         ));
 
         // invalid url
-        let attachment = function_attachment!("this-is-not-url");
+        let attachment = attachment!("this-is-not-url");
         let r = attachment.download();
         assert!(r.is_err());
         assert!(matches!(r.unwrap_err(), ExecutorError::InvalidCodeUrl(..)));
 
         // unsupported scheme
-        let attachment = function_attachment!("unsupported://that-scheme.fabrikam.com");
+        let attachment = attachment!("unsupported://that-scheme.fabrikam.com");
         let r = attachment.download();
         assert!(r.is_err());
         assert!(matches!(
@@ -898,30 +951,30 @@ mod tests {
         assert_eq!(s.as_bytes(), r.unwrap().as_slice());
     }
 
-    use std::cell::RefCell;
-    use std::rc::Rc;
-
     #[derive(Default, Debug)]
     pub struct FakeExecutor {
-        executor_context: RefCell<ExecutorContext>,
-        function_context: RefCell<FunctionContext>,
+        executor_context: RefCell<ExecutorParameters>,
+        arguments: RefCell<Vec<InputValue>>,
+        attachments: RefCell<Vec<Attachment>>,
         downloaded_code: RefCell<Vec<u8>>,
     }
 
     impl FunctionExecutor for Rc<FakeExecutor> {
         fn execute(
             &self,
-            executor_context: ExecutorContext,
-            function_context: FunctionContext,
-        ) -> Result<ProtoResult, ExecutorError> {
+            executor_context: ExecutorParameters,
+            arguments: Vec<InputValue>,
+            attachments: Vec<Attachment>,
+        ) -> Result<Result<Vec<OutputValue>, String>, ExecutorError> {
             *self.downloaded_code.borrow_mut() = executor_context
                 .code
                 .as_ref()
                 .map(|c| c.download().unwrap())
                 .unwrap_or_default();
             *self.executor_context.borrow_mut() = executor_context;
-            *self.function_context.borrow_mut() = function_context;
-            Ok(ProtoResult::Ok(FunctionResult { values: Vec::new() }))
+            *self.arguments.borrow_mut() = arguments;
+            *self.attachments.borrow_mut() = attachments;
+            Ok(Ok(Vec::new()))
         }
     }
 
@@ -934,52 +987,46 @@ mod tests {
     fn test_nested_executor() {
         let fake = Rc::new(FakeExecutor::default());
 
-        let exe_env_args = vec![FunctionArgument {
-            name: "sune".to_owned(),
-            r#type: ArgumentType::String as i32,
-            value: "bune".as_bytes().to_vec(),
-        }];
+        let mut runtime_args = HashMap::new();
+        runtime_args.insert("sune".to_owned(), "bune".to_owned());
 
         let s = "some data 🖥️";
         let nested = FunctionAdapter::new(
             Box::new(fake.clone()),
-            FunctionDescriptor {
-                execution_environment: Some(ExecutionEnvironment {
+            Function {
+                runtime: Some(Runtime {
                     name: "Avlivningsmiljö 🗡️".to_owned(),
                     entrypoint: "ingångspoäng 💯".to_owned(),
-                    args: vec![],
+                    arguments: HashMap::new(),
                 }),
                 code: Some(code_file!(s.as_bytes())),
                 attachments: vec![],
-                function: Some(Function {
-                    id: Some(FunctionId {
-                        value: "huuuuuus".to_owned(),
-                    }),
-                    name: "wienerbröööööööö".to_owned(),
-                    version: "2019.3-5-PR2".to_owned(),
-                    metadata: HashMap::new(),
-                    inputs: vec![],
-                    outputs: vec![],
-                }),
+                name: "wienerbröööööööö".to_owned(),
+                version: "2019.3-5-PR2".to_owned(),
+                metadata: HashMap::new(),
+                inputs: vec![],
+                outputs: vec![],
+                created_at: 0,
             },
             null_logger!(),
         );
         let code = "asd";
-        let args = vec![FunctionArgument {
+        let args = vec![InputValue {
             name: "test-arg".to_owned(),
-            r#type: ArgumentType::String as i32,
-            value: "test-value".as_bytes().to_vec(),
+            r#type: Type::String as i32,
+            value: b"test-value".to_vec(),
         }];
         let entry = "entry";
-        let attachments = vec![function_attachment!("fake://")];
+        let attachments = vec![attachment!("fake://")];
         let result = nested.execute(
-            ExecutorContext {
+            ExecutorParameters {
                 function_name: "test".to_owned(),
                 entrypoint: entry.to_owned(),
                 code: Some(code_file!(code.as_bytes())),
-                arguments: exe_env_args.clone(),
+                arguments: runtime_args.clone(),
             },
-            FunctionContext::new(args, attachments.clone()),
+            args,
+            attachments,
         );
         // Test that code got passed
         assert!(result.is_ok());
@@ -987,72 +1034,100 @@ mod tests {
 
         // Test that the argument we send in is passed through
         {
-            let fc = fake.function_context.borrow();
-            let fake_args = fc.arguments.clone();
-            assert_eq!(fake_args.len(), 5);
-            let code_attachment =
-                FunctionAttachment::decode(fc.get_argument("_code").unwrap().value.as_slice())
-                    .unwrap();
+            let arguments = fake.arguments.borrow();
+
+            assert_eq!(arguments.len(), 6);
+            let code_attachment = Attachment::decode(
+                arguments
+                    .iter()
+                    .find(|a| a.name == "_code")
+                    .unwrap()
+                    .value
+                    .as_slice(),
+            )
+            .unwrap();
             assert_eq!(code_attachment.download().unwrap(), code.as_bytes());
             assert_eq!(
-                fc.get_argument("_entrypoint").unwrap().value,
+                arguments
+                    .iter()
+                    .find(|a| a.name == "_entrypoint")
+                    .unwrap()
+                    .value,
                 entry.as_bytes()
             );
             assert_eq!(
-                fc.get_argument("_sha256").unwrap().value,
+                arguments
+                    .iter()
+                    .find(|a| a.name == "_sha256")
+                    .unwrap()
+                    .value,
                 "688787d8ff144c502c7f5cffaafe2cc588d86079f9de88304c26b0cb99ce91c6".as_bytes()
             );
 
-            let inner_context =
-                FunctionContext::decode(fc.get_argument("_context").unwrap().value.as_slice())
-                    .unwrap();
+            let inner_arguments: InputValues = InputValues::decode(
+                arguments
+                    .iter()
+                    .find(|a| a.name == "_arguments")
+                    .unwrap()
+                    .value
+                    .as_slice(),
+            )
+            .unwrap();
             assert_eq!(
-                inner_context.get_argument("test-arg").unwrap().value,
-                "test-value".as_bytes()
+                inner_arguments
+                    .values
+                    .iter()
+                    .find(|a| a.name == "test-arg")
+                    .unwrap()
+                    .value,
+                b"test-value"
             );
 
             // Test that we get the execution environment args we supplied earlier
             let fake_exe_args = &fake.executor_context.borrow().arguments.clone();
             assert_eq!(fake_exe_args.len(), 0);
             assert_eq!(
-                fake_args.iter().find(|v| v.name == "sune").unwrap().value,
-                "bune".as_bytes()
+                arguments.iter().find(|v| v.name == "sune").unwrap().value,
+                b"bune"
             );
         }
 
         // Test president! 🕴
         {
-            let args = vec![FunctionArgument {
+            let args = vec![InputValue {
                 name: "_code".to_owned(), // deliberately use a reserved word 👿
-                r#type: ArgumentType::String as i32,
-                value: "this-is-not-code".as_bytes().to_vec(),
+                r#type: Type::String as i32,
+                value: b"this-is-not-code".to_vec(),
             }];
 
-            let exec_args = vec![FunctionArgument {
-                name: "the-arg".to_owned(),
-                r#type: ArgumentType::String as i32,
-                value: "this-is-exec-arg".as_bytes().to_vec(),
-            }];
+            let mut runtime_args = HashMap::new();
+            runtime_args.insert("the-arg".to_owned(), "this-is-exec-arg".to_owned());
             let result = nested.execute(
-                ExecutorContext {
+                ExecutorParameters {
                     function_name: "test".to_owned(),
                     entrypoint: "entry".to_owned(),
-                    code: Some(code_file!("code".as_bytes())),
-                    arguments: exec_args,
+                    code: Some(code_file!(b"code")),
+                    arguments: runtime_args,
                 },
-                FunctionContext::new(args, vec![]),
+                args,
+                vec![],
             );
 
             assert!(result.is_ok());
-            let fc = &fake.function_context.borrow();
-            assert!(fc.get_argument("_code").is_some());
-            assert!(fc.get_argument("_sha256").is_some());
-            assert!(fc.get_argument("_entrypoint").is_some());
+            let args = &fake.arguments.borrow();
+            assert!(args.iter().any(|a| a.name == "_code"));
+            assert!(args.iter().any(|a| a.name == "_sha256"));
+            assert!(args.iter().any(|a| a.name == "_entrypoint"));
 
             // make sure that we get the actual code and not the argument named _code
-            let code_attachment =
-                FunctionAttachment::decode(fc.get_argument("_code").unwrap().value.as_slice())
-                    .unwrap();
+            let code_attachment = Attachment::decode(
+                args.iter()
+                    .find(|a| a.name == "_code")
+                    .unwrap()
+                    .value
+                    .as_slice(),
+            )
+            .unwrap();
             assert_eq!(
                 String::from_utf8(code_attachment.download().unwrap()).unwrap(),
                 "code"
@@ -1062,48 +1137,45 @@ mod tests {
         // Double nested 🎰
         let nested2 = FunctionAdapter::new(
             Box::new(nested),
-            FunctionDescriptor {
-                execution_environment: Some(ExecutionEnvironment {
+            Function {
+                runtime: Some(Runtime {
                     name: "Avlivningsmiljö 🗡️".to_owned(),
                     entrypoint: "ingångspoäng 💯".to_owned(),
-                    args: vec![],
+                    arguments: HashMap::new(),
                 }),
                 code: Some(code_file!(s.as_bytes())),
                 attachments: vec![],
-                function: Some(Function {
-                    id: Some(FunctionId {
-                        value: "pieceee of pie".to_owned(),
-                    }),
-                    name: "mandelkubb".to_owned(),
-                    version: "2022.1-5-PR50".to_owned(),
-                    metadata: HashMap::new(),
-                    inputs: vec![],
-                    outputs: vec![],
-                }),
+                name: "mandelkubb".to_owned(),
+                version: "2022.1-5-PR50".to_owned(),
+                metadata: HashMap::new(),
+                inputs: vec![],
+                outputs: vec![],
+                created_at: 0u64,
             },
             null_logger!(),
         );
         {
-            let args = vec![FunctionArgument {
+            let args = vec![InputValue {
                 name: "test-arg".to_owned(),
-                r#type: ArgumentType::String as i32,
-                value: "test-value".as_bytes().to_vec(),
+                r#type: Type::String as i32,
+                value: b"test-value".to_vec(),
             }];
             let result = nested2.execute(
-                ExecutorContext {
+                ExecutorParameters {
                     function_name: "test".to_owned(),
                     entrypoint: "entry".to_owned(),
-                    code: Some(code_file!("vec".as_bytes())),
-                    arguments: exe_env_args,
+                    code: Some(code_file!(b"vec")),
+                    arguments: runtime_args,
                 },
-                FunctionContext::new(args, vec![]),
+                args,
+                vec![],
             );
 
             assert!(result.is_ok());
-            let fc = &fake.function_context.borrow();
-            assert!(fc.get_argument("_code").is_some());
-            assert!(fc.get_argument("_sha256").is_some());
-            assert!(fc.get_argument("_entrypoint").is_some());
+            let args = &fake.arguments.borrow();
+            assert!(args.iter().any(|a| a.name == "_code"));
+            assert!(args.iter().any(|a| a.name == "_sha256"));
+            assert!(args.iter().any(|a| a.name == "_entrypoint"));
         }
     }
 
@@ -1111,11 +1183,14 @@ mod tests {
     fn test_lookup_executor() {
         // get wasi executor
         let fr = registry!();
-        let res = futures::executor::block_on(lookup_executor(null_logger!(), "wasi", &fr));
+        let execution_service = ExecutionService::new(null_logger!(), Box::new(fr.clone()));
+        let res =
+            futures::executor::block_on(execution_service.lookup_executor_for_runtime("wasi"));
         assert!(res.is_ok());
 
         // get non existing executor
-        let res = futures::executor::block_on(lookup_executor(null_logger!(), "ur-sula!", &fr));
+        let res =
+            futures::executor::block_on(execution_service.lookup_executor_for_runtime("ur-sula!"));
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
@@ -1124,34 +1199,25 @@ mod tests {
 
         // get function executor
         let mut wasi_executor_metadata = HashMap::new();
-        wasi_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
-        wasi_executor_metadata.insert(
-            "execution-environment".to_owned(),
-            "oran-malifant".to_owned(),
-        );
+        wasi_executor_metadata.insert("executor-for".to_owned(), "oran-malifant".to_owned());
 
         let mut nested_executor_metadata = HashMap::new();
-        nested_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
-        nested_executor_metadata.insert(
-            "execution-environment".to_owned(),
-            "precious-granag".to_owned(),
-        );
+        nested_executor_metadata.insert("executor-for".to_owned(), "precious-granag".to_owned());
 
         let mut broken_executor_metadata = HashMap::new();
-        broken_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
         broken_executor_metadata.insert(
-            "execution-environment".to_owned(),
+            "executor-for".to_owned(),
             "broken-chain-executor".to_owned(),
         );
 
         vec![
-            RegisterRequest {
-                execution_environment: Some(ExecutionEnvironment {
+            FunctionData {
+                runtime: Some(Runtime {
                     name: "wasi".to_owned(),
                     entrypoint: "wasi.kexe".to_owned(),
-                    args: vec![],
+                    arguments: HashMap::new(),
                 }),
-                code: None,
+                code_attachment_id: None,
                 name: "oran-func".to_owned(),
                 version: "0.1.1".to_owned(),
                 metadata: wasi_executor_metadata,
@@ -1159,13 +1225,13 @@ mod tests {
                 outputs: vec![],
                 attachment_ids: vec![],
             },
-            RegisterRequest {
-                execution_environment: Some(ExecutionEnvironment {
+            FunctionData {
+                runtime: Some(Runtime {
                     name: "oran-malifant".to_owned(),
                     entrypoint: "oran hehurr".to_owned(),
-                    args: vec![],
+                    arguments: HashMap::new(),
                 }),
-                code: None,
+                code_attachment_id: None,
                 name: "precious-granag".to_owned(),
                 version: "8.1.5".to_owned(),
                 metadata: nested_executor_metadata,
@@ -1173,13 +1239,13 @@ mod tests {
                 outputs: vec![],
                 attachment_ids: vec![],
             },
-            RegisterRequest {
-                execution_environment: Some(ExecutionEnvironment {
+            FunctionData {
+                runtime: Some(Runtime {
                     name: "oran-elefant".to_owned(),
                     entrypoint: "oran hehurr".to_owned(),
-                    args: vec![],
+                    arguments: HashMap::new(),
                 }),
-                code: None,
+                code_attachment_id: None,
                 name: "precious-granag".to_owned(),
                 version: "3.2.2".to_owned(),
                 metadata: broken_executor_metadata,
@@ -1194,21 +1260,21 @@ mod tests {
                 .map_or_else(|e| panic!(e.to_string()), |_| ())
         });
 
-        let res =
-            futures::executor::block_on(lookup_executor(null_logger!(), "oran-malifant", &fr));
+        let res = futures::executor::block_on(
+            execution_service.lookup_executor_for_runtime("oran-malifant"),
+        );
         assert!(res.is_ok());
 
         // Get two smetadatae executor
-        let res =
-            futures::executor::block_on(lookup_executor(null_logger!(), "precious-granag", &fr));
+        let res = futures::executor::block_on(
+            execution_service.lookup_executor_for_runtime("precious-granag"),
+        );
         assert!(res.is_ok());
 
         // get function executor missing link
-        let res = futures::executor::block_on(lookup_executor(
-            null_logger!(),
-            "broken-chain-executor",
-            &fr,
-        ));
+        let res = futures::executor::block_on(
+            execution_service.lookup_executor_for_runtime("broken-chain-executor"),
+        );
         assert!(res.is_err());
 
         assert!(matches!(
@@ -1220,11 +1286,14 @@ mod tests {
     #[test]
     fn test_cyclic_dependency_check() {
         let fr = registry!();
-        let res = futures::executor::block_on(lookup_executor(null_logger!(), "wasi", &fr));
+        let execution_service = ExecutionService::new(null_logger!(), Box::new(fr.clone()));
+        let res =
+            futures::executor::block_on(execution_service.lookup_executor_for_runtime("wasi"));
         assert!(res.is_ok());
 
         // get non existing executor
-        let res = futures::executor::block_on(lookup_executor(null_logger!(), "ur-sula!", &fr));
+        let res =
+            futures::executor::block_on(execution_service.lookup_executor_for_runtime("ur-sula!"));
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
@@ -1233,47 +1302,44 @@ mod tests {
 
         // get function executor
         let mut wasi_executor_metadata = HashMap::new();
-        wasi_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
-        wasi_executor_metadata.insert("execution-environment".to_owned(), "aa-exec".to_owned());
+        wasi_executor_metadata.insert("executor-for".to_owned(), "aa-exec".to_owned());
 
         let mut nested_executor_metadata = HashMap::new();
-        nested_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
-        nested_executor_metadata.insert("execution-environment".to_owned(), "bb-exec".to_owned());
+        nested_executor_metadata.insert("executor-for".to_owned(), "bb-exec".to_owned());
 
         let mut broken_executor_metadata = HashMap::new();
-        broken_executor_metadata.insert("type".to_owned(), "execution-environment".to_owned());
-        broken_executor_metadata.insert("execution-environment".to_owned(), "cc-exec".to_owned());
+        broken_executor_metadata.insert("executor-for".to_owned(), "cc-exec".to_owned());
 
         vec![
-            register_request!(
+            function_data!(
                 "aa-func",
                 "0.1.1",
-                ExecutionEnvironment {
+                Runtime {
                     name: "bb-exec".to_owned(),
                     entrypoint: "wasi.kexe".to_owned(),
-                    args: vec![],
+                    arguments: HashMap::new(),
                 },
-                { "type" => "execution-environment", "execution-environment" => "aa-exec" }
+                { "executor-for" => "aa-exec" }
             ),
-            register_request!(
+            function_data!(
                 "bb-func",
                 "0.1.5",
-                ExecutionEnvironment {
+                Runtime {
                     name: "cc-exec".to_owned(),
                     entrypoint: "wasi.kexe".to_owned(),
-                    args: vec![],
+                    arguments: HashMap::new(),
                 },
-                { "type" => "execution-environment", "execution-environment" => "bb-exec" }
+                { "executor-for" => "bb-exec" }
             ),
-            register_request!(
+            function_data!(
                 "cc-func",
                 "3.2.2",
-                ExecutionEnvironment {
+                Runtime {
                     name: "bb-exec".to_owned(),
                     entrypoint: "wasi.kexe".to_owned(),
-                    args: vec![],
+                    arguments: HashMap::new(),
                 },
-                { "type" => "execution-environment", "execution-environment" => "cc-exec" }
+                { "executor-for" => "cc-exec" }
             ),
         ]
         .into_iter()
@@ -1282,7 +1348,8 @@ mod tests {
                 .map_or_else(|e| panic!(e.to_string()), |_| ())
         });
 
-        let res = futures::executor::block_on(lookup_executor(null_logger!(), "aa-exec", &fr));
+        let res =
+            futures::executor::block_on(execution_service.lookup_executor_for_runtime("aa-exec"));
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),

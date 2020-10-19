@@ -1,11 +1,12 @@
 use std::{
     collections::hash_map::HashMap,
     convert::{TryFrom, TryInto},
+    time::SystemTime,
 };
 
 use bb8_postgres::PostgresConnectionManager;
+use function_protocols::functions::Type as ProtoArgType;
 use futures::future::TryFutureExt;
-use gbk_protocols::functions::ArgumentType as ProtoArgType;
 use postgres_types::{FromSql, ToSql};
 use slog::{info, Logger};
 use tokio_postgres::NoTls;
@@ -16,7 +17,7 @@ use uuid::Uuid;
 
 #[derive(Debug, ToSql, FromSql)]
 #[postgres(name = "argument_type")]
-enum ArgumentType {
+enum Type {
     #[postgres(name = "string")]
     String,
 
@@ -43,10 +44,11 @@ struct Function {
     code: Option<Uuid>,
     inputs: Vec<FunctionInput>,
     outputs: Vec<FunctionOutput>,
-    execution_environment: ExecutionEnvironment,
+    runtime: Runtime,
+    created_at: SystemTime,
 }
 
-#[derive(Debug, ToSql, FromSql)]
+#[derive(Debug, ToSql, FromSql, Clone)]
 #[postgres(name = "version")]
 struct Version {
     major: i32,
@@ -159,31 +161,28 @@ struct Attachment {
     name: String,
     metadata: HashMap<String, Option<String>>,
     checksums: Checksums,
+    created_at: SystemTime,
 }
 
-#[derive(Debug, ToSql, FromSql)]
-#[postgres(name = "attachment_with_functions")]
-struct AttachmentWithFunctions {
-    attachment: Attachment,
-    function_ids: Vec<Uuid>,
-}
-
-impl From<AttachmentWithFunctions> for storage::FunctionAttachment {
-    fn from(a: AttachmentWithFunctions) -> Self {
+impl From<Attachment> for storage::FunctionAttachment {
+    fn from(a: Attachment) -> Self {
         Self {
-            id: a.attachment.id,
-            function_ids: a.function_ids,
+            id: a.id,
             data: storage::FunctionAttachmentData {
-                name: a.attachment.name,
+                name: a.name,
                 // unwrap is ok here since we know what we put in
                 metadata: a
-                    .attachment
                     .metadata
                     .into_iter()
                     .map(|(k, v)| (k, v.unwrap()))
                     .collect(),
-                checksums: a.attachment.checksums.into(),
+                checksums: a.checksums.into(),
             },
+            created_at: a
+                .created_at
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
         }
     }
 }
@@ -199,26 +198,29 @@ impl TryFrom<FunctionWithAttachments> for storage::Function {
     type Error = storage::StorageError;
     fn try_from(f: FunctionWithAttachments) -> Result<Self, Self::Error> {
         Ok(Self {
-            id: f.func.id,
-            function_data: super::FunctionData {
-                name: f.func.name,
-                version: f
-                    .func
-                    .version
-                    .try_into()
-                    .map_err(|e: String| storage::StorageError::BackendError(e.into()))?,
-                execution_environment: f.func.execution_environment.into(),
-                inputs: f.func.inputs.into_iter().map(|i| i.into()).collect(),
-                outputs: f.func.outputs.into_iter().map(|o| o.into()).collect(),
-                metadata: f
-                    .func
-                    .metadata
-                    .into_iter()
-                    .map(|(k, v)| (k, v.unwrap()))
-                    .collect(),
-                code: f.func.code,
-                attachments: f.attachment_ids,
-            },
+            name: f.func.name,
+            version: f
+                .func
+                .version
+                .try_into()
+                .map_err(|e: String| storage::StorageError::BackendError(e.into()))?,
+            runtime: f.func.runtime.into(),
+            inputs: f.func.inputs.into_iter().map(|i| i.into()).collect(),
+            outputs: f.func.outputs.into_iter().map(|o| o.into()).collect(),
+            metadata: f
+                .func
+                .metadata
+                .into_iter()
+                .map(|(k, v)| (k, v.unwrap()))
+                .collect(),
+            code: f.func.code,
+            attachments: f.attachment_ids,
+            created_at: f
+                .func
+                .created_at
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
         })
     }
 }
@@ -227,10 +229,9 @@ impl TryFrom<FunctionWithAttachments> for storage::Function {
 #[postgres(name = "function_input")]
 struct FunctionInput {
     name: String,
+    description: String,
     required: bool,
-    argument_type: ArgumentType,
-    default_value: String,
-    from_execution_environment: bool,
+    argument_type: Type,
 }
 
 impl From<storage::FunctionInput> for FunctionInput {
@@ -238,9 +239,8 @@ impl From<storage::FunctionInput> for FunctionInput {
         Self {
             name: fi.name,
             required: fi.required,
+            description: fi.description,
             argument_type: fi.argument_type.into(),
-            default_value: fi.default_value,
-            from_execution_environment: fi.from_execution_environment,
         }
     }
 }
@@ -249,34 +249,33 @@ impl From<FunctionInput> for storage::FunctionInput {
     fn from(fi: FunctionInput) -> Self {
         Self {
             name: fi.name,
+            description: fi.description,
             required: fi.required,
             argument_type: fi.argument_type.into(),
-            default_value: fi.default_value,
-            from_execution_environment: fi.from_execution_environment,
         }
     }
 }
 
-impl From<ProtoArgType> for ArgumentType {
+impl From<ProtoArgType> for Type {
     fn from(pa: ProtoArgType) -> Self {
         match pa {
-            ProtoArgType::String => ArgumentType::String,
-            ProtoArgType::Bool => ArgumentType::Bool,
-            ProtoArgType::Int => ArgumentType::Int,
-            ProtoArgType::Float => ArgumentType::Float,
-            ProtoArgType::Bytes => ArgumentType::Bytes,
+            ProtoArgType::String => Type::String,
+            ProtoArgType::Bool => Type::Bool,
+            ProtoArgType::Int => Type::Int,
+            ProtoArgType::Float => Type::Float,
+            ProtoArgType::Bytes => Type::Bytes,
         }
     }
 }
 
-impl From<ArgumentType> for ProtoArgType {
-    fn from(at: ArgumentType) -> Self {
+impl From<Type> for ProtoArgType {
+    fn from(at: Type) -> Self {
         match at {
-            ArgumentType::String => ProtoArgType::String,
-            ArgumentType::Bool => ProtoArgType::Bool,
-            ArgumentType::Int => ProtoArgType::Int,
-            ArgumentType::Float => ProtoArgType::Float,
-            ArgumentType::Bytes => ProtoArgType::Bytes,
+            Type::String => ProtoArgType::String,
+            Type::Bool => ProtoArgType::Bool,
+            Type::Int => ProtoArgType::Int,
+            Type::Float => ProtoArgType::Float,
+            Type::Bytes => ProtoArgType::Bytes,
         }
     }
 }
@@ -285,13 +284,15 @@ impl From<ArgumentType> for ProtoArgType {
 #[postgres(name = "function_output")]
 struct FunctionOutput {
     name: String,
-    argument_type: ArgumentType,
+    description: String,
+    argument_type: Type,
 }
 
 impl From<storage::FunctionOutput> for FunctionOutput {
     fn from(fo: super::FunctionOutput) -> Self {
         Self {
             name: fo.name,
+            description: fo.description,
             argument_type: fo.argument_type.into(),
         }
     }
@@ -301,35 +302,36 @@ impl From<FunctionOutput> for storage::FunctionOutput {
     fn from(fo: FunctionOutput) -> Self {
         Self {
             name: fo.name,
+            description: fo.description,
             argument_type: fo.argument_type.into(),
         }
     }
 }
 
 #[derive(Debug, ToSql, FromSql)]
-#[postgres(name = "execution_environment")]
-pub struct ExecutionEnvironment {
+#[postgres(name = "runtime")]
+pub struct Runtime {
     pub name: String,
     pub entrypoint: String,
     pub arguments: HashMap<String, Option<String>>,
 }
 
-impl From<storage::ExecutionEnvironment> for ExecutionEnvironment {
-    fn from(ee: super::ExecutionEnvironment) -> Self {
+impl From<storage::Runtime> for Runtime {
+    fn from(ee: super::Runtime) -> Self {
         Self {
             name: ee.name,
             entrypoint: ee.entrypoint,
-            arguments: HStore(ee.function_arguments).into(),
+            arguments: HStore(ee.arguments).into(),
         }
     }
 }
 
-impl From<ExecutionEnvironment> for storage::ExecutionEnvironment {
-    fn from(ee: ExecutionEnvironment) -> Self {
+impl From<Runtime> for storage::Runtime {
+    fn from(ee: Runtime) -> Self {
         Self {
             name: ee.name,
             entrypoint: ee.entrypoint,
-            function_arguments: ee
+            arguments: ee
                 .arguments
                 .into_iter()
                 .map(|(k, v)| (k, v.unwrap()))
@@ -461,7 +463,7 @@ impl std::fmt::Display for StringAdapter {
             f,
             "{}",
             match self.0 {
-                storage::OrderingKey::Name => "name",
+                storage::OrderingKey::NameVersion => "name_version",
             }
         )
     }
@@ -471,10 +473,10 @@ impl std::fmt::Display for StringAdapter {
 impl storage::FunctionStorage for PostgresStorage {
     async fn insert(
         &self,
-        function_data: storage::FunctionData,
-    ) -> Result<uuid::Uuid, storage::StorageError> {
+        function_data: storage::Function,
+    ) -> Result<storage::Function, storage::StorageError> {
         let metadata: HashMap<String, Option<String>> = HStore(function_data.metadata).into();
-        let ee: ExecutionEnvironment = function_data.execution_environment.into();
+        let rt: Runtime = function_data.runtime.into();
 
         let name = function_data.name.clone();
         let version = function_data.version.clone();
@@ -498,7 +500,7 @@ impl storage::FunctionStorage for PostgresStorage {
                         .into_iter()
                         .map(FunctionOutput::from)
                         .collect::<Vec<FunctionOutput>>(),
-                    &ee,
+                    &rt,
                     &function_data.attachments,
                 ],
             )
@@ -513,13 +515,13 @@ impl storage::FunctionStorage for PostgresStorage {
                 }
                 None => storage::StorageError::BackendError(Box::new(e)),
             })
-            .map(|r| r.get(0))
+            .and_then(|row| row.get::<_, FunctionWithAttachments>(0).try_into())
     }
 
     async fn insert_attachment(
         &self,
         function_attachment_data: storage::FunctionAttachmentData,
-    ) -> Result<uuid::Uuid, storage::StorageError> {
+    ) -> Result<storage::FunctionAttachment, storage::StorageError> {
         let metadata: HashMap<String, Option<String>> =
             HStore(function_attachment_data.metadata).into();
         let checksums = Checksums::from(function_attachment_data.checksums);
@@ -536,13 +538,19 @@ impl storage::FunctionStorage for PostgresStorage {
                     format!("Failed to insert attachment: {}", e).into(),
                 )
             })
-            .map(|r| r.get(0))
+            .map(|row| row.get::<_, Attachment>(0).into())
     }
 
-    async fn get(&self, id: &Uuid) -> Result<storage::Function, storage::StorageError> {
+    async fn get(
+        &self,
+        id: &storage::FunctionId,
+    ) -> Result<storage::Function, storage::StorageError> {
         self.get_connection()
             .await?
-            .query("select get_function($1)", &[&id])
+            .query(
+                "select get_function($1, $2)",
+                &[&id.name, &Version::from(&id.version)],
+            )
             .await
             .map_err(|e| {
                 storage::StorageError::BackendError(
@@ -573,25 +581,34 @@ impl storage::FunctionStorage for PostgresStorage {
                 rows.pop()
                     .ok_or_else(|| storage::StorageError::AttachmentNotFound(id.to_string()))
             })
-            .map(|row| row.get::<_, AttachmentWithFunctions>(0).into())
+            .map(|row| row.get::<_, Attachment>(0).into())
     }
 
     async fn list(
         &self,
         filters: &storage::Filters,
     ) -> Result<Vec<storage::Function>, storage::StorageError> {
+        let order = filters.order.as_ref().cloned().unwrap_or_default();
         self.get_connection()
             .await?
             .query(
                 "select list_functions($1, $2, $3, $4, $5, $6, $7, $8)",
                 &[
-                    &filters.name,
-                    &filters.exact_name_match,
+                    &filters
+                        .name
+                        .as_ref()
+                        .map(|n| n.pattern.clone())
+                        .unwrap_or_default(),
+                    &filters
+                        .name
+                        .as_ref()
+                        .map(|n| n.exact_match)
+                        .unwrap_or_default(),
                     &filters.metadata,
-                    &(filters.offset as i64),
-                    &(filters.limit as i64),
-                    &StringAdapter(filters.order_by).to_string(),
-                    &filters.order_descending,
+                    &(order.offset as i64),
+                    &(order.limit as i64),
+                    &StringAdapter(order.key).to_string(),
+                    &order.reverse,
                     &filters
                         .version_requirement
                         .as_ref()
@@ -703,38 +720,43 @@ mod tests {
     async fn insert_function() {
         with_db!(db, {
             let storage = db.unwrap();
-            let data = storage::FunctionData {
+            let data = storage::Function {
                 name: "Super Snek!".to_owned(),
                 version: Version::new(1, 2, 3),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
             let res = storage.insert(data).await;
             assert!(res.is_ok());
 
+            // make sure timestamp was set
+            assert_ne!(res.unwrap().created_at, 0);
+
             // Insert another function with same name and version (which shouldn't work)
-            let same_data = storage::FunctionData {
+            let same_data = storage::Function {
                 name: "Super Snek!".to_owned(),
                 version: Version::new(1, 2, 3),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
             let res = storage.insert(same_data).await;
@@ -742,38 +764,40 @@ mod tests {
             assert!(matches!(res.unwrap_err(), storage::StorageError::VersionExists { .. }));
 
             // Insert same function but newer with different version
-            let data = storage::FunctionData {
+            let data = storage::Function {
                 name: "Super Snek!".to_owned(),
                 version: Version::new(1, 2, 4),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
             let res = storage.insert(data).await;
             assert!(res.is_ok());
 
             // Insert different function but with same name as other
-            let data = storage::FunctionData {
+            let data = storage::Function {
                 name: "Bad Snek!".to_owned(),
                 version: Version::new(1, 2, 3),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
             let res = storage.insert(data).await;
@@ -791,7 +815,7 @@ mod tests {
 
             let r = storage.insert_attachment(attachment1).await;
             assert!(r.is_ok());
-            let att1_id = r.unwrap();
+            let attachment1 = r.unwrap();
 
             let attachment2 = storage::FunctionAttachmentData {
                 name: "Attached inferior snek!".to_owned(),
@@ -804,45 +828,46 @@ mod tests {
 
             let r = storage.insert_attachment(attachment2).await;
             assert!(r.is_ok());
-            let att2_id = r.unwrap();
+            let attachment2 = r.unwrap();
 
-            let data = storage::FunctionData {
+            let data = storage::Function {
                 name: "Bauta Snek!".to_owned(),
                 version: Version::new(99, 3, 4),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: hashmap!("arg1".to_owned() => "some/path".to_owned(), "bune".to_owned() => "rune".to_owned()),
+                    arguments: hashmap!("arg1".to_owned() => "some/path".to_owned(), "bune".to_owned() => "rune".to_owned()),
                 },
                 inputs: vec![
                     super::super::FunctionInput {
                         name: "best input".to_owned(),
                         required: true,
-                        argument_type: super::super::ArgumentType::String,
-                        default_value: "notig".to_owned(),
-                        from_execution_environment: true,
+                        argument_type: super::super::Type::String,
+                        description: "notig".to_owned(),
                     },
                     super::super::FunctionInput {
                         name: "worst input".to_owned(),
                         required: false,
-                        argument_type: super::super::ArgumentType::Bool,
-                        default_value: "".to_owned(),
-                        from_execution_environment: false,
+                        argument_type: super::super::Type::Bool,
+                        description: "".to_owned(),
                     },
                 ],
                 outputs: vec![
                     super::super::FunctionOutput {
                         name: "best output".to_owned(),
-                        argument_type: super::super::ArgumentType::String,
+                        argument_type: super::super::Type::String,
+                        description: "beskrivning".to_owned(),
                     },
                     super::super::FunctionOutput {
                         name: "worst output".to_owned(),
-                        argument_type: super::super::ArgumentType::Bool,
+                        argument_type: super::super::Type::Bool,
+                        description: "".to_owned(),
                     },
                 ],
                 metadata: hashmap!("meta".to_owned() => "ja tack, fisk är gott".to_owned(), "will_explode".to_owned() => "very yes".to_owned()),
                 code: Some(uuid::Uuid::new_v4()),
-                attachments: vec![att1_id, att2_id],
+                attachments: vec![attachment1.id, attachment2.id],
+                created_at: 0,
             };
 
             let res = storage.insert(data).await;
@@ -852,43 +877,45 @@ mod tests {
         with_db!(db, {
             let storage = db.unwrap();
 
-            let data = storage::FunctionData {
+            let data = storage::Function {
                 name: "Super Snek!".to_owned(),
                 version: Version::new(1, 2, 3),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
             let res = storage.insert(data).await;
             assert!(res.is_ok());
-            let ok_function_id = res.unwrap();
+            let ok_function = res.unwrap();
 
             // insert function with non-existent attachment
             // this should test that when inserting
             // into the attachment relation table fails,
             // the function is not inserted either
             // even though that happens before
-            let data = storage::FunctionData {
+            let data = storage::Function {
                 name: "Snek with no attachment".to_owned(),
                 version: Version::new(1, 2, 3),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![Uuid::new_v4()],
+                created_at: 0,
             };
 
             let res = storage.insert(data).await;
@@ -899,10 +926,14 @@ mod tests {
             ));
 
             let res = storage.list(&storage::Filters::default()).await;
-            assert!(dbg!(&res).is_ok());
+            assert!(res.is_ok());
             let list = res.unwrap();
             assert_eq!(list.len(), 1);
-            assert_eq!(list.first().map(|f| f.id), Some(ok_function_id));
+            assert_eq!(
+                list.first().map(storage::FunctionId::from),
+                Some(storage::FunctionId::from(&ok_function)),
+            );
+            assert_ne!(ok_function.created_at, 0);
         });
     }
 
@@ -910,29 +941,33 @@ mod tests {
     async fn get_function() {
         with_db!(db, {
             let storage = db.unwrap();
-            let data = storage::FunctionData {
+            let data = storage::Function {
                 name: "Super Snek!".to_owned(),
                 version: Version::new(1, 2, 3),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let id = storage.insert(data).await.unwrap();
+            let id = storage::FunctionId::from(&storage.insert(data).await.unwrap());
             let res = storage.get(&id).await;
 
             assert!(res.is_ok());
-            assert_eq!(res.unwrap().id, id);
+            assert_eq!(storage::FunctionId::from(&res.unwrap()), id);
 
             // test nonexistent
-            let nilid = Uuid::nil();
+            let nilid = storage::FunctionId {
+                name: String::new(),
+                version: semver::Version::new(0, 0, 0),
+            };
             let res = storage.get(&nilid).await;
             assert!(res.is_err());
             assert!(matches!(
@@ -958,27 +993,28 @@ mod tests {
 
             let r = storage.insert_attachment(attachment1).await;
             assert!(r.is_ok());
-            let att1_id = r.unwrap();
+            let att1_id = r.unwrap().id;
 
-            let data = storage::FunctionData {
+            let data = storage::Function {
                 name: "Super Snek!".to_owned(),
                 version: Version::new(1, 2, 3),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![att1_id],
+                created_at: 0,
             };
 
-            let id = storage.insert(data).await.unwrap();
+            let id = storage::FunctionId::from(&storage.insert(data).await.unwrap());
             let res = storage.get(&id).await;
             assert!(res.is_ok());
-            assert!(res.unwrap().function_data.attachments.contains(&att1_id));
+            assert!(res.unwrap().attachments.contains(&att1_id));
         })
     }
 
@@ -998,42 +1034,17 @@ mod tests {
 
             let r = storage.insert_attachment(attachment1).await;
             assert!(r.is_ok());
-            let att1_id = r.unwrap();
+            let r = r.unwrap();
+
+            // make sure timestamp was set
+            assert_ne!(r.created_at, 0);
+
+            let att1_id = r.id;
 
             let res = storage.get_attachment(&att1_id).await;
             assert!(res.is_ok());
             let returned_attachment = res.unwrap();
             assert_eq!(returned_attachment.id, att1_id);
-
-            // first, check that the function id is not set
-            // before the function is registered
-            assert!(returned_attachment.function_ids.is_empty());
-
-            // then, register a function with this attachment
-            // and make sure that the function id of the
-            // attachment is now set to that one
-            let data = storage::FunctionData {
-                name: "Super Snek!".to_owned(),
-                version: Version::new(1, 2, 3),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
-                    entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
-                },
-                inputs: vec![],
-                outputs: vec![],
-                metadata: HashMap::new(),
-                code: None,
-                attachments: vec![returned_attachment.id],
-            };
-
-            let function_id = storage.insert(data).await.unwrap();
-            let returned_attachment = storage.get_attachment(&att1_id).await.unwrap();
-            assert_eq!(returned_attachment.function_ids.len(), 1);
-            assert_eq!(
-                returned_attachment.function_ids.first().unwrap(),
-                &function_id
-            );
 
             // test nonexistent
             let nilid = Uuid::nil();
@@ -1056,32 +1067,40 @@ mod tests {
             assert!(res.is_ok());
 
             // Register and check registered items are listed
-            let data = storage::FunctionData {
+            let data = storage::Function {
                 name: "Aaa".to_owned(),
                 version: Version::new(1, 2, 3),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: string_hashmap!("fisk" => "haj", "orm" => "🐍", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let id = storage.insert(data).await.unwrap();
+            let id = storage::FunctionId::from(&storage.insert(data).await.unwrap());
             let res = storage.list(&storage::Filters::default()).await;
             assert!(res.is_ok());
 
             let rows = res.unwrap();
             assert_eq!(rows.len(), 1);
-            assert_eq!(rows.first().map(|f| f.id), Some(id));
+            assert_eq!(
+                rows.first().map(storage::FunctionId::from).as_ref(),
+                Some(&id)
+            );
 
             // Test filtering
             let mut filt = storage::Filters::default();
-            filt.name = "A".to_owned();
+            filt.name = Some({
+                let mut nf = storage::NameFilter::default();
+                nf.pattern = "A".to_owned();
+                nf
+            });
             let res = storage.list(&filt).await;
             assert!(res.is_ok());
 
@@ -1090,7 +1109,11 @@ mod tests {
 
             // Test not finding
             let mut filt = storage::Filters::default();
-            filt.name = "B".to_owned();
+            filt.name = Some({
+                let mut nf = storage::NameFilter::default();
+                nf.pattern = "B".to_owned();
+                nf
+            });
             let res = storage.list(&filt).await;
             assert!(res.is_ok());
 
@@ -1099,8 +1122,10 @@ mod tests {
 
             // Test exact name match
             let mut filt = storage::Filters::default();
-            filt.exact_name_match = true;
-            filt.name = "a".to_owned();
+            filt.name = Some(storage::NameFilter {
+                pattern: "a".to_owned(),
+                exact_match: true,
+            });
 
             let res = storage.list(&filt).await;
             assert!(res.is_ok());
@@ -1108,13 +1133,20 @@ mod tests {
             let rows = res.unwrap();
             assert!(rows.is_empty());
 
-            filt.name = "Aaa".to_owned();
+            filt.name = Some({
+                let mut nf = storage::NameFilter::default();
+                nf.pattern = "Aaa".to_owned();
+                nf
+            });
             let res = storage.list(&filt).await;
             assert!(res.is_ok());
 
             let rows = res.unwrap();
             assert_eq!(rows.len(), 1);
-            assert_eq!(rows.first().map(|f| f.id), Some(id));
+            assert_eq!(
+                rows.first().map(storage::FunctionId::from).as_ref(),
+                Some(&id)
+            );
 
             // Metadata filtering
             let mut filt = storage::Filters::default();
@@ -1125,7 +1157,10 @@ mod tests {
 
             let rows = res.unwrap();
             assert_eq!(rows.len(), 1);
-            assert_eq!(rows.first().map(|f| f.id), Some(id));
+            assert_eq!(
+                rows.first().map(storage::FunctionId::from).as_ref(),
+                Some(&id)
+            );
 
             // Existing key and wrong value is not a match
             filt.metadata = hashmap!("fisk".to_owned() => Some("🦈".to_owned()));
@@ -1151,7 +1186,7 @@ mod tests {
 
             let rows = res.unwrap();
             assert_eq!(rows.len(), 1);
-            assert_eq!(rows.first().map(|f| f.id), Some(id));
+            assert_eq!(rows.first().map(storage::FunctionId::from), Some(id));
         })
     }
 
@@ -1160,169 +1195,220 @@ mod tests {
         with_db!(db, {
             let storage = db.unwrap();
 
-            let function1_1_0_0 = storage::FunctionData {
+            let function1_1_0_0 = storage::Function {
                 name: "function1".to_owned(),
                 version: Version::new(1, 0, 0),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: string_hashmap!("fisk" => "haj", "orm" => "🐍", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function1_1_1_1 = storage::FunctionData {
+            let function1_1_1_1 = storage::Function {
                 name: "function1".to_owned(),
                 version: Version::new(1, 1, 1),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: string_hashmap!("fisk" => "torsk", "orm" => "🐍", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function2_1_1_1 = storage::FunctionData {
+            let function2_1_1_1 = storage::Function {
                 name: "function2".to_owned(),
                 version: Version::new(1, 1, 1),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: string_hashmap!("fisk" => "abborre", "orm" => "🐍", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function2_1_0_0 = storage::FunctionData {
+            let function2_1_0_0 = storage::Function {
                 name: "function2".to_owned(),
                 version: Version::new(1, 0, 0),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: string_hashmap!("fisk" => "berggylta", "orm" => "nej", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let _function1_1_0_0_id = storage.insert(function1_1_0_0).await.unwrap();
-            let _function1_1_1_1_id = storage.insert(function1_1_1_1).await.unwrap();
+            let _function1_1_0_0_id =
+                storage::FunctionId::from(&storage.insert(function1_1_0_0).await.unwrap());
+            let _function1_1_1_1_id =
+                storage::FunctionId::from(&storage.insert(function1_1_1_1).await.unwrap());
 
-            let function2_1_1_1_id = storage.insert(function2_1_1_1).await.unwrap();
-            let _function2_1_0_0_id = storage.insert(function2_1_0_0).await.unwrap();
+            let function2_1_1_1_id =
+                storage::FunctionId::from(&storage.insert(function2_1_1_1).await.unwrap());
+            let function2_1_0_0_id =
+                storage::FunctionId::from(&storage.insert(function2_1_0_0).await.unwrap());
 
             let mut filters = storage::Filters::default();
-            filters.offset = 2;
-            filters.limit = 2;
+            filters.order = Some({
+                let mut o = storage::Ordering::default();
+                o.offset = 2;
+                o.limit = 2;
+                o
+            });
 
             let res = storage.list(&filters).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 2);
+            assert_eq!(res.first().map(|f| f.name.as_ref()), Some("function2"));
             assert_eq!(
-                res.first().map(|f| f.function_data.name.as_ref()),
-                Some("function2")
+                res.first().map(storage::FunctionId::from),
+                Some(function2_1_1_1_id)
             );
-            assert_eq!(res.first().map(|f| f.id), Some(function2_1_1_1_id));
+
+            // reverse
+            let mut filters = storage::Filters::default();
+            filters.order = Some({
+                let mut o = storage::Ordering::default();
+                o.limit = 1;
+                o.reverse = true;
+                o
+            });
+
+            let res = storage.list(&filters).await;
+            assert!(res.is_ok());
+            let res = res.unwrap();
+            assert_eq!(res.first().map(|f| f.name.as_ref()), Some("function2"));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from),
+                Some(function2_1_0_0_id)
+            );
         });
 
         with_db!(db, {
             let storage = db.unwrap();
 
             // test version ordering
-            let function2_1_10_0 = storage::FunctionData {
+            let function2_1_10_0 = storage::Function {
                 name: "function2".to_owned(),
                 version: Version::new(1, 10, 0),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: string_hashmap!("fisk" => "berggylta", "orm" => "nej", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function2_1_2_0 = storage::FunctionData {
+            let function2_1_2_0 = storage::Function {
                 name: "function2".to_owned(),
                 version: Version::new(1, 2, 0),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: string_hashmap!("fisk" => "sutare", "orm" => "nej", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function2_1_10_0_id = storage.insert(function2_1_10_0).await.unwrap();
-            let _function2_1_2_0_id = storage.insert(function2_1_2_0).await.unwrap();
+            let function2_1_10_0_id =
+                storage::FunctionId::from(&storage.insert(function2_1_10_0).await.unwrap());
+            let _function2_1_2_0_id =
+                storage::FunctionId::from(&storage.insert(function2_1_2_0).await.unwrap());
 
             let res = storage.list(&storage::Filters::default()).await;
             assert!(res.is_ok());
             let res = res.unwrap();
-            assert_eq!(res.first().map(|f| f.id), Some(function2_1_10_0_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from).as_ref(),
+                Some(&function2_1_10_0_id)
+            );
 
-            let function2_1_10_0_alpha = storage::FunctionData {
+            let function2_1_10_0_alpha = storage::Function {
                 name: "function2".to_owned(),
                 version: Version::parse("1.10.0-alpha").unwrap(),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: string_hashmap!("fisk" => "sutare", "orm" => "nej", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function2_1_10_0_jaws = storage::FunctionData {
+            let function2_1_10_0_jaws = storage::Function {
                 name: "function2".to_owned(),
                 version: Version::parse("1.10.0-jaws").unwrap(),
-                execution_environment: storage::ExecutionEnvironment {
-                    name: "avlivningsmiljö".to_owned(),
+                runtime: storage::Runtime {
+                    name: "springtid".to_owned(),
                     entrypoint: "ingångspoäng".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: string_hashmap!("fisk" => "brugd", "orm" => "nej", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function2_1_10_0_alpha_id = storage.insert(function2_1_10_0_alpha).await.unwrap();
-            let _function2_1_10_0_jaws_id = storage.insert(function2_1_10_0_jaws).await.unwrap();
+            let function2_1_10_0_alpha_id =
+                storage::FunctionId::from(&storage.insert(function2_1_10_0_alpha).await.unwrap());
+            let _function2_1_10_0_jaws_id =
+                storage::FunctionId::from(&storage.insert(function2_1_10_0_jaws).await.unwrap());
 
             let mut filters = storage::Filters::default();
-            filters.limit = 3;
+            filters.order = Some({
+                let mut o = storage::Ordering::default();
+                o.limit = 3;
+                o
+            });
             let res = storage.list(&filters).await;
             assert!(res.is_ok());
             let res = res.unwrap();
-            assert_eq!(res.first().map(|f| f.id), Some(function2_1_10_0_id));
-            assert_eq!(res.last().map(|f| f.id), Some(function2_1_10_0_alpha_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from),
+                Some(function2_1_10_0_id)
+            );
+            assert_eq!(
+                res.last().map(storage::FunctionId::from),
+                Some(function2_1_10_0_alpha_id)
+            );
         });
     }
 
@@ -1332,118 +1418,132 @@ mod tests {
         with_db!(db, {
             let storage = db.unwrap();
 
-            let function_1_0_0 = storage::FunctionData {
+            let function_1_0_0 = storage::Function {
                 name: "birb".to_owned(),
                 version: Version::new(1, 0, 0),
-                execution_environment: storage::ExecutionEnvironment {
+                runtime: storage::Runtime {
                     name: "beepboop".to_owned(),
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function_1_1_0 = storage::FunctionData {
+            let function_1_1_0 = storage::Function {
                 name: "birb".to_owned(),
                 version: Version::new(1, 1, 0),
-                execution_environment: storage::ExecutionEnvironment {
+                runtime: storage::Runtime {
                     name: "beepboop".to_owned(),
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function_1_1_1 = storage::FunctionData {
+            let function_1_1_1 = storage::Function {
                 name: "birb".to_owned(),
                 version: Version::new(1, 1, 1),
-                execution_environment: storage::ExecutionEnvironment {
+                runtime: storage::Runtime {
                     name: "beepboop".to_owned(),
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function_1_2_0 = storage::FunctionData {
+            let function_1_2_0 = storage::Function {
                 name: "birb".to_owned(),
                 version: Version::new(1, 2, 0),
-                execution_environment: storage::ExecutionEnvironment {
+                runtime: storage::Runtime {
                     name: "beepboop".to_owned(),
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function_1_10_0 = storage::FunctionData {
+            let function_1_10_0 = storage::Function {
                 name: "birb".to_owned(),
                 version: Version::new(1, 10, 0),
-                execution_environment: storage::ExecutionEnvironment {
+                runtime: storage::Runtime {
                     name: "beepboop".to_owned(),
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function_2_2_0 = storage::FunctionData {
+            let function_2_2_0 = storage::Function {
                 name: "birb".to_owned(),
                 version: Version::new(2, 2, 0),
-                execution_environment: storage::ExecutionEnvironment {
+                runtime: storage::Runtime {
                     name: "beepboop".to_owned(),
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function_1_2_0_beta = storage::FunctionData {
+            let function_1_2_0_beta = storage::Function {
                 name: "birb".to_owned(),
                 version: Version::parse("1.2.0-beta").unwrap(),
-                execution_environment: storage::ExecutionEnvironment {
+                runtime: storage::Runtime {
                     name: "beepboop".to_owned(),
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
-                    function_arguments: HashMap::new(),
+                    arguments: HashMap::new(),
                 },
                 inputs: vec![],
                 outputs: vec![],
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
+                created_at: 0,
             };
 
-            let function_1_0_0_id = storage.insert(function_1_0_0).await.unwrap();
-            let _function_1_1_0_id = storage.insert(function_1_1_0).await.unwrap();
-            let function_1_1_1_id = storage.insert(function_1_1_1).await.unwrap();
-            let function_1_2_0_id = storage.insert(function_1_2_0).await.unwrap();
-            let function_1_10_0_id = storage.insert(function_1_10_0).await.unwrap();
-            let function_2_2_0_id = storage.insert(function_2_2_0).await.unwrap();
-            let function_1_2_0_beta_id = storage.insert(function_1_2_0_beta).await.unwrap();
+            let function_1_0_0_id =
+                storage::FunctionId::from(&storage.insert(function_1_0_0).await.unwrap());
+            let _function_1_1_0_id =
+                storage::FunctionId::from(&storage.insert(function_1_1_0).await.unwrap());
+            let function_1_1_1_id =
+                storage::FunctionId::from(&storage.insert(function_1_1_1).await.unwrap());
+            let function_1_2_0_id =
+                storage::FunctionId::from(&storage.insert(function_1_2_0).await.unwrap());
+            let function_1_10_0_id =
+                storage::FunctionId::from(&storage.insert(function_1_10_0).await.unwrap());
+            let function_2_2_0_id =
+                storage::FunctionId::from(&storage.insert(function_2_2_0).await.unwrap());
+            let function_1_2_0_beta_id =
+                storage::FunctionId::from(&storage.insert(function_1_2_0_beta).await.unwrap());
 
             // Exact match
             let mut filter = storage::Filters::default();
@@ -1452,7 +1552,10 @@ mod tests {
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 1);
-            assert_eq!(res.first().map(|f| f.id), Some(function_1_0_0_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from),
+                Some(function_1_0_0_id)
+            );
 
             // Less than on full version
             filter.version_requirement = Some(VersionReq::parse("<1.2.0").unwrap());
@@ -1460,7 +1563,10 @@ mod tests {
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 3);
-            assert_eq!(res.first().map(|f| f.id), Some(function_1_1_1_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from).as_ref(),
+                Some(&function_1_1_1_id)
+            );
 
             // Less than on minor version
             filter.version_requirement = Some(VersionReq::parse("<1.10.0 >=1.0.0").unwrap());
@@ -1468,38 +1574,53 @@ mod tests {
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 4);
-            assert_eq!(res.first().map(|f| f.id), Some(function_1_2_0_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from),
+                Some(function_1_2_0_id)
+            );
 
             // Less than on major version
             filter.version_requirement = Some(VersionReq::parse("<2.0.0").unwrap());
             let res = storage.list(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
-            assert_eq!(res.first().map(|f| f.id), Some(function_1_10_0_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from).as_ref(),
+                Some(&function_1_10_0_id)
+            );
 
             // There should not be a pre release here
-            assert!(res.iter().all(|f| !f.function_data.version.is_prerelease()));
+            assert!(res.iter().all(|f| !f.version.is_prerelease()));
 
             // Less or equal
             filter.version_requirement = Some(VersionReq::parse("<=1.1.1").unwrap());
             let res = storage.list(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
-            assert_eq!(res.first().map(|f| f.id), Some(function_1_1_1_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from).as_ref(),
+                Some(&function_1_1_1_id)
+            );
 
             // Greater
             filter.version_requirement = Some(VersionReq::parse(">1.1.1").unwrap());
             let res = storage.list(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
-            assert_eq!(res.first().map(|f| f.id), Some(function_2_2_0_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from).as_ref(),
+                Some(&function_2_2_0_id)
+            );
 
             // Greater or equal
             filter.version_requirement = Some(VersionReq::parse(">=1.1.1").unwrap());
             let res = storage.list(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
-            assert_eq!(res.first().map(|f| f.id), Some(function_2_2_0_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from),
+                Some(function_2_2_0_id)
+            );
 
             // Pre release only on exact match
             filter.version_requirement = Some(VersionReq::parse("=1.2.0-beta").unwrap());
@@ -1507,7 +1628,10 @@ mod tests {
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 1);
-            assert_eq!(res.first().map(|f| f.id), Some(function_1_2_0_beta_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from),
+                Some(function_1_2_0_beta_id)
+            );
 
             // ~
             filter.version_requirement = Some(VersionReq::parse("~1").unwrap());
@@ -1515,21 +1639,30 @@ mod tests {
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 5);
-            assert_eq!(res.first().map(|f| f.id), Some(function_1_10_0_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from).as_ref(),
+                Some(&function_1_10_0_id)
+            );
 
             filter.version_requirement = Some(VersionReq::parse("~1.1").unwrap());
             let res = storage.list(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 2);
-            assert_eq!(res.first().map(|f| f.id), Some(function_1_1_1_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from).as_ref(),
+                Some(&function_1_1_1_id)
+            );
 
             filter.version_requirement = Some(VersionReq::parse("~1.1.0").unwrap());
             let res = storage.list(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 2);
-            assert_eq!(res.first().map(|f| f.id), Some(function_1_1_1_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from),
+                Some(function_1_1_1_id)
+            );
 
             // ^
             filter.version_requirement = Some(VersionReq::parse("^1.2.3").unwrap());
@@ -1537,7 +1670,10 @@ mod tests {
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 1);
-            assert_eq!(res.first().map(|f| f.id), Some(function_1_10_0_id));
+            assert_eq!(
+                res.first().map(storage::FunctionId::from),
+                Some(function_1_10_0_id)
+            );
 
             // *
             filter.version_requirement = Some(VersionReq::parse("1.*").unwrap());

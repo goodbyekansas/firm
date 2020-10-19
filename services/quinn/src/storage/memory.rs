@@ -6,17 +6,11 @@ use std::{
 use slog::Logger;
 use uuid::Uuid;
 
-use super::{Function, FunctionAttachment, FunctionData, FunctionStorage, StorageError};
+use super::{Function, FunctionAttachment, FunctionId, FunctionStorage, StorageError};
 
 pub struct MemoryStorage {
-    functions: RwLock<HashMap<FunctionKey, Function>>,
+    functions: RwLock<HashMap<FunctionId, Function>>,
     attachments: RwLock<HashMap<Uuid, FunctionAttachment>>,
-}
-
-#[derive(Eq, PartialEq, Hash)]
-struct FunctionKey {
-    name: String,
-    version: semver::Version,
 }
 
 impl MemoryStorage {
@@ -30,11 +24,12 @@ impl MemoryStorage {
 
 #[async_trait::async_trait]
 impl FunctionStorage for MemoryStorage {
-    async fn insert(&self, function_data: FunctionData) -> Result<Uuid, StorageError> {
-        let fk = FunctionKey {
+    async fn insert(&self, function_data: Function) -> Result<Function, StorageError> {
+        let function_id = FunctionId {
             name: function_data.name.clone(),
             version: function_data.version.clone(),
         };
+
         match self
             .functions
             .write()
@@ -43,31 +38,20 @@ impl FunctionStorage for MemoryStorage {
                     format!("Failed to acquire write lock for functions: {}", e).into(),
                 )
             })?
-            .entry(fk)
+            .entry(function_id)
         {
             Entry::Occupied(entry) => Err(StorageError::VersionExists {
                 name: entry.key().name.clone(),
                 version: entry.key().version.clone(),
             }),
             Entry::Vacant(entry) => {
-                let id = Uuid::new_v4();
-
-                // Update all attachments with function id
-                self.attachments.write()
-                    .map_err(|e| StorageError::BackendError(format!("Failed to acquire write lock for attachments: {}", e).into()))
-                    .and_then(|mut attachments| {
-                        function_data.attachments.iter().chain(function_data.code.iter()).try_for_each(|att_id| {
-                            attachments
-                                .get_mut(att_id)
-                                .ok_or_else(|| StorageError::BackendError("Failed to get mutable attachment for updating function reference id.".into()))
-                                .map(|att| {
-                                    att.function_ids.push(id);
-                                })
-                        })
-                    })?;
-
-                entry.insert(Function { id, function_data });
-                Ok(id)
+                let mut function = function_data;
+                function.created_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                entry.insert(function.clone());
+                Ok(function)
             }
         }
     }
@@ -75,7 +59,7 @@ impl FunctionStorage for MemoryStorage {
     async fn insert_attachment(
         &self,
         function_attachment_data: super::FunctionAttachmentData,
-    ) -> Result<Uuid, StorageError> {
+    ) -> Result<FunctionAttachment, StorageError> {
         self.attachments
             .write()
             .map_err(|e| {
@@ -85,19 +69,20 @@ impl FunctionStorage for MemoryStorage {
             })
             .map(|mut attachments| {
                 let id = Uuid::new_v4();
-                attachments.insert(
+                let attachment = FunctionAttachment {
                     id,
-                    FunctionAttachment {
-                        id,
-                        function_ids: vec![],
-                        data: function_attachment_data,
-                    },
-                );
-                id
+                    data: function_attachment_data,
+                    created_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                };
+                attachments.insert(id, attachment.clone());
+                attachment
             })
     }
 
-    async fn get(&self, id: &Uuid) -> Result<Function, StorageError> {
+    async fn get(&self, id: &FunctionId) -> Result<Function, StorageError> {
         self.functions
             .read()
             .map_err(|e| {
@@ -107,8 +92,7 @@ impl FunctionStorage for MemoryStorage {
             })
             .and_then(|functions| {
                 functions
-                    .values()
-                    .find(|f| &f.id == id)
+                    .get(id)
                     .cloned()
                     .ok_or_else(|| StorageError::FunctionNotFound(id.to_string()))
             })
@@ -140,54 +124,53 @@ impl FunctionStorage for MemoryStorage {
             })
             .map(|f| {
                 f.values()
-                    .filter(|fun| {
+                    .filter(|function| {
                         // Name
-                        match filters.exact_name_match {
-                            true => fun.function_data.name == filters.name,
-                            false => fun.function_data.name.contains(&filters.name),
-                        }
+                        filters.name.as_ref().map_or(true, |filter| {
+                            filter.exact_match && function.name == filter.pattern
+                                || function.name.contains(&filter.pattern)
+                        })
                     })
-                    .filter(|fun| {
+                    .filter(|function| {
                         // Version requirement
                         filters
                             .version_requirement
                             .as_ref()
-                            .map(|requirement| requirement.matches(&fun.function_data.version))
-                            .unwrap_or(true)
+                            .map_or(true, |requirement| requirement.matches(&function.version))
                     })
                     .filter(|fun| {
                         // Metadata
                         filters.metadata.iter().all(|(k, v)| match v {
-                            None => fun.function_data.metadata.contains_key(k),
-                            value => fun.function_data.metadata.get(k) == value.as_ref(),
+                            None => fun.metadata.contains_key(k),
+                            value => fun.metadata.get(k) == value.as_ref(),
                         })
                     })
                     .cloned()
                     .collect::<Vec<Function>>()
             })
             .map(|mut hits| {
-                hits.sort_unstable_by(|a, b| match (filters.order_by, filters.order_descending) {
-                    (gbk_protocols::functions::OrderingKey::Name, false) => {
-                        match a.function_data.name.cmp(&b.function_data.name) {
-                            std::cmp::Ordering::Equal => {
-                                b.function_data.version.cmp(&a.function_data.version)
-                            }
-                            o => o,
-                        }
-                    }
-                    (gbk_protocols::functions::OrderingKey::Name, true) => {
-                        match b.function_data.name.cmp(&a.function_data.name) {
-                            std::cmp::Ordering::Equal => {
-                                b.function_data.version.cmp(&a.function_data.version)
-                            }
+                let order = filters.order.as_ref().cloned().unwrap_or_default();
+                hits.sort_unstable_by(|a, b| match order.key {
+                    function_protocols::registry::OrderingKey::NameVersion => {
+                        match a.name.cmp(&b.name) {
+                            std::cmp::Ordering::Equal => b.version.cmp(&a.version),
                             o => o,
                         }
                     }
                 });
-                hits.into_iter()
-                    .skip(filters.offset)
-                    .take(filters.limit)
-                    .collect()
+
+                if order.reverse {
+                    hits.into_iter()
+                        .rev()
+                        .skip(order.offset)
+                        .take(order.limit)
+                        .collect()
+                } else {
+                    hits.into_iter()
+                        .skip(order.offset)
+                        .take(order.limit)
+                        .collect()
+                }
             })
     }
 }

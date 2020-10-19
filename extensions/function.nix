@@ -2,16 +2,16 @@
 let
   deployFunction = { package }:
     # TODO credentials must be removed. Need to have a local auth service for that.
-    { lomax, endpoint, port, credentials, local ? false }: pkgs.stdenv.mkDerivation ({
+    { bendini, endpoint, port, credentials, local ? false }: pkgs.stdenv.mkDerivation ({
       name = "deploy-${package.name}";
       inputPackage = package;
-      inherit lomax;
+      inherit bendini;
       preferLocalBuild = local;
       SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
       builder = builtins.toFile "builder.sh" ''
         source $stdenv/setup
         mkdir -p $out
-        $lomax/bin/lomax --address ${endpoint} --port ${builtins.toString port} register $inputPackage/manifest.toml 2>&1 | tee $out/command-output
+        $bendini/bin/bendini --address ${endpoint} --port ${builtins.toString port} register $inputPackage/manifest.toml 2>&1 | tee $out/command-output
       '';
     } // (if credentials != "" then { OAUTH_TOKEN = credentials; } else { }));
 

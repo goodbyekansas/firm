@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package registry;
+
+import "functions/functions.proto";
+
+service Registry {
+  rpc List(Filters) returns (functions.Functions);
+  rpc Get(FunctionId) returns (functions.Function);
+  rpc Register(FunctionData) returns (functions.Function);
+  rpc RegisterAttachment(AttachmentData) returns (AttachmentHandle);
+  // TODO remove this endpoint, all attachments should be up/downloaded over http
+  rpc UploadStreamedAttachment(stream AttachmentStreamUpload) returns (Nothing);
+}
+
+
+message Nothing {}
+
+
+message Filters {
+  NameFilter name_filter = 1;
+  VersionRequirement version_requirement = 2;
+  map<string, string> metadata_filter = 3;
+  Ordering order = 4;
+}
+
+
+message FunctionId {
+  string name = 1;
+  string version = 2;
+}
+
+
+message NameFilter {
+  string pattern = 1;
+  bool exact_match = 2;
+}
+
+
+message VersionRequirement {
+  string expression = 1;
+}
+
+
+message Ordering {
+  OrderingKey key = 1;
+  bool reverse = 2;
+  uint32 offset = 3;
+  uint32 limit = 4;
+}
+
+
+enum OrderingKey { NAME_VERSION = 0; }
+
+
+message FunctionData {
+  string name = 1;
+  string version = 2;
+  map<string, string> metadata = 3;
+  repeated functions.Input inputs = 4;
+  repeated functions.Output outputs = 5;
+  AttachmentId code_attachment_id = 6;
+  functions.Runtime runtime = 7;
+  repeated AttachmentId attachment_ids = 8;
+}
+
+
+// TODO kill me please
+message AttachmentStreamUpload {
+  AttachmentId id = 1;
+  bytes content = 2;
+}
+
+
+message AttachmentData {
+  string name = 1;
+  map<string, string> metadata = 2;
+  functions.Checksums checksums = 3;
+}
+
+
+message AttachmentId {
+  string uuid = 1;
+}
+
+
+message AttachmentHandle {
+  AttachmentId id = 1;
+  functions.AttachmentUrl upload_url = 2;
+}

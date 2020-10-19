@@ -1,0 +1,23 @@
+// syntax must always be declared before other statements
+syntax = "proto3";
+
+// effectively a namespace
+package wasi;
+
+import "functions/functions.proto";
+import "functions/execution.proto";
+
+
+message StartProcessRequest {
+  string command = 1;
+  repeated string args = 2;
+  map<string, string> environment_variables = 3;
+}
+
+message Attachments {
+  repeated functions.Attachment attachments = 1;
+}
+
+message InputValues {
+  repeated execution.InputValue values = 1;
+}

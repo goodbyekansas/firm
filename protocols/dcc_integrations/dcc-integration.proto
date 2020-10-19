@@ -1,6 +1,10 @@
 syntax = "proto3";
-import "functions/functions.proto";
+
 package dcc_integration;
+
+import "functions/execution.proto";
+
+// TODO: Move out into its separate package
 
 message FunctionPayloadMetadata {
   string name = 1;
@@ -16,11 +20,11 @@ message GetInputCommand {
 }
 
 message GetInputResponse {
-  functions.FunctionArgument argument = 1;
+  execution.InputValue argument = 1;
 }
 
 message SetOutputCommand {
-  functions.ReturnValue return_value = 1;
+  execution.OutputValue return_value = 1;
 }
 
 message SetOutputResponse {}
