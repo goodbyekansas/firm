@@ -1,5 +1,5 @@
 [package]
-name = "gbk-protocols"
+name = "@packageName@"
 version = "0.1.0"
 authors = ["Goodbye Kansas Pipeline team <pipeline@goodbyekansas.com>"]
 edition = "2018"

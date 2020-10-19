@@ -1,8 +1,6 @@
 use slog::{error, info, o, Drain, Logger};
 
-use gbk_protocols::{
-    functions::functions_registry_server::FunctionsRegistryServer, tonic::transport::Server,
-};
+use function_protocols::{registry::registry_server::RegistryServer, tonic::transport::Server};
 use quinn::{config, registry};
 use std::error::Error;
 
@@ -17,13 +15,12 @@ async fn run(log: Logger) -> Result<(), Box<dyn Error>> {
     )
     .parse()?;
     let svc =
-        registry::FunctionRegistryService::new(config, log.new(o!("component" => "registry")))
-            .await?;
+        registry::RegistryService::new(config, log.new(o!("component" => "registry"))).await?;
 
     info!(log, "Quinn initialized and listening on {}", addr);
 
     Server::builder()
-        .add_service(FunctionsRegistryServer::new(svc))
+        .add_service(RegistryServer::new(svc))
         .serve(addr)
         .await?;
 

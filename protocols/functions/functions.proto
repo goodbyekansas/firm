@@ -1,155 +1,30 @@
-// syntax must always be declared before other statements
 syntax = "proto3";
 
-// effectively a namespace
 package functions;
 
-service FunctionsRegistry {
-  rpc List (ListRequest) returns (RegistryListResponse);
-  rpc Get (FunctionId) returns (FunctionDescriptor);
-  rpc Register (RegisterRequest) returns (FunctionId);
-  rpc RegisterAttachment (RegisterAttachmentRequest) returns (FunctionAttachmentId);
-  rpc UploadStreamedAttachment (stream AttachmentStreamUpload) returns (AttachmentUploadResponse);
-  rpc UploadAttachmentUrl(AttachmentUpload) returns (AttachmentUploadResponse);
-}
 
-service Functions {
-  rpc List (ListRequest) returns (ListResponse);
-  rpc Get (FunctionId) returns (Function);
-  rpc Execute (ExecuteRequest) returns (ExecuteResponse);
-}
-
-message VersionRequirement {
-  string expression = 1;
-}
-
-enum OrderingDirection { ASCENDING = 0; DESCENDING = 1; }
-enum OrderingKey { NAME = 0; }
-
-message ListRequest {
-  string name_filter = 1;
-  map<string, string> metadata_filter = 2;
-  uint32 offset = 3;
-  uint32 limit = 4;
-  bool exact_name_match = 5;
-  VersionRequirement version_requirement = 6;
-  OrderingDirection order_direction = 7;
-  OrderingKey order_by = 8;
-  repeated string metadata_key_filter = 9;
-}
-
-message GetLatestVersionRequest {
+/* This is the base function used whenever we talk about a function.
+ * This is the minimal definition of a function and its runtime.
+ */
+message Function {
   string name = 1;
-  VersionRequirement version_requirement = 2;
+  string version = 2;
+  map<string, string> metadata = 3;
+  repeated Input inputs = 4;
+  repeated Output outputs = 5;
+  Attachment code = 6;
+  repeated Attachment attachments = 7;
+  Runtime runtime = 8;
+  uint64 created_at = 9;
 }
 
-message ListResponse {
+
+message Functions {
   repeated Function functions = 1;
 }
 
-message RegistryListResponse {
-  repeated FunctionDescriptor functions = 1;
-}
 
-message ExecutionEnvironment {
-  string name = 1;
-  string entrypoint = 2;
-  repeated FunctionArgument args = 3;
-}
-
-message FunctionDescriptor {
-  ExecutionEnvironment execution_environment = 1;
-  FunctionAttachment code = 2;
-  Function function = 3;
-  repeated FunctionAttachment attachments = 5;
-}
-
-message Function {
-  // this record is only for discussing metadata of a function not its code
-  FunctionId id = 1;
-  string name = 2;
-  string version = 3;
-  map<string, string> metadata = 4;
-  repeated FunctionInput inputs = 5;
-  repeated FunctionOutput outputs = 6;
-}
-
-message RegisterRequest {
-  string name = 1;
-  map<string, string> metadata = 2;
-  repeated FunctionInput inputs = 3;
-  repeated FunctionOutput outputs = 4;
-  FunctionAttachmentId code = 5;
-  ExecutionEnvironment execution_environment = 6;
-  string version = 7;
-  repeated FunctionAttachmentId attachment_ids = 9;
-}
-
-message FunctionAttachment {
-  FunctionAttachmentId id = 1;
-  string name = 2;
-  string url = 3;
-  map<string, string> metadata = 4;
-  Checksums checksums = 5;
-}
-
-message FunctionAttachments {
-  repeated FunctionAttachment attachments = 1;
-}
-
-message FunctionAttachmentId {
-  string id = 1;
-}
-
-message AttachmentUpload {
-  FunctionAttachmentId id = 1;
-}
-
-message AttachmentStreamUpload {
-  FunctionAttachmentId id = 1;
-  bytes content = 2;
-}
-
-enum AuthMethod {
-  NONE = 0;
-  BASIC = 1;
-  OAUTH2 = 2;
-}
-
-message AttachmentUploadResponse {
-  string url = 1;
-  AuthMethod auth_method = 2;
-}
-
-message RegisterAttachmentRequest {
-  string name = 1;
-  map<string, string> metadata = 2;
-  Checksums checksums = 3;
-}
-
-message FunctionId {
-  // a unique id for each function record
-  string value = 1;
-}
-
-message ExecuteRequest {
-  FunctionId function = 1;
-  repeated FunctionArgument arguments = 2;
-}
-
-message FunctionArguments {
-  repeated FunctionArgument arguments = 1;
-}
-
-message ExecuteResponse {
-  FunctionId function = 1;
-  oneof result {
-    ExecutionError error = 2;
-    FunctionResult ok = 3;
-  }
-}
-
-enum ArgumentType {
+enum Type {
   STRING = 0;
   BOOL = 1;
   INT = 2;
@@ -157,50 +32,50 @@ enum ArgumentType {
   BYTES = 4;
 }
 
-message FunctionInput {
+
+message Input {
   string name = 1;
   bool required = 2;
-  ArgumentType type = 3;
-  string default_value = 4;
-  bool from_execution_environment = 5;
+  Type type = 3;
+  string description = 4;
 }
 
-message FunctionOutput {
+
+message Output {
   string name = 1;
-  ArgumentType type = 2;
+  Type type = 2;
+  string description = 3;
 }
 
-message FunctionArgument {
+
+message Runtime {
   string name = 1;
-  ArgumentType type = 2;
-  bytes value = 3; // TODO: Fix list of thigns. Maybe use one of repeated bytes or just bytes
+  string entrypoint = 2;
+  map<string, string> arguments = 3;
 }
 
-message FunctionResult {
-  repeated ReturnValue values = 1;
-}
 
-message ReturnValue {
+message Attachment {
   string name = 1;
-  ArgumentType type = 2;
-  bytes value = 3;
+  AttachmentUrl url = 2;
+  map<string, string> metadata = 3;
+  Checksums checksums = 4;
+  uint64 created_at = 5;
 }
 
-message ExecutionError {
-  string msg = 1;
+
+message AttachmentUrl {
+  string url = 1;
+  AuthMethod auth_method = 2;
 }
 
-message FunctionContext {
-  repeated FunctionArgument arguments = 1;
-  repeated FunctionAttachment attachments = 2;
+
+enum AuthMethod {
+  NONE = 0;
+  BASIC = 1;
+  OAUTH2 = 2;
 }
 
-// GBK library
-message StartProcessRequest {
-  string command = 1;
-  repeated string args = 2;
-  map<string, string> environment_variables = 3;
-}
 
 message Checksums {
   string sha256 = 1;

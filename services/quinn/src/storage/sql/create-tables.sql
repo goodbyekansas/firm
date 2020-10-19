@@ -7,7 +7,7 @@ create extension if not exists "hstore";
 ---------------------------------------------
 
 do $$ begin
-    create type execution_environment as (
+    create type runtime as (
         name varchar(128),
         entrypoint varchar(128),
         arguments hstore
@@ -25,10 +25,9 @@ end $$;
 do $$ begin
     create type function_input as (
         name varchar(128),
+        description text,
         required bool,
-        argument_type argument_type,
-        default_value varchar(128),
-        from_execution_environment bool
+        argument_type argument_type
     );
 exception
     when duplicate_object then null;
@@ -37,6 +36,7 @@ end $$;
 do $$ begin
     create type function_output as (
         name varchar(128),
+        description text,
         argument_type argument_type
     );
 exception
@@ -50,7 +50,6 @@ do $$ begin
 exception
     when duplicate_object then null;
 end $$;
-
 
 do $$ begin
     create type version as (
@@ -70,15 +69,17 @@ end $$;
 ------------------------------------------
 
 create table if not exists functions (
-    id uuid primary key default uuid_generate_v4(),
+    id uuid default uuid_generate_v4(),
     name varchar(128),
     version version,
     metadata hstore,
     code uuid null,
     inputs function_input[],
     outputs function_output[],
-    execution_environment execution_environment,
-    constraint name_version_unique unique(name, version)
+    runtime runtime,
+    created_at timestamp default (now() at time zone 'utc'),
+    constraint name_version_key primary key(name, version),
+    constraint id_unique unique(id)
 );
 
 
@@ -86,7 +87,8 @@ create table if not exists attachments (
     id uuid primary key default uuid_generate_v4(),
     name varchar(128),
     metadata hstore,
-    checksums checksums
+    checksums checksums,
+    created_at timestamp default (now() at time zone 'utc')
 );
 
 create table if not exists attachments_to_functions (
@@ -108,6 +110,15 @@ begin
 end;
 $$ language plpgsql;
 
+do $$ begin
+    create type function_with_attachments as (
+        func functions,
+        attachment_ids uuid[]
+    );
+exception
+    when duplicate_object then null;
+end $$;
+
 create or replace function insert_function (
     name varchar(128),
     version version,
@@ -115,12 +126,12 @@ create or replace function insert_function (
     code uuid,
     inputs function_input[],
     outputs function_output[],
-    execution_environment execution_environment,
+    runtime runtime,
     attachment_ids uuid[]
-) returns uuid as
+) returns function_with_attachments as
 $$
 declare
-    generated_id uuid;
+    inserted_function functions;
 begin
 
     insert into functions values (
@@ -131,27 +142,20 @@ begin
         code,
         inputs,
         outputs,
-        execution_environment
-    ) returning id into generated_id;
+        runtime,
+        default
+    ) returning * into inserted_function;
 
     -- insert attachment ids in relation table
-    insert into attachments_to_functions values (generated_id, unnest(attachment_ids));
+    insert into attachments_to_functions values (inserted_function.id, unnest(attachment_ids));
 
-    return generated_id;
+    return row(inserted_function, attachment_ids)::function_with_attachments;
 end;
 $$ language plpgsql;
 
-do $$ begin
-    create type function_with_attachments as (
-        func functions,
-        attachment_ids uuid[]
-    );
-exception
-    when duplicate_object then null;
-end $$;
-
 create or replace function get_function (
-    id_ uuid
+    name_ varchar(128),
+    version_ version
 ) returns setof function_with_attachments as
 $$
     select (
@@ -161,7 +165,7 @@ $$
     )::function_with_attachments
     from functions
     left join attachments_to_functions on attachments_to_functions.function_id = functions.id
-    where functions.id = id_ group by functions.id limit 1;
+    where functions.name = name_ and functions.version = version_ group by functions.name, functions.version limit 1;
 $$ language sql;
 
 do $$ begin
@@ -211,7 +215,7 @@ create or replace function list_functions (
     offset_ bigint,
     limit_ bigint,
     order_by_ varchar(128),
-    order_descending_ bool,
+    reverse_ bool,
     version_filters version_comparator[]
 ) returns setof function_with_attachments as
 $$
@@ -239,34 +243,24 @@ $$
         )
     and
         version_matches(functions.version, version_filters)
-    group by functions.id
+    group by functions.name, functions.version
     order by
-        case when order_by_ = 'name' and not order_descending_ then functions.name end asc,
-        case when order_by_ = 'name' and order_descending_ then functions.name end desc,
-        functions.version desc
+        -- TODO: 🤮 This code is very ugly and there is most likely
+        -- a better way to write this
+        case when order_by_ = 'name_version' and not reverse_ then functions.name end asc,
+        case when order_by_ = 'name_version' and reverse_ then functions.name end desc,
+        case when order_by_ = 'name_version' and not reverse_ then functions.version end desc,
+        case when order_by_ = 'name_version' and reverse_ then functions.version end asc
     offset offset_ limit limit_;
 $$ language sql;
 
 
-do $$ begin
-    create type attachment_with_functions as (
-        attachment attachments,
-        function_ids uuid[]
-    );
-exception
-    when duplicate_object then null;
-end $$;
-
 create or replace function get_attachment (
     id_ uuid
-) returns setof attachment_with_functions as
+) returns setof attachments as
 $$
-    select (
-        attachments::attachments,
-        array_remove(array_agg(attachments_to_functions.function_id), null)
-    )::attachment_with_functions
+    select *
     from attachments
-    left join attachments_to_functions on (attachments.id = attachments_to_functions.attachment_id)
     where attachments.id = id_ group by attachments.id limit 1;
 $$ language sql;
 
@@ -275,18 +269,19 @@ create or replace function insert_attachment (
     name varchar(128),
     metadata hstore,
     checksums checksums
-) returns uuid as
+) returns attachments as
 $$
 declare
-    generated_id uuid;
+    inserted_attachment attachments;
 begin
     insert into attachments values (
         default,
         name,
         metadata,
-        checksums
-    ) returning id into generated_id;
+        checksums,
+        default
+    ) returning * into inserted_attachment;
 
-    return generated_id;
+    return inserted_attachment;
 end;
 $$ language plpgsql;

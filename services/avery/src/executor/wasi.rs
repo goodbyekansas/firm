@@ -20,12 +20,11 @@ use wasmer_runtime::{
 };
 use wasmer_wasi::{generate_import_object_from_state, get_wasi_version, state::WasiState};
 
-use crate::executor::{
-    AttachmentDownload, ExecutorContext, ExecutorError, FunctionContext, FunctionExecutor,
-};
+use crate::executor::{AttachmentDownload, ExecutorError, ExecutorParameters, FunctionExecutor};
 use error::{ToErrorCode, WasiError};
-use gbk_protocols::functions::{
-    execute_response::Result as ProtoResult, ExecutionError, FunctionResult, ReturnValue,
+use function_protocols::{
+    execution::{InputValue, OutputValue},
+    functions::Attachment,
 };
 use process::StdIOConfig;
 use sandbox::Sandbox;
@@ -192,8 +191,9 @@ fn execute_function(
     function_name: &str,
     _entrypoint: &str,
     code: &[u8],
-    function_context: FunctionContext,
-) -> Result<Vec<ReturnValue>, String> {
+    arguments: Vec<InputValue>,
+    attachments: Vec<Attachment>,
+) -> Result<Vec<OutputValue>, String> {
     const ENTRY: &str = "_start";
     let module = compile(code).map_err(|e| format!("failed to compile wasm: {}", e))?;
 
@@ -249,18 +249,19 @@ fn execute_function(
     let sandboxes = [sandbox, attachment_sandbox.clone()];
     let sandboxes2 = sandboxes.clone();
 
-    // inject gbk specific functions in the wasm state
-    let v: Vec<Result<ReturnValue, String>> = Vec::new();
+    // inject firm specific functions in the wasm state
+    let v: Vec<Result<OutputValue, String>> = Vec::new();
     let results = Arc::new(RwLock::new(v));
     let res = Arc::clone(&results);
     let res2 = Arc::clone(&results);
     let attachment_sandbox = Arc::new(attachment_sandbox);
     let attachment_sandbox2 = Arc::clone(&attachment_sandbox);
 
-    let fc0 = Arc::new(function_context);
-    let fc1 = Arc::clone(&fc0);
-    let fc2 = Arc::clone(&fc0);
-    let fc3 = Arc::clone(&fc0);
+    let attachments0 = Arc::new(attachments);
+    let attachments1 = Arc::clone(&attachments0);
+
+    let arguments0 = Arc::new(arguments);
+    let arguments1 = Arc::clone(&arguments0);
 
     let start_process_logger = logger.new(o!("scope" => "start_process"));
     let run_process_logger = logger.new(o!("scope" => "run_process"));
@@ -298,10 +299,10 @@ fn execute_function(
                 .to_error_code()
         };
 
-    let gbk_imports = imports! {
-        "gbk" => {
+    let firm_imports = imports! {
+        "firm" => {
             "get_attachment_path_len" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_len: WasmPtr<u32, Item>| {
-                function::get_attachment_path_len(&fc0,
+                function::get_attachment_path_len(&attachments0,
                                                   WasmString::new(WasmBuffer::new(
                                                       ctx.memory(0),
                                                       attachment_name,
@@ -309,7 +310,7 @@ fn execute_function(
                                                   WasmItemPtr::new(ctx.memory(0), path_len)).to_error_code()
             }),
             "map_attachment" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, unpack: u8, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
-                function::map_attachment(&fc1,
+                function::map_attachment(&attachments1,
                                          &attachment_sandbox,
                                          WasmString::new(
                                              WasmBuffer::new(
@@ -383,14 +384,14 @@ fn execute_function(
             "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u32, Item>| {
                 function::get_input_len(
                     WasmString::new(WasmBuffer::new(ctx.memory(0), key, keylen)),
-                    WasmItemPtr::new(ctx.memory(0), value), &fc2).to_error_code()
+                    WasmItemPtr::new(ctx.memory(0), value), &arguments0).to_error_code()
             }),
 
             "get_input" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u8, Array>, valuelen: u32| {
                 function::get_input(
                     WasmString::new(WasmBuffer::new(ctx.memory(0), key, keylen)),
                     &mut WasmBuffer::new(ctx.memory(0), value, valuelen),
-                    &fc3).to_error_code()
+                    &arguments1).to_error_code()
             }),
 
             "set_output" => func!(move |ctx: &mut Ctx, val: WasmPtr<u8, Array>, vallen: u32| {
@@ -418,7 +419,7 @@ fn execute_function(
     };
 
     let mut import_object = generate_import_object_from_state(wasi_state, wasi_version);
-    import_object.extend(gbk_imports);
+    import_object.extend(firm_imports);
 
     let instance = module
         .instantiate(&import_object)
@@ -454,9 +455,10 @@ impl WasiExecutor {
 impl FunctionExecutor for WasiExecutor {
     fn execute(
         &self,
-        executor_context: ExecutorContext,
-        function_context: FunctionContext,
-    ) -> Result<ProtoResult, ExecutorError> {
+        executor_context: ExecutorParameters,
+        arguments: Vec<InputValue>,
+        attachments: Vec<Attachment>,
+    ) -> Result<Result<Vec<OutputValue>, String>, ExecutorError> {
         let code = executor_context
             .code
             .ok_or_else(|| ExecutorError::MissingCode("wasi".to_owned()))?;
@@ -469,11 +471,8 @@ impl FunctionExecutor for WasiExecutor {
             &executor_context.function_name,
             &executor_context.entrypoint,
             &downloaded_code,
-            function_context,
-        )
-        .map_or_else(
-            |e| ProtoResult::Error(ExecutionError { msg: e }),
-            |v| ProtoResult::Ok(FunctionResult { values: v }),
+            arguments,
+            attachments,
         ))
     }
 }
@@ -481,8 +480,7 @@ impl FunctionExecutor for WasiExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::FunctionContextExt;
-    use gbk_protocols_test_helpers::code_file;
+    use function_protocols_test_helpers::code_file;
 
     macro_rules! null_logger {
         () => {{
@@ -490,30 +488,18 @@ mod tests {
         }};
     }
 
-    trait ProtoResultExt {
-        fn is_ok(&self) -> bool;
-    }
-
-    impl ProtoResultExt for ProtoResult {
-        fn is_ok(&self) -> bool {
-            match self {
-                ProtoResult::Ok(_) => true,
-                _ => false,
-            }
-        }
-    }
-
     #[test]
     fn test_execution() {
         let executor = WasiExecutor::new(null_logger!());
         let res = executor.execute(
-            ExecutorContext {
+            ExecutorParameters {
                 function_name: "hello-world".to_owned(),
                 entrypoint: "could-be-anything".to_owned(),
                 code: Some(code_file!(include_bytes!("hello.wasm"))),
-                arguments: vec![],
+                arguments: std::collections::HashMap::new(),
             },
-            FunctionContext::new(vec![], vec![]),
+            vec![],
+            vec![],
         );
 
         assert!(res.is_ok());

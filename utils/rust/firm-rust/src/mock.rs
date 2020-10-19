@@ -4,8 +4,10 @@ use std::{
     thread::{self, ThreadId},
 };
 
-use gbk_protocols::functions::{
-    FunctionArgument, FunctionAttachment, ReturnValue, StartProcessRequest,
+use function_protocols::{
+    execution::{InputValue, OutputValue},
+    functions::Attachment,
+    wasi::StartProcessRequest,
 };
 use lazy_static::lazy_static;
 use prost::Message;
@@ -185,17 +187,17 @@ pub struct MockResultRegistry {
     get_attachment_path_len_closure: MockCallbacks<dyn Fn(&str) -> Result<usize, u32> + Send>,
     map_attachment_closure: MockCallbacks<dyn Fn(&str, bool) -> Result<String, u32> + Send>,
     get_attachment_path_len_from_descriptor_closure:
-        MockCallbacks<dyn Fn(&FunctionAttachment) -> Result<usize, u32> + Send>,
+        MockCallbacks<dyn Fn(&Attachment) -> Result<usize, u32> + Send>,
     map_attachment_from_descriptor_closure:
-        MockCallbacks<dyn Fn(&FunctionAttachment, bool) -> Result<String, u32> + Send>,
+        MockCallbacks<dyn Fn(&Attachment, bool) -> Result<String, u32> + Send>,
     host_path_exists_closure: MockCallbacks<dyn Fn(&str) -> Result<bool, u32> + Send>,
     get_host_os_closure: MockCallbacks<dyn Fn() -> Result<String, u32> + Send>,
     start_host_process_closure:
         MockCallbacks<dyn Fn(StartProcessRequest) -> Result<u64, u32> + Send>,
     run_host_process_closure: MockCallbacks<dyn Fn(StartProcessRequest) -> Result<i32, u32> + Send>,
     get_input_len_closure: MockCallbacks<dyn Fn(&str) -> Result<usize, u32> + Send>,
-    get_input_closure: MockCallbacks<dyn Fn(&str) -> Result<FunctionArgument, u32> + Send>,
-    set_output_closure: MockCallbacks<dyn Fn(ReturnValue) -> Result<(), u32> + Send>,
+    get_input_closure: MockCallbacks<dyn Fn(&str) -> Result<InputValue, u32> + Send>,
+    set_output_closure: MockCallbacks<dyn Fn(OutputValue) -> Result<(), u32> + Send>,
     set_error_closure: MockCallbacks<dyn Fn(&str) -> Result<(), u32> + Send>,
 
     #[cfg(feature = "net")]
@@ -286,7 +288,7 @@ impl MockResultRegistry {
 
     pub fn set_get_attachment_path_len_from_descriptor_impl<F>(closure: F)
     where
-        F: Fn(&FunctionAttachment) -> Result<usize, u32> + 'static + Send,
+        F: Fn(&Attachment) -> Result<usize, u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -301,7 +303,7 @@ impl MockResultRegistry {
         path_len: *mut usize,
     ) -> u32 {
         let attachment = unsafe {
-            FunctionAttachment::decode(std::slice::from_raw_parts(
+            Attachment::decode(std::slice::from_raw_parts(
                 attachment_descriptor_ptr,
                 attachment_descriptor_len,
             ))
@@ -329,7 +331,7 @@ impl MockResultRegistry {
 
     pub fn set_map_attachment_from_descriptor_impl<F>(closure: F)
     where
-        F: Fn(&FunctionAttachment, bool) -> Result<String, u32> + 'static + Send,
+        F: Fn(&Attachment, bool) -> Result<String, u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -346,7 +348,7 @@ impl MockResultRegistry {
         path_buffer_len: usize,
     ) -> u32 {
         let attachment = unsafe {
-            FunctionAttachment::decode(std::slice::from_raw_parts(
+            Attachment::decode(std::slice::from_raw_parts(
                 attachment_descriptor_ptr,
                 attachment_descriptor_len,
             ))
@@ -559,7 +561,7 @@ impl MockResultRegistry {
 
     pub fn set_get_input_impl<F>(closure: F)
     where
-        F: Fn(&str) -> Result<FunctionArgument, u32> + 'static + Send,
+        F: Fn(&str) -> Result<InputValue, u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -597,7 +599,7 @@ impl MockResultRegistry {
 
     pub fn set_set_output_impl<F>(closure: F)
     where
-        F: Fn(ReturnValue) -> Result<(), u32> + 'static + Send,
+        F: Fn(OutputValue) -> Result<(), u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -613,7 +615,7 @@ impl MockResultRegistry {
             vec.set_len(value_len);
         }
 
-        let return_value = ReturnValue::decode(vec.as_slice()).unwrap();
+        let return_value = OutputValue::decode(vec.as_slice()).unwrap();
         MOCK_RESULT_REGISTRY
             .lock()
             .unwrap()
@@ -696,7 +698,7 @@ impl MockResultRegistry {
             )
     }
 
-    pub fn set_inputs(args: &[FunctionArgument]) {
+    pub fn set_inputs(args: &[InputValue]) {
         let argument_lengths: Vec<(String, usize)> = args
             .iter()
             .map(|a| (a.name.clone(), a.encoded_len()))

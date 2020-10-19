@@ -1,6 +1,6 @@
 { base, pkgs, protocols }:
 base.languages.rust.mkUtility {
-  name = "gbk-protocols-test-helpers";
+  name = "rust-protobuf-test-helpers";
   src = ./.;
   rustDependencies = [ protocols ];
 }

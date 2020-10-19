@@ -4,7 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use gbk_protocols::tonic::{
+use function_protocols::tonic::{
     self,
     transport::{Body, Channel},
 };

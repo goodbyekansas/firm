@@ -396,6 +396,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 
 [[package]]
+name = "function-protocols"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "prost",
+ "tempfile",
+ "tonic",
+]
+
+[[package]]
+name = "function-protocols-test-helpers"
+version = "0.1.0"
+dependencies = [
+ "function-protocols",
+ "hex",
+ "sha2 0.8.2",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -488,26 +509,6 @@ dependencies = [
  "proc-macro-hack",
  "proc-macro-nested",
  "slab",
-]
-
-[[package]]
-name = "gbk-protocols"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "prost",
- "tempfile",
- "tonic",
-]
-
-[[package]]
-name = "gbk-protocols-test-helpers"
-version = "0.1.0"
-dependencies = [
- "hex",
- "sha2 0.8.2",
- "tempfile",
- "uuid",
 ]
 
 [[package]]
@@ -1247,9 +1248,9 @@ dependencies = [
  "bb8",
  "bb8-postgres",
  "config",
+ "function-protocols",
+ "function-protocols-test-helpers",
  "futures",
- "gbk-protocols",
- "gbk-protocols-test-helpers",
  "lazy_static",
  "postgres-types",
  "regex",

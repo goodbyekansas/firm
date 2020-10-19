@@ -1,16 +1,12 @@
-#![deny(warnings)]
-
 use slog::{info, o, Drain};
 use structopt::StructOpt;
 
-use gbk_protocols::{
-    functions::{
-        functions_registry_server::FunctionsRegistryServer, functions_server::FunctionsServer,
-    },
+use function_protocols::{
+    execution::execution_server::ExecutionServer, registry::registry_server::RegistryServer,
     tonic::transport::Server,
 };
 
-use avery::{registry::FunctionsRegistryService, FunctionsService};
+use avery::{executor::ExecutionService, registry::RegistryService};
 
 // clean exit on crtl c
 async fn ctrlc() {
@@ -34,12 +30,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let port: u32 = 1939;
     let addr = format!("[::]:{}", port).parse().unwrap();
-    let functions_registry_service =
-        FunctionsRegistryService::new(log.new(o!("service" => "registry")));
+    let functions_registry_service = RegistryService::new(log.new(o!("service" => "registry")));
 
-    let functions_service = FunctionsService::new(
+    let execution_service = ExecutionService::new(
         log.new(o!("service" => "functions")),
-        functions_registry_service.clone(),
+        Box::new(functions_registry_service.clone()),
     );
 
     info!(
@@ -48,8 +43,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     Server::builder()
-        .add_service(FunctionsServer::new(functions_service))
-        .add_service(FunctionsRegistryServer::new(functions_registry_service))
+        .add_service(ExecutionServer::new(execution_service))
+        .add_service(RegistryServer::new(functions_registry_service))
         .serve_with_shutdown(addr, ctrlc())
         .await?;
 

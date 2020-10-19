@@ -14,38 +14,39 @@ use slog::{info, warn, Logger};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
-use gbk_protocols::{
+use function_protocols::{
     functions::{
-        functions_registry_server::FunctionsRegistry, AttachmentStreamUpload, AttachmentUpload,
-        AttachmentUploadResponse, AuthMethod, ExecutionEnvironment, Function as ProtoFunction,
-        FunctionAttachment, FunctionAttachmentId, FunctionDescriptor, FunctionId, FunctionInput,
-        FunctionOutput, ListRequest, OrderingDirection, OrderingKey, RegisterAttachmentRequest,
-        RegisterRequest, RegistryListResponse,
+        Attachment, AttachmentUrl, AuthMethod, Function as ProtoFunction, Functions, Input, Output,
+        Runtime,
+    },
+    registry::{
+        registry_server::Registry, AttachmentData, AttachmentHandle, AttachmentId,
+        AttachmentStreamUpload, Filters, FunctionData, FunctionId, Ordering, OrderingKey,
     },
     tonic,
 };
 
 #[derive(Debug, Clone)]
-pub struct FunctionsRegistryService {
-    functions: Arc<RwLock<HashMap<Uuid, Function>>>,
-    function_attachments: Arc<RwLock<HashMap<Uuid, (FunctionAttachment, PathBuf)>>>,
+pub struct RegistryService {
+    functions: Arc<RwLock<Vec<Function>>>,
+    function_attachments: Arc<RwLock<HashMap<Uuid, (Attachment, PathBuf)>>>,
     logger: Logger,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Function {
-    id: Uuid,
     name: String,
+    created_at: u64,
     version: Version,
-    execution_environment: ExecutionEnvironment,
-    inputs: Vec<FunctionInput>,
-    outputs: Vec<FunctionOutput>,
+    runtime: Runtime,
+    inputs: Vec<Input>,
+    outputs: Vec<Output>,
+    code: Option<AttachmentId>,
+    attachments: Vec<AttachmentId>,
     metadata: HashMap<String, String>,
-    code: Option<FunctionAttachmentId>,
-    attachments: Vec<FunctionAttachmentId>,
 }
 
-impl Drop for FunctionsRegistryService {
+impl Drop for RegistryService {
     fn drop(&mut self) {
         match self.function_attachments.write() {
             Err(e) => warn!(
@@ -81,10 +82,10 @@ impl Drop for FunctionsRegistryService {
     }
 }
 
-impl FunctionsRegistryService {
+impl RegistryService {
     pub fn new(logger: Logger) -> Self {
         Self {
-            functions: Arc::new(RwLock::new(HashMap::new())),
+            functions: Arc::new(RwLock::new(Vec::new())),
             function_attachments: Arc::new(RwLock::new(HashMap::new())),
             logger,
         }
@@ -93,14 +94,14 @@ impl FunctionsRegistryService {
     pub async fn upload_stream_attachment<S>(
         &self,
         attachment_stream_upload_request: tonic::Request<S>,
-    ) -> Result<tonic::Response<AttachmentUploadResponse>, tonic::Status>
+    ) -> Result<tonic::Response<function_protocols::registry::Nothing>, tonic::Status>
     where
         S: std::marker::Unpin + Stream<Item = Result<AttachmentStreamUpload, tonic::Status>>,
     {
         let mut stream = attachment_stream_upload_request.into_inner();
 
         let mut hasher = Sha256::new();
-        let mut maybe_attachment: Option<FunctionAttachment> = None;
+        let mut maybe_attachment: Option<Attachment> = None;
         let mut maybe_file: Option<(Result<fs::File, tonic::Status>, PathBuf)> = None;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| {
@@ -207,20 +208,13 @@ impl FunctionsRegistryService {
                 }
             })?;
 
-        Ok(tonic::Response::new(AttachmentUploadResponse {
-            url: maybe_attachment
-                .as_ref()
-                .map(|att| att.url.clone())
-                .unwrap_or_default(),
-            auth_method: AuthMethod::None as i32,
-        }))
+        Ok(tonic::Response::new(
+            function_protocols::registry::Nothing {},
+        ))
     }
 
-    fn get_attachment(
-        &self,
-        id: &FunctionAttachmentId,
-    ) -> Result<(FunctionAttachment, PathBuf), tonic::Status> {
-        Uuid::parse_str(&id.id)
+    fn get_attachment(&self, id: &AttachmentId) -> Result<(Attachment, PathBuf), tonic::Status> {
+        Uuid::parse_str(&id.uuid)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::InvalidArgument,
@@ -251,7 +245,7 @@ impl FunctionsRegistryService {
             })
     }
 
-    fn get_function_descriptor(&self, f: &Function) -> Result<FunctionDescriptor, tonic::Status> {
+    fn get_function(&self, f: &Function) -> Result<ProtoFunction, tonic::Status> {
         let code = f
             .code
             .clone()
@@ -264,30 +258,26 @@ impl FunctionsRegistryService {
             .map(|v| self.get_attachment(v).map(|(attach, _)| attach))
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(FunctionDescriptor {
-            function: Some(ProtoFunction {
-                id: Some(FunctionId {
-                    value: f.id.to_string(),
-                }),
-                name: f.name.clone(),
-                version: f.version.to_string(),
-                metadata: f.metadata.clone(),
-                inputs: f.inputs.clone(),
-                outputs: f.outputs.clone(),
-            }),
-            execution_environment: Some(f.execution_environment.clone()),
+        Ok(ProtoFunction {
+            name: f.name.clone(),
+            version: f.version.to_string(),
+            metadata: f.metadata.clone(),
+            inputs: f.inputs.clone(),
+            outputs: f.outputs.clone(),
+            runtime: Some(f.runtime.clone()),
             code,
             attachments,
+            created_at: f.created_at,
         })
     }
 }
 
 #[tonic::async_trait]
-impl FunctionsRegistry for FunctionsRegistryService {
+impl Registry for RegistryService {
     async fn list(
         &self,
-        list_request: tonic::Request<ListRequest>,
-    ) -> Result<tonic::Response<RegistryListResponse>, tonic::Status> {
+        list_request: tonic::Request<Filters>,
+    ) -> Result<tonic::Response<Functions>, tonic::Status> {
         let reader = self.functions.read().map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
@@ -301,16 +291,20 @@ impl FunctionsRegistry for FunctionsRegistryService {
         } else {
             Some(payload.metadata_filter.clone())
         };
-        let required_metadata_keys = if payload.metadata_key_filter.is_empty() {
-            None
-        } else {
-            Some(payload.metadata_key_filter.clone())
-        };
-        let offset: usize = payload.offset as usize;
-        let limit: usize = payload.limit as usize;
+
+        let name_filter = payload.name_filter.unwrap_or_default();
+
+        let order = payload.order.unwrap_or_else(|| Ordering {
+            key: OrderingKey::NameVersion as i32,
+            reverse: false,
+            offset: 0,
+            limit: 100,
+        });
+
+        let offset: usize = order.offset as usize;
+        let limit: usize = order.limit as usize;
         let version_req = payload
             .version_requirement
-            .clone()
             .map(|vr| {
                 VersionReq::parse(&vr.expression).map_err(|e| {
                     tonic::Status::new(
@@ -321,90 +315,87 @@ impl FunctionsRegistry for FunctionsRegistryService {
             })
             .map_or(Ok(None), |v| v.map(Some))?;
         let mut filtered_functions = reader
-            .values()
+            .iter()
             .filter(|func| {
-                func.name.contains(&payload.name_filter)
-                    && version_req
-                        .as_ref()
-                        .map_or(true, |ver_req| ver_req.matches(&func.version))
+                (match name_filter.exact_match {
+                    true => func.name == name_filter.pattern,
+                    false => func.name.contains(&name_filter.pattern),
+                }) && version_req
+                    .as_ref()
+                    .map_or(true, |ver_req| ver_req.matches(&func.version))
                     && required_metadata.as_ref().map_or(true, |filters| {
                         filters.iter().all(|filter| {
-                            func.metadata
-                                .iter()
-                                .any(|(k, v)| filter.0 == k && filter.1 == v)
+                            func.metadata.iter().any(|(k, v)| {
+                                filter.0 == k && (filter.1.is_empty() || filter.1 == v)
+                            })
                         })
-                    })
-                    && required_metadata_keys.as_ref().map_or(true, |keys| {
-                        keys.iter().all(|key| func.metadata.contains_key(key))
                     })
             })
             .collect::<Vec<&Function>>();
-        filtered_functions.sort_unstable_by(|a, b| {
-            match (
-                OrderingKey::from_i32(payload.order_by),
-                OrderingDirection::from_i32(payload.order_direction),
-            ) {
-                (Some(OrderingKey::Name), Some(OrderingDirection::Ascending))
-                | (Some(OrderingKey::Name), None)
-                | (None, None)
-                | (None, Some(OrderingDirection::Ascending)) => match a.name.cmp(&b.name) {
-                    std::cmp::Ordering::Equal => b.version.cmp(&a.version),
-                    o => o,
-                },
-                (Some(OrderingKey::Name), Some(OrderingDirection::Descending))
-                | (None, Some(OrderingDirection::Descending)) => match b.name.cmp(&a.name) {
-                    std::cmp::Ordering::Equal => b.version.cmp(&a.version),
-                    o => o,
-                },
-            }
+        filtered_functions.sort_unstable_by(|a, b| match OrderingKey::from_i32(order.key) {
+            Some(OrderingKey::NameVersion) | None => match a.name.cmp(&b.name) {
+                std::cmp::Ordering::Equal => b.version.cmp(&a.version),
+                o => o,
+            }, // TODO handle None separately, at least log a warning.
         });
 
-        Ok(tonic::Response::new(RegistryListResponse {
-            functions: filtered_functions
-                .iter()
-                .skip(offset)
-                .take(limit)
-                .filter_map(|f| self.get_function_descriptor(*f).ok())
-                .collect::<Vec<_>>(),
+        Ok(tonic::Response::new(Functions {
+            functions: if order.reverse {
+                filtered_functions
+                    .iter()
+                    .rev()
+                    .skip(offset)
+                    .take(limit)
+                    .filter_map(|f| self.get_function(*f).ok())
+                    .collect::<Vec<_>>()
+            } else {
+                filtered_functions
+                    .iter()
+                    .skip(offset)
+                    .take(limit)
+                    .filter_map(|f| self.get_function(*f).ok())
+                    .collect::<Vec<_>>()
+            },
         }))
     }
 
     async fn get(
         &self,
         function_id_request: tonic::Request<FunctionId>,
-    ) -> Result<tonic::Response<FunctionDescriptor>, tonic::Status> {
+    ) -> Result<tonic::Response<ProtoFunction>, tonic::Status> {
         let fn_id = function_id_request.into_inner();
 
-        let reader = self.functions.read().map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("Failed to get read lock for functions: {}", e),
-            )
-        })?;
-
-        Uuid::parse_str(&fn_id.value)
+        self.functions
+            .read()
             .map_err(|e| {
                 tonic::Status::new(
-                    tonic::Code::InvalidArgument,
-                    format!("failed to parse UUID from function id: {}", e),
+                    tonic::Code::Internal,
+                    format!("Failed to get read lock for functions: {}", e),
                 )
             })
-            .and_then(|fun_uuid| {
-                reader.get(&fun_uuid).ok_or_else(|| {
-                    tonic::Status::new(
-                        tonic::Code::NotFound,
-                        format!("failed to find function with id: {}", fun_uuid),
-                    )
-                })
+            .and_then(|reader| {
+                reader
+                    .iter()
+                    .rev()
+                    .find(|f| f.name == fn_id.name && f.version.to_string() == fn_id.version)
+                    .ok_or_else(|| {
+                        tonic::Status::new(
+                            tonic::Code::NotFound,
+                            format!(
+                                "failed to find function with id (name \"{}\" and version \"{}\")",
+                                fn_id.name, fn_id.version
+                            ),
+                        )
+                    })
+                    .and_then(|f| self.get_function(f))
+                    .map(tonic::Response::new)
             })
-            .and_then(|f| self.get_function_descriptor(f))
-            .map(tonic::Response::new)
     }
 
     async fn register(
         &self,
-        register_request: tonic::Request<RegisterRequest>,
-    ) -> Result<tonic::Response<FunctionId>, tonic::Status> {
+        register_request: tonic::Request<FunctionData>,
+    ) -> Result<tonic::Response<ProtoFunction>, tonic::Status> {
         let payload = register_request.into_inner();
 
         validate_name(&payload.name).map_err(|e| {
@@ -421,6 +412,11 @@ impl FunctionsRegistry for FunctionsRegistryService {
             )
         })?;
 
+        // this is the local case, always add dev to any function version
+        version
+            .pre
+            .push(semver::Identifier::AlphaNumeric("dev".to_owned()));
+
         let mut functions = self.functions.write().map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
@@ -428,16 +424,11 @@ impl FunctionsRegistry for FunctionsRegistryService {
             )
         })?;
 
-        // this is the local case, always add dev to any function version
-        version
-            .pre
-            .push(semver::Identifier::AlphaNumeric("dev".to_owned()));
-
         // remove function if name and version matches (after the -dev has been appended)
         // TODO: Remove corresponding attachments
-        functions.retain(|_, v| v.name != payload.name || v.version != version);
+        functions.retain(|v| v.name != payload.name || v.version != version);
 
-        let execution_environment = payload.execution_environment.ok_or_else(|| {
+        let execution_environment = payload.runtime.ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
                 String::from("Execution environment is required when registering function"),
@@ -448,12 +439,12 @@ impl FunctionsRegistry for FunctionsRegistryService {
         payload
             .attachment_ids
             .iter()
-            .chain(payload.code.iter())
+            .chain(payload.code_attachment_id.iter())
             .fold(Ok(()), |r, id| match self.get_attachment(id) {
                 Ok(_) => r,
                 Err(e) => match r {
-                    Ok(_) => Err(format!("{} ({})", id.id, e.message())),
-                    Err(e2) => Err(format!("{}, {} ({})", e2, id.id, e.message())),
+                    Ok(_) => Err(format!("{} ({})", id.uuid, e.message())),
+                    Err(e2) => Err(format!("{}, {} ({})", e2, id.uuid, e.message())),
                 },
             })
             .map_err(|msg| {
@@ -463,31 +454,30 @@ impl FunctionsRegistry for FunctionsRegistryService {
                 )
             })?;
 
-        let id = Uuid::new_v4();
-        functions.insert(
-            id,
-            Function {
-                id,
-                name: payload.name,
-                version,
-                execution_environment,
-                metadata: payload.metadata,
-                inputs: payload.inputs,
-                outputs: payload.outputs,
-                code: payload.code,
-                attachments: payload.attachment_ids,
-            },
-        );
+        let function = Function {
+            name: payload.name,
+            version,
+            runtime: execution_environment,
+            metadata: payload.metadata,
+            inputs: payload.inputs,
+            outputs: payload.outputs,
+            code: payload.code_attachment_id,
+            attachments: payload.attachment_ids,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or_default(),
+        };
 
-        Ok(tonic::Response::new(FunctionId {
-            value: id.to_string(),
-        }))
+        functions.push(function.clone());
+
+        Ok(tonic::Response::new(self.get_function(&function)?))
     }
 
     async fn register_attachment(
         &self,
-        register_attachment_request: tonic::Request<RegisterAttachmentRequest>,
-    ) -> Result<tonic::Response<FunctionAttachmentId>, tonic::Status> {
+        register_attachment_request: tonic::Request<AttachmentData>,
+    ) -> Result<tonic::Response<AttachmentHandle>, tonic::Status> {
         let payload = register_attachment_request.into_inner();
 
         if payload.name.is_empty() {
@@ -526,43 +516,46 @@ impl FunctionsRegistry for FunctionsRegistryService {
         })?;
 
         let id = Uuid::new_v4();
+        let upload_url = Some(AttachmentUrl {
+            url: String::from("grpc://[::1]"),
+            auth_method: AuthMethod::None as i32,
+        });
+
         function_attachments.insert(
             id,
             (
-                FunctionAttachment {
-                    id: Some(FunctionAttachmentId { id: id.to_string() }),
+                Attachment {
                     name: payload.name,
-                    url: format!("file://{}", path.display()),
+                    url: Some(AttachmentUrl {
+                        url: format!("file://{}", path.display()),
+                        auth_method: AuthMethod::None as i32,
+                    }),
                     metadata: payload.metadata,
                     checksums: Some(checksum),
+                    created_at: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or_default(),
                 },
                 path,
             ),
         );
 
-        Ok(tonic::Response::new(FunctionAttachmentId {
-            id: id.to_string(),
+        Ok(tonic::Response::new(AttachmentHandle {
+            id: Some(AttachmentId {
+                uuid: id.to_string(),
+            }),
+            upload_url,
         }))
     }
 
     async fn upload_streamed_attachment(
         &self,
         attachment_stream_upload_request: tonic::Request<tonic::Streaming<AttachmentStreamUpload>>,
-    ) -> Result<tonic::Response<AttachmentUploadResponse>, tonic::Status> {
-        // TODO: use metadata for "global" upload data such as FunctionAttachmentId
+    ) -> Result<tonic::Response<function_protocols::registry::Nothing>, tonic::Status> {
+        // TODO: use metadata for "global" upload data such as AttachmentId
         self.upload_stream_attachment(attachment_stream_upload_request)
             .await
-    }
-
-    async fn upload_attachment_url(
-        &self,
-        _: tonic::Request<AttachmentUpload>,
-    ) -> Result<tonic::Response<AttachmentUploadResponse>, tonic::Status> {
-        Err(tonic::Status::new(
-            tonic::Code::Unimplemented,
-            "The Avery registry does not support uploading via URL. Use streaming upload instead."
-                .to_owned(),
-        ))
     }
 }
 

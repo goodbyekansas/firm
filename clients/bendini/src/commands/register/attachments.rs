@@ -6,14 +6,12 @@ use std::{
     },
 };
 
-use futures::{FutureExt, StreamExt};
-use gbk_protocols::{
-    functions::{
-        functions_registry_client::FunctionsRegistryClient, AttachmentStreamUpload,
-        AttachmentUpload, AttachmentUploadResponse, FunctionAttachmentId,
-    },
+use function_protocols::{
+    functions::AttachmentUrl,
+    registry::{registry_client::RegistryClient, AttachmentId, AttachmentStreamUpload},
     tonic,
 };
+use futures::{FutureExt, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -23,11 +21,11 @@ use crate::manifest::AttachmentInfo;
 
 const CHUNK_SIZE: usize = 8192;
 
-pub async fn upload_attachment(
+pub async fn register_and_upload_attachment(
     attachment: &AttachmentInfo,
-    mut client: FunctionsRegistryClient<HttpStatusInterceptor>,
+    mut client: RegistryClient<HttpStatusInterceptor>,
     progressbar: ProgressBar,
-) -> Result<FunctionAttachmentId, String> {
+) -> Result<AttachmentId, String> {
     const VEHICLES: [&str; 12] = [
         "🏇", "🏃", "🚙", "🚁", "🚕", "🚜", "🚌", "🚑", "🚚", "🚂", "🐌", "🚴",
     ];
@@ -74,27 +72,31 @@ pub async fn upload_attachment(
     );
     progressbar.set_message(&format!("Uploading {}", attachment.request.name));
     progressbar.set_position(0);
-    match client
-        .upload_attachment_url(tonic::Request::new(AttachmentUpload {
-            id: Some(registered_attachment.clone()),
-        }))
-        .await
-    {
-        Err(_) => {
-            println!("Failed to get url for attachment upload(normal). Trying streaming method.");
-            upload_via_grpc(
-                client,
-                progressbar,
-                registered_attachment.clone(),
-                attachment.request.name.clone(),
-                file,
-                file_size as usize,
-            )
-            .boxed()
-        }
 
-        Ok(response) => upload_via_http(
-            response.into_inner(),
+    let upload_url = registered_attachment.upload_url.ok_or_else(|| {
+        String::from("No upload URL on registered attachment, cannot perform upload")
+    })?;
+
+    let parsed_url = url::Url::parse(&upload_url.url)
+        .map_err(|e| format!("Failed to parse attachment upload URL: {}", e))?;
+
+    let attachment_id = registered_attachment
+        .id
+        .ok_or_else(|| String::from("No id on registered attachment, cannot perform upload"))?;
+
+    match parsed_url.scheme() {
+        "grpc" => upload_via_grpc(
+            client,
+            progressbar,
+            attachment_id.clone(),
+            attachment.request.name.clone(),
+            file,
+            file_size as usize,
+        )
+        .boxed(),
+
+        "https" => upload_via_http(
+            &upload_url,
             progressbar,
             attachment.request.name.clone(),
             file,
@@ -102,19 +104,25 @@ pub async fn upload_attachment(
             file_size as usize,
         )
         .boxed(),
+
+        unsupported => futures::future::ready(Err(format!(
+            "Do not know how to upload attachments for transport {} 🧐",
+            unsupported,
+        )))
+        .boxed(),
     }
     .await
-    .map(|_| registered_attachment)
+    .map(|_| attachment_id)
 }
 
 trait AuthBuilder {
-    fn build_auth(self, upload_info: &AttachmentUploadResponse) -> reqwest::RequestBuilder;
+    fn build_auth(self, upload_info: &AttachmentUrl) -> reqwest::RequestBuilder;
 }
 
 impl AuthBuilder for reqwest::RequestBuilder {
-    fn build_auth(self, upload_info: &AttachmentUploadResponse) -> reqwest::RequestBuilder {
-        match gbk_protocols::functions::AuthMethod::from_i32(upload_info.auth_method) {
-            Some(gbk_protocols::functions::AuthMethod::Oauth2) => self.bearer_auth(
+    fn build_auth(self, upload_url: &AttachmentUrl) -> reqwest::RequestBuilder {
+        match function_protocols::functions::AuthMethod::from_i32(upload_url.auth_method) {
+            Some(function_protocols::functions::AuthMethod::Oauth2) => self.bearer_auth(
                 std::env::var_os("OAUTH_TOKEN")
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default(),
@@ -125,7 +133,7 @@ impl AuthBuilder for reqwest::RequestBuilder {
 }
 
 async fn upload_via_http(
-    upload_info: AttachmentUploadResponse,
+    upload_url: &AttachmentUrl,
     progressbar: ProgressBar,
     attachment_name: String,
     mut file: std::fs::File,
@@ -142,10 +150,11 @@ async fn upload_via_http(
             e
         )
     })?;
+
     progressbar.set_position(0);
     reqwest::Client::new()
-        .post(&upload_info.url)
-        .build_auth(&upload_info)
+        .post(&upload_url.url)
+        .build_auth(&upload_url)
         .body(buf)
         .send()
         .await
@@ -158,9 +167,9 @@ async fn upload_via_http(
 }
 
 async fn upload_via_grpc(
-    mut client: FunctionsRegistryClient<HttpStatusInterceptor>,
+    mut client: RegistryClient<HttpStatusInterceptor>,
     progressbar: ProgressBar,
-    attachment_id: FunctionAttachmentId,
+    attachment_id: AttachmentId,
     attachment_name: String,
     file: std::fs::File,
     file_size: usize,

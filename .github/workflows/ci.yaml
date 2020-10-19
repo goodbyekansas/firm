@@ -22,10 +22,10 @@ jobs:
     - name: Clone the repo
       uses: actions/checkout@v2
 
-    - name: Setup ssh agent
+    - name: Setup ssh agent and ssh options
       env:
         CI_ACCESS_KEY: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
-      run: .github/workflows/ssh_agent.sh
+      run: .github/workflows/setup-ssh.sh .github/workflows/ssh-config
 
     - name: Set up nix builders ssh connection
       run: .github/workflows/setup-builders-ssh.sh
