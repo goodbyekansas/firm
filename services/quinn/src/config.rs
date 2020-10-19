@@ -13,10 +13,6 @@ fn default_storage_uri() -> String {
     String::from("memory://")
 }
 
-fn default_attachment_storage_uri() -> String {
-    String::from("gcs://default-bucket")
-}
-
 #[derive(Debug, Deserialize)]
 pub struct Configuration {
     #[serde(default = "default_storage_uri")]
@@ -25,15 +21,23 @@ pub struct Configuration {
     #[serde(default = "default_port")]
     pub port: u64,
 
-    #[serde(default = "default_attachment_storage_uri")]
     pub attachment_storage_uri: String,
 }
 
 impl Configuration {
-    pub async fn new(log: Logger) -> Result<Self, config::ConfigError> {
+    pub async fn new(log: Logger) -> Result<Self, ConfigError> {
+        Self::new_with_init(log, |c| Ok(c)).await
+    }
+
+    pub async fn new_with_init<F>(log: Logger, init: F) -> Result<Self, ConfigError>
+    where
+        F: FnOnce(&mut Config) -> Result<&mut Config, ConfigError>,
+    {
         let mut s = Config::new();
-        s.merge(Environment::with_prefix("REGISTRY").separator("__"))?;
-        let mut c: Configuration = s.try_into()?;
+        let mut c: Configuration = init(&mut s)?
+            .merge(Environment::with_prefix("REGISTRY").separator("__"))?
+            .clone()
+            .try_into()?;
         let secret_resolvers: &[&dyn SecretResolver] = &[&GcpSecretResolver::new(
             log.new(o!("scope" => "secret-resolver", "type" => "gcp")),
         )];

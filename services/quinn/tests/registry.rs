@@ -20,9 +20,17 @@ macro_rules! null_logger {
 
 macro_rules! registry_with_memory_storage {
     () => {{
-        let mut config =
-            futures::executor::block_on(config::Configuration::new(null_logger!())).unwrap();
-        config.functions_storage_uri = "memory://".to_owned();
+        let config = futures::executor::block_on(config::Configuration::new_with_init(
+            null_logger!(),
+            |s| {
+                s.set("functions_storage_uri", "memory://".to_owned())?;
+                s.set(
+                    "attachment_storage_uri",
+                    "https://attachment-issues.net/".to_owned(),
+                )
+            },
+        ))
+        .unwrap();
         futures::executor::block_on(FunctionRegistryService::new(config, null_logger!())).unwrap()
     }};
 }
