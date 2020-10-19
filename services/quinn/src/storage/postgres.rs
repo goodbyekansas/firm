@@ -653,7 +653,11 @@ mod tests {
 
     macro_rules! with_db {
         ($database:ident, $body:block) => {{
-            let config = Configuration::new(null_logger!()).await.unwrap();
+            let config = Configuration::new_with_init(null_logger!(), |c| {
+                c.set("attachment_storage_uri", "https://i-am-attachment.org")
+            })
+            .await
+            .unwrap();
             let url = Url::parse(&config.functions_storage_uri).unwrap();
             let guard = SQL_MUTEX.lock().unwrap();
             if let Err(e) = AssertUnwindSafe(async move {

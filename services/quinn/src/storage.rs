@@ -10,6 +10,8 @@ pub use gbk_protocols::functions::{
     ArgumentType, AttachmentUploadResponse, AuthMethod, FunctionDescriptor, OrderingKey,
 };
 
+mod gcs;
+mod https;
 mod memory;
 mod postgres;
 
@@ -166,47 +168,6 @@ pub trait AttachmentStorage: Send + Sync + std::fmt::Debug {
     fn get_download_url(&self, attachment: &FunctionAttachment) -> Result<Url, StorageError>;
 }
 
-#[derive(Debug)]
-struct GCSStorage {
-    bucket_name: String,
-}
-
-impl GCSStorage {
-    fn new(bucket_name: &str) -> Self {
-        Self {
-            bucket_name: bucket_name.to_owned(),
-        }
-    }
-
-    fn get_object_name(&self, attachment: &FunctionAttachment) -> String {
-        attachment.id.to_string()
-    }
-}
-
-impl AttachmentStorage for GCSStorage {
-    fn get_upload_url(
-        &self,
-        attachment: &FunctionAttachment,
-    ) -> Result<AttachmentUploadResponse, StorageError> {
-        Ok(AttachmentUploadResponse {
-            url: format!(
-                "https://storage.googleapis.com/upload/storage/v1/b/{bucket_name}/o?uploadType=media&name={object_name}",
-                bucket_name = self.bucket_name,
-                object_name = self.get_object_name(attachment),
-            ),
-            auth_method: AuthMethod::Oauth2 as i32,
-        })
-    }
-
-    fn get_download_url(&self, attachment: &FunctionAttachment) -> Result<Url, StorageError> {
-        Ok(Url::parse(&format!(
-            "https://storage.googleapis.com/storage/v1/b/{bucket_name}/o/{object_name}?alt=media",
-            bucket_name = self.bucket_name,
-            object_name = self.get_object_name(attachment),
-        ))?)
-    }
-}
-
 pub fn create_attachment_storage<S: AsRef<str>>(
     uri: S,
     log: Logger,
@@ -214,14 +175,18 @@ pub fn create_attachment_storage<S: AsRef<str>>(
     let uri = Url::parse(uri.as_ref())?;
     Ok(match uri.scheme() {
         "gcs" => {
-            info!(log, "creating Google Cloud Storage backend");
+            info!(log, "Creating Google Cloud Storage backend");
             uri.host_str()
                 .ok_or_else(|| {
                     StorageError::InvalidAttachmentStorage(
                         "gcs attachment storage requires bucket name".to_owned(),
                     )
                 })
-                .map(|bucket_name| Box::new(GCSStorage::new(bucket_name)))?
+                .map(|bucket_name| Box::new(gcs::GCSStorage::new(bucket_name)))?
+        }
+        "https" => {
+            info!(log, "Creating Https Storage backend");
+            Box::new(https::HttpsStorage::new(&uri, AuthMethod::Oauth2)?) // TODO auth method should come in from somewhere
         }
         st => return Err(StorageError::UnsupportedStorage(st.to_owned())),
     })
@@ -229,43 +194,12 @@ pub fn create_attachment_storage<S: AsRef<str>>(
 
 #[cfg(test)]
 mod tests {
-    use uuid::Uuid;
-
     use super::*;
 
     macro_rules! null_logger {
         () => {{
             slog::Logger::root(slog::Discard, slog::o!())
         }};
-    }
-
-    #[test]
-    fn gcs_bucket_url() {
-        let uuid_str = "1a52540c-7edd-4f9e-916b-f9aaf165890e";
-        let bucket_name = "hinken";
-
-        let expected_storage_path = format!(
-            "https://storage.googleapis.com/upload/storage/v1/b/{}/o?uploadType=media&name={}",
-            bucket_name, uuid_str
-        );
-        let gcs_storage = GCSStorage::new(bucket_name);
-
-        let res = gcs_storage.get_upload_url(&FunctionAttachment {
-            id: Uuid::parse_str(uuid_str).unwrap(),
-            function_ids: vec![],
-            data: FunctionAttachmentData {
-                name: "Nej".to_owned(),
-                metadata: HashMap::new(),
-                checksums: Checksums {
-                    sha256: "nej".to_owned(),
-                },
-            },
-        });
-
-        assert!(res.is_ok());
-        let resp = res.unwrap();
-        assert_eq!(resp.url, expected_storage_path);
-        assert_eq!(resp.auth_method, super::AuthMethod::Oauth2 as i32);
     }
 
     #[test]
