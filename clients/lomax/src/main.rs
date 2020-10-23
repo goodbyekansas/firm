@@ -83,22 +83,20 @@ async fn main() -> Result<(), u32> {
     let args = LomaxArgs::from_args();
     let address = format!("{}:{}", args.address, args.port);
 
-    let channel = Endpoint::new(address.clone())
-        .map_err(|e| {
-            println!("Invalid URI supplied: {}", e);
-            2u32
-        })?
-        .tls_config(ClientTlsConfig::new())
-        .map_err(|e| {
+    let mut endpoint = Endpoint::new(address.clone()).map_err(|e| {
+        println!("Invalid URI supplied: {}", e);
+        2u32
+    })?;
+    if endpoint.uri().scheme_str() == Some("https") {
+        endpoint = endpoint.tls_config(ClientTlsConfig::new()).map_err(|e| {
             println!("Failed to create TLS config: {}", e);
             2u32
-        })?
-        .connect()
-        .await
-        .map_err(|e| {
-            println!("Failed to connect to registry at \"{}\": {}", address, e);
-            2u32
         })?;
+    }
+    let channel = endpoint.connect().await.map_err(|e| {
+        println!("Failed to connect to registry at \"{}\": {}", address, e);
+        2u32
+    })?;
 
     // When calling non pure grpc endpoints we may get content that is not application/grpc.
     // Tonic doesn't handle these cases very well. We have to make a wrapper around
