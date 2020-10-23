@@ -51,8 +51,8 @@ let
     };
   };
   capturedLomaxPackage = components.lomax.package;
-  # TODO credentials must be removed. Need to have a local auth service for that. attachmentCredentials must be removed once we got a proxy.
-  setupFunctionDeployment = { components, endpoint ? "tcp://[::1]", port ? 1939, credentials ? "", attachmentCredentials ? "" }: (builtins.mapAttrs
+  # TODO credentials must be removed. Need to have a local auth service for that.
+  setupFunctionDeployment = { components, endpoint ? "tcp://[::1]", port ? 1939, credentials ? "" }: (builtins.mapAttrs
     (
       name:
       comp:
@@ -60,8 +60,9 @@ let
         if (builtins.hasAttr "deployment" comp) && (builtins.hasAttr "function" comp.deployment) then {
           deployment = comp.deployment // {
             function = comp.deployment.function {
-              inherit endpoint port credentials attachmentCredentials;
+              inherit endpoint port credentials;
               lomax = capturedLomaxPackage;
+              local = endpoint == "tcp://[::1]";
             };
           };
         } else { }

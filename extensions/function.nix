@@ -2,10 +2,11 @@
 let
   deployFunction = { package }:
     # TODO credentials must be removed. Need to have a local auth service for that.
-    { lomax, endpoint, port, credentials }: pkgs.stdenv.mkDerivation ({
+    { lomax, endpoint, port, credentials, local ? false }: pkgs.stdenv.mkDerivation ({
       name = "deploy-${package.name}";
       inputPackage = package;
       inherit lomax;
+      preferLocalBuild = local;
       SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
       builder = builtins.toFile "builder.sh" ''
         source $stdenv/setup
