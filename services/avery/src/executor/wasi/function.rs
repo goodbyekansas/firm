@@ -11,7 +11,7 @@ use tar::Archive;
 
 use super::{sandbox::Sandbox, WasmBuffer, WasmItemPtr, WasmString};
 use crate::executor::AttachmentDownload;
-use function_protocols::{
+use firm_protocols::{
     execution::{InputValue, OutputValue},
     functions::Attachment,
 };
@@ -210,8 +210,8 @@ mod tests {
 
     use std::convert::TryFrom;
 
-    use function_protocols::{execution::InputValue, functions::Type};
-    use function_protocols_test_helpers::attachment;
+    use firm_protocols::{execution::InputValue, functions::Type};
+    use firm_protocols_test_helpers::attachment;
 
     use tempfile::Builder;
     use wasmer_runtime::{memory::Memory, WasmPtr};

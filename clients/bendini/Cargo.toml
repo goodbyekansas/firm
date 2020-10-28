@@ -22,10 +22,10 @@ tokio = { version = "0.2", features = ["blocking", "rt-threaded", "macros"] }
 toml = "0.5"
 url = "2"
 
-function-protocols = { path = "nix-deps/rust-protobuf-definitions" }
+firm-protocols = { path = "nix-deps/rust-firm-protocols" }
 tonic-middleware = { path = "nix-deps/tonic-middleware" }
 
 [dev-dependencies]
 tempfile = "3"
-function-protocols-test-helpers = { path = "nix-deps/rust-protobuf-test-helpers" }
+firm-protocols-test-helpers = { path = "nix-deps/rust-firm-protocols-test-helpers" }
 

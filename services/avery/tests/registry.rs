@@ -4,7 +4,7 @@ use futures::{self, pin_mut};
 use slog::o;
 use url::Url;
 
-use function_protocols::{
+use firm_protocols::{
     registry::{
         registry_server::Registry, AttachmentId, AttachmentStreamUpload, Filters, FunctionId,
         NameFilter, Ordering, OrderingKey,
@@ -12,7 +12,7 @@ use function_protocols::{
     tonic,
 };
 
-use function_protocols_test_helpers::{attachment_data, filters, function_data, runtime};
+use firm_protocols_test_helpers::{attachment_data, filters, function_data, runtime};
 
 use avery::registry::RegistryService as LocalRegistryService;
 

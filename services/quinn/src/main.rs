@@ -1,6 +1,6 @@
 use slog::{error, info, o, Drain, Logger};
 
-use function_protocols::{registry::registry_server::RegistryServer, tonic::transport::Server};
+use firm_protocols::{registry::registry_server::RegistryServer, tonic::transport::Server};
 use quinn::{config, registry};
 use std::error::Error;
 

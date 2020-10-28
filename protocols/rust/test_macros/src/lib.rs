@@ -21,14 +21,14 @@ macro_rules! attachment {
     }};
 
     ($url:expr, $name:expr, $sha256:expr) => {{
-        function_protocols::functions::Attachment {
+        firm_protocols::functions::Attachment {
             name: $name.to_owned(),
-            url: Some(function_protocols::functions::AttachmentUrl {
+            url: Some(firm_protocols::functions::AttachmentUrl {
                 url: $url.to_owned(),
-                auth_method: function_protocols::functions::AuthMethod::None as i32,
+                auth_method: firm_protocols::functions::AuthMethod::None as i32,
             }),
             metadata: std::collections::HashMap::new(),
-            checksums: Some(function_protocols::functions::Checksums {
+            checksums: Some(firm_protocols::functions::Checksums {
                 sha256: $sha256.to_owned(),
             }),
             created_at: 0u64,
@@ -64,7 +64,7 @@ macro_rules! attachment_file {
 #[macro_export]
 macro_rules! input {
     ($name:expr, $required:expr, $argtype:path) => {{
-        function_protocols::functions::Input {
+        firm_protocols::functions::Input {
             name: String::from($name),
             description: String::from($name),
             required: $required,
@@ -80,7 +80,7 @@ macro_rules! input {
 #[macro_export]
 macro_rules! output {
     ($name:expr, $argtype:path) => {{
-        function_protocols::functions::Output {
+        firm_protocols::functions::Output {
             name: String::from($name),
             r#type: $argtype as i32,
             description: String::from($name), //"description" (dr evil quotes)
@@ -99,7 +99,7 @@ macro_rules! function_data {
         $(
             metadata.insert(String::from($key), String::from($value));
         )*
-        function_protocols::registry::FunctionData {
+        firm_protocols::registry::FunctionData {
             name: String::from($name),
             version: String::from($version),
             runtime: ::std::option::Option::from($runtime),
@@ -133,7 +133,7 @@ macro_rules! function_data {
             m.insert(String::from($key), String::from($value));
         )*
 
-        function_protocols::registry::FunctionData {
+        firm_protocols::registry::FunctionData {
             name: String::from($name),
             version: String::from($version),
             runtime: ::std::option::Option::from($runtime),
@@ -152,7 +152,7 @@ macro_rules! runtime {
         $crate::runtime!("runtime")
     }};
     ($name:expr) => {{
-        function_protocols::functions::Runtime {
+        firm_protocols::functions::Runtime {
             name: String::from($name),
             entrypoint: String::new(),
             arguments: ::std::collections::HashMap::new(),
@@ -175,10 +175,10 @@ macro_rules! attachment_data {
         $(
                 m.insert(String::from($key), String::from($value));
         )*
-        function_protocols::registry::AttachmentData {
+        firm_protocols::registry::AttachmentData {
             name: String::from($name),
             metadata: m,
-            checksums: Some(function_protocols::functions::Checksums { sha256: String::from($sha256) }),
+            checksums: Some(firm_protocols::functions::Checksums { sha256: String::from($sha256) }),
         }
     }};
 }
@@ -219,15 +219,15 @@ macro_rules! filters {
         $(
             metadata.insert(String::from($only_key), String::new());
          )*
-        function_protocols::registry::Filters {
-            name_filter: Some(function_protocols::registry::NameFilter {
+        firm_protocols::registry::Filters {
+            name_filter: Some(firm_protocols::registry::NameFilter {
                 pattern: String::from($name),
                 exact_match: false,
             }),
             metadata_filter: metadata,
-            order: Some(function_protocols::registry::Ordering {
+            order: Some(firm_protocols::registry::Ordering {
                 reverse: false,
-                key: function_protocols::registry::OrderingKey::NameVersion as i32,
+                key: firm_protocols::registry::OrderingKey::NameVersion as i32,
                 offset: $offset as u32,
                 limit: $limit as u32,
             }),

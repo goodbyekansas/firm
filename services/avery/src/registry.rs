@@ -14,7 +14,7 @@ use slog::{info, warn, Logger};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
-use function_protocols::{
+use firm_protocols::{
     functions::{
         Attachment, AttachmentUrl, AuthMethod, Function as ProtoFunction, Functions, Input, Output,
         Runtime,
@@ -94,7 +94,7 @@ impl RegistryService {
     pub async fn upload_stream_attachment<S>(
         &self,
         attachment_stream_upload_request: tonic::Request<S>,
-    ) -> Result<tonic::Response<function_protocols::registry::Nothing>, tonic::Status>
+    ) -> Result<tonic::Response<firm_protocols::registry::Nothing>, tonic::Status>
     where
         S: std::marker::Unpin + Stream<Item = Result<AttachmentStreamUpload, tonic::Status>>,
     {
@@ -208,9 +208,7 @@ impl RegistryService {
                 }
             })?;
 
-        Ok(tonic::Response::new(
-            function_protocols::registry::Nothing {},
-        ))
+        Ok(tonic::Response::new(firm_protocols::registry::Nothing {}))
     }
 
     fn get_attachment(&self, id: &AttachmentId) -> Result<(Attachment, PathBuf), tonic::Status> {
@@ -552,7 +550,7 @@ impl Registry for RegistryService {
     async fn upload_streamed_attachment(
         &self,
         attachment_stream_upload_request: tonic::Request<tonic::Streaming<AttachmentStreamUpload>>,
-    ) -> Result<tonic::Response<function_protocols::registry::Nothing>, tonic::Status> {
+    ) -> Result<tonic::Response<firm_protocols::registry::Nothing>, tonic::Status> {
         // TODO: use metadata for "global" upload data such as AttachmentId
         self.upload_stream_attachment(attachment_stream_upload_request)
             .await

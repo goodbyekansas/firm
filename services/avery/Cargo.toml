@@ -29,8 +29,7 @@ hex = "0.4"
 flate2 = "1"
 tar = "0.4"
 
-function-protocols = { path = "nix-deps/rust-protobuf-definitions" }
-
+firm-protocols = { path = "nix-deps/rust-firm-protocols" }
 
 [dev-dependencies]
-function-protocols-test-helpers = { path = "nix-deps/rust-protobuf-test-helpers" }
+firm-protocols-test-helpers = { path = "nix-deps/rust-firm-protocols-test-helpers" }

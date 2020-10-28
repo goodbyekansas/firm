@@ -2,14 +2,14 @@ use slog::o;
 
 use avery::{executor::ExecutionService, registry::RegistryService};
 
-use function_protocols::{
+use firm_protocols::{
     execution::{execution_server::Execution, ExecutionParameters, InputValue},
     functions::Type,
     registry::registry_server::Registry,
     tonic,
 };
 
-use function_protocols_test_helpers::{
+use firm_protocols_test_helpers::{
     attachment_data, filters, function_data, input, output, runtime,
 };
 

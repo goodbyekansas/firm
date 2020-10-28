@@ -12,7 +12,7 @@ use super::{
     sandbox::Sandbox,
     WasmBuffer, WasmItemPtr,
 };
-use function_protocols::wasi::StartProcessRequest;
+use firm_protocols::wasi::StartProcessRequest;
 
 pub struct StdIOConfig {
     pub stdout: Stdio,

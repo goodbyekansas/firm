@@ -22,7 +22,7 @@ use wasmer_wasi::{generate_import_object_from_state, get_wasi_version, state::Wa
 
 use crate::executor::{AttachmentDownload, ExecutorError, ExecutorParameters, FunctionExecutor};
 use error::{ToErrorCode, WasiError};
-use function_protocols::{
+use firm_protocols::{
     execution::{InputValue, OutputValue},
     functions::Attachment,
 };
@@ -480,7 +480,7 @@ impl FunctionExecutor for WasiExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use function_protocols_test_helpers::code_file;
+    use firm_protocols_test_helpers::code_file;
 
     macro_rules! null_logger {
         () => {{

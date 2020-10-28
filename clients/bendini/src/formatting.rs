@@ -4,7 +4,7 @@ use std::{
 };
 
 use ansi_term::Colour::Green;
-use function_protocols::functions::{Function, Input, Output, Runtime, Type};
+use firm_protocols::functions::{Function, Input, Output, Runtime, Type};
 use futures::{future::join, Future};
 use indicatif::MultiProgress;
 use tokio::task;

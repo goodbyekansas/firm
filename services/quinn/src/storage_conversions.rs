@@ -1,6 +1,6 @@
 use std::convert::{TryFrom, TryInto};
 
-use function_protocols::{
+use firm_protocols::{
     functions::Function as ProtoFunction,
     registry::{Filters, FunctionId, OrderingKey},
     tonic,
@@ -85,10 +85,10 @@ impl TryFrom<Filters> for storage::Filters {
     }
 }
 
-impl TryFrom<function_protocols::functions::Runtime> for storage::Runtime {
+impl TryFrom<firm_protocols::functions::Runtime> for storage::Runtime {
     type Error = tonic::Status;
 
-    fn try_from(value: function_protocols::functions::Runtime) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_protocols::functions::Runtime) -> Result<Self, Self::Error> {
         Ok(storage::Runtime {
             name: value.name.check_empty("execution_environment.name")?,
             entrypoint: value.entrypoint, // TODO investigate if it's valid that this is empty
@@ -97,16 +97,16 @@ impl TryFrom<function_protocols::functions::Runtime> for storage::Runtime {
     }
 }
 
-impl TryFrom<function_protocols::functions::Input> for storage::FunctionInput {
+impl TryFrom<firm_protocols::functions::Input> for storage::FunctionInput {
     type Error = tonic::Status;
 
-    fn try_from(value: function_protocols::functions::Input) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_protocols::functions::Input) -> Result<Self, Self::Error> {
         let tp = value.r#type;
         Ok(storage::FunctionInput {
             name: value.name.check_empty("Function Input Name")?,
             description: value.description,
             required: value.required,
-            argument_type: function_protocols::functions::Type::from_i32(tp).ok_or_else(|| {
+            argument_type: firm_protocols::functions::Type::from_i32(tp).ok_or_else(|| {
                 tonic::Status::new(
                     tonic::Code::InvalidArgument,
                     format!("Input type {} is out of range for enum", tp),
@@ -116,15 +116,15 @@ impl TryFrom<function_protocols::functions::Input> for storage::FunctionInput {
     }
 }
 
-impl TryFrom<function_protocols::functions::Output> for storage::FunctionOutput {
+impl TryFrom<firm_protocols::functions::Output> for storage::FunctionOutput {
     type Error = tonic::Status;
 
-    fn try_from(value: function_protocols::functions::Output) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_protocols::functions::Output) -> Result<Self, Self::Error> {
         let tp = value.r#type;
         Ok(storage::FunctionOutput {
             name: value.name.check_empty("Function Output Name")?,
             description: value.description,
-            argument_type: function_protocols::functions::Type::from_i32(tp).ok_or_else(|| {
+            argument_type: firm_protocols::functions::Type::from_i32(tp).ok_or_else(|| {
                 tonic::Status::new(
                     tonic::Code::InvalidArgument,
                     format!("Argument type {} is out of range for enum", tp),
@@ -139,7 +139,7 @@ trait ToUuid {
     fn to_uuid(&self) -> Result<uuid::Uuid, Self::Error>;
 }
 
-impl ToUuid for function_protocols::registry::AttachmentId {
+impl ToUuid for firm_protocols::registry::AttachmentId {
     type Error = tonic::Status;
 
     fn to_uuid(&self) -> Result<uuid::Uuid, Self::Error> {
@@ -152,10 +152,10 @@ impl ToUuid for function_protocols::registry::AttachmentId {
     }
 }
 
-impl TryFrom<function_protocols::registry::FunctionData> for storage::Function {
+impl TryFrom<firm_protocols::registry::FunctionData> for storage::Function {
     type Error = tonic::Status;
 
-    fn try_from(value: function_protocols::registry::FunctionData) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_protocols::registry::FunctionData) -> Result<Self, Self::Error> {
         Ok(storage::Function {
             name: validation::validate_name(&value.name)
                 .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, e.to_string()))?,
@@ -192,20 +192,20 @@ impl TryFrom<function_protocols::registry::FunctionData> for storage::Function {
     }
 }
 
-impl TryFrom<function_protocols::functions::Checksums> for storage::Checksums {
+impl TryFrom<firm_protocols::functions::Checksums> for storage::Checksums {
     type Error = tonic::Status;
 
-    fn try_from(value: function_protocols::functions::Checksums) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_protocols::functions::Checksums) -> Result<Self, Self::Error> {
         Ok(storage::Checksums {
             sha256: value.sha256.check_empty("sha256")?,
         })
     }
 }
 
-impl TryFrom<function_protocols::registry::AttachmentData> for storage::FunctionAttachmentData {
+impl TryFrom<firm_protocols::registry::AttachmentData> for storage::FunctionAttachmentData {
     type Error = tonic::Status;
 
-    fn try_from(value: function_protocols::registry::AttachmentData) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_protocols::registry::AttachmentData) -> Result<Self, Self::Error> {
         Ok(storage::FunctionAttachmentData {
             name: value.name.check_empty("name")?,
             metadata: value.metadata,
@@ -247,14 +247,14 @@ pub trait FunctionResolver {
 
 struct AttachmentResolver<'a>(&'a dyn AttachmentStorage, FunctionAttachment);
 
-impl<'a> From<AttachmentResolver<'a>> for function_protocols::functions::Attachment {
+impl<'a> From<AttachmentResolver<'a>> for firm_protocols::functions::Attachment {
     fn from(attachment_resolver: AttachmentResolver) -> Self {
         let (attachment_storage, att) = (attachment_resolver.0, attachment_resolver.1);
         Self {
             name: att.data.name.clone(),
             url: attachment_storage.get_download_url(&att).ok(), // TODO: no good, error here
             metadata: att.data.metadata,
-            checksums: Some(function_protocols::functions::Checksums {
+            checksums: Some(firm_protocols::functions::Checksums {
                 sha256: att.data.checksums.sha256.to_string(),
             }),
             created_at: att.created_at,
@@ -271,7 +271,7 @@ impl FunctionResolver for &Function {
         attachment_store: &dyn AttachmentStorage,
     ) -> Result<ProtoFunction, StorageError> {
         Ok(ProtoFunction {
-            runtime: Some(function_protocols::functions::Runtime {
+            runtime: Some(firm_protocols::functions::Runtime {
                 name: self.runtime.name.clone(),
                 entrypoint: self.runtime.entrypoint.clone(),
                 arguments: self.runtime.arguments.clone(),
@@ -289,7 +289,7 @@ impl FunctionResolver for &Function {
             inputs: self
                 .inputs
                 .iter()
-                .map(|i| function_protocols::functions::Input {
+                .map(|i| firm_protocols::functions::Input {
                     name: i.name.clone(),
                     description: i.description.clone(),
                     required: i.required,
@@ -299,7 +299,7 @@ impl FunctionResolver for &Function {
             outputs: self
                 .outputs
                 .iter()
-                .map(|o| function_protocols::functions::Output {
+                .map(|o| firm_protocols::functions::Output {
                     name: o.name.clone(),
                     description: o.description.clone(),
                     r#type: o.argument_type as i32,

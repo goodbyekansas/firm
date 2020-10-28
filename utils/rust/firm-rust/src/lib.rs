@@ -13,8 +13,8 @@ use std::{
 use prost::Message;
 use thiserror::Error;
 
-pub use function_protocols::execution::OutputValue;
-use function_protocols::{
+pub use firm_protocols::execution::OutputValue;
+use firm_protocols::{
     execution::InputValue,
     functions::{Attachment, Type},
     wasi::StartProcessRequest,
@@ -438,7 +438,7 @@ pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
 pub mod executor {
     use std::path::PathBuf;
 
-    use function_protocols::{
+    use firm_protocols::{
         execution::InputValue,
         functions::Attachment,
         wasi::{Attachments, InputValues},
@@ -584,7 +584,7 @@ pub mod net {
 mod tests {
     use super::*;
     use executor::AttachmentDownload;
-    use function_protocols::{
+    use firm_protocols::{
         functions::{Attachment, AttachmentUrl, AuthMethod},
         wasi::InputValues,
     };

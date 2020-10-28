@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use function_protocols::{
+use firm_protocols::{
     execution::{execution_client::ExecutionClient, ExecutionParameters, InputValue},
     functions::{Input, Type},
     registry::{

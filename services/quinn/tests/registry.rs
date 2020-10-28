@@ -1,10 +1,10 @@
-use function_protocols::{
+use firm_protocols::{
     registry::{registry_server::Registry, Filters, FunctionId, NameFilter, Ordering},
     tonic,
 };
 use quinn::{config, registry::RegistryService, storage::OrderingKey};
 
-use function_protocols_test_helpers::{attachment_data, filters, function_data, runtime};
+use firm_protocols_test_helpers::{attachment_data, filters, function_data, runtime};
 use std::collections::HashMap;
 
 macro_rules! null_logger {

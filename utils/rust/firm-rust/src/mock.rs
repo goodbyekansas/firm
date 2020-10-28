@@ -4,7 +4,7 @@ use std::{
     thread::{self, ThreadId},
 };
 
-use function_protocols::{
+use firm_protocols::{
     execution::{InputValue, OutputValue},
     functions::Attachment,
     wasi::StartProcessRequest,

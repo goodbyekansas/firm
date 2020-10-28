@@ -7,5 +7,5 @@ edition = "2018"
 [dependencies]
 http = "0.2"
 
-function-protocols = { path = "nix-deps/rust-protobuf-definitions" }
+firm-protocols = { path = "nix-deps/rust-firm-protocols" }
 
