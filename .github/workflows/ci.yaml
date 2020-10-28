@@ -53,7 +53,7 @@ jobs:
       run: .github/workflows/github-package-status.bash pre ${{ github.repository }} ${{ github.sha }} ${{ github.job }} ./derivations
 
     - name: Build all derivations
-      run: nix build -L ./derivations/* --show-trace --max-jobs 0
+      run: nix build --keep-going -L ./derivations/* --show-trace --max-jobs 0
 
     - name: Finish Github checks for each derivation
       if: ${{ always() }}

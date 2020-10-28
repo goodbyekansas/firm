@@ -11,39 +11,50 @@ message FunctionPayloadMetadata {
   string sha256 = 2;
 }
 
+
 message FunctionPayloadMetadataResponse {
   bool send_payload = 1;
 }
+
 
 message GetInputCommand {
   string name = 1;
 }
 
+
 message GetInputResponse {
-  execution.InputValue argument = 1;
+  execution.Channel argument = 1;
 }
+
 
 message SetOutputCommand {
-  execution.OutputValue return_value = 1;
+  execution.Channel return_value = 1;
 }
 
+
 message SetOutputResponse {}
+
 
 message GetAttachmentCommand {
   string name = 1;
 }
 
+
 message GetAttachmentResponse {
   bytes content = 1;
 }
+
 
 message SetErrorCommand {
   string message = 1;
 }
 
+
 message SetErrorResponse {}
 
+
 message FunctionFinishedCommand {}
+
 
 message IntegrationCommand {
   oneof command {
@@ -54,6 +65,7 @@ message IntegrationCommand {
     GetAttachmentCommand get_attachment = 5;
   }
 }
+
 
 message IntegrationResponse {
   oneof response {

@@ -22,7 +22,7 @@ tokio = { version = "0.2", features = ["blocking", "rt-threaded", "macros"] }
 toml = "0.5"
 url = "2"
 
-firm-protocols = { path = "nix-deps/rust-firm-protocols" }
+firm-types = { path = "nix-deps/firm-types" }
 tonic-middleware = { path = "nix-deps/tonic-middleware" }
 
 [dev-dependencies]

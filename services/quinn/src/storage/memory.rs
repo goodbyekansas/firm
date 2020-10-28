@@ -151,12 +151,10 @@ impl FunctionStorage for MemoryStorage {
             .map(|mut hits| {
                 let order = filters.order.as_ref().cloned().unwrap_or_default();
                 hits.sort_unstable_by(|a, b| match order.key {
-                    firm_protocols::registry::OrderingKey::NameVersion => {
-                        match a.name.cmp(&b.name) {
-                            std::cmp::Ordering::Equal => b.version.cmp(&a.version),
-                            o => o,
-                        }
-                    }
+                    firm_types::registry::OrderingKey::NameVersion => match a.name.cmp(&b.name) {
+                        std::cmp::Ordering::Equal => b.version.cmp(&a.version),
+                        o => o,
+                    },
                 });
 
                 if order.reverse {

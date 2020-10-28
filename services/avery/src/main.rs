@@ -1,7 +1,7 @@
 use slog::{info, o, Drain};
 use structopt::StructOpt;
 
-use firm_protocols::{
+use firm_types::{
     execution::execution_server::ExecutionServer, registry::registry_server::RegistryServer,
     tonic::transport::Server,
 };

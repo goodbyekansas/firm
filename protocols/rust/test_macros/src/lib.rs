@@ -1,3 +1,5 @@
+pub use firm_protocols;
+
 #[macro_export]
 macro_rules! attachment {
     () => {{
@@ -10,7 +12,7 @@ macro_rules! attachment {
             "FakeAttachment",
             "724a8940e46ffa34e930258f708d890dbb3b3243361dfbc41eefcff124407a29"
         )
-    }};
+    }}; 
 
     ($url:expr, $name:expr) => {{
         $crate::attachment!(
@@ -21,14 +23,14 @@ macro_rules! attachment {
     }};
 
     ($url:expr, $name:expr, $sha256:expr) => {{
-        firm_protocols::functions::Attachment {
+        $crate::firm_protocols::functions::Attachment {
             name: $name.to_owned(),
-            url: Some(firm_protocols::functions::AttachmentUrl {
+            url: Some($crate::firm_protocols::functions::AttachmentUrl {
                 url: $url.to_owned(),
-                auth_method: firm_protocols::functions::AuthMethod::None as i32,
+                auth_method: $crate::firm_protocols::functions::AuthMethod::None as i32,
             }),
             metadata: std::collections::HashMap::new(),
-            checksums: Some(firm_protocols::functions::Checksums {
+            checksums: Some($crate::firm_protocols::functions::Checksums {
                 sha256: $sha256.to_owned(),
             }),
             created_at: 0u64,
@@ -63,24 +65,24 @@ macro_rules! attachment_file {
 
 #[macro_export]
 macro_rules! input {
+    ($name:expr, $argtype:path) => {{
+        $crate::input!($name, false, $argtype)
+    }};
+
     ($name:expr, $required:expr, $argtype:path) => {{
-        firm_protocols::functions::Input {
+        $crate::firm_protocols::functions::Input {
             name: String::from($name),
             description: String::from($name),
             required: $required,
             r#type: $argtype as i32,
         }
     }};
-
-    ($name:expr, $argtype:path) => {{
-        $crate::input!($name, false, $argtype)
-    }};
 }
 
 #[macro_export]
 macro_rules! output {
     ($name:expr, $argtype:path) => {{
-        firm_protocols::functions::Output {
+        $crate::firm_protocols::functions::Output {
             name: String::from($name),
             r#type: $argtype as i32,
             description: String::from($name), //"description" (dr evil quotes)
@@ -90,26 +92,6 @@ macro_rules! output {
 
 #[macro_export]
 macro_rules! function_data {
-    ($name:expr, [$($input:expr),*], [$($output:expr),*], {$($key:expr => $value:expr),*}, $code:expr, $runtime:expr) => {{
-        $crate::function_data!($name, "0.1.0", [$($input),*], [$($output),*], {$($key => $value),*}, $code, $runtime)
-    }};
-
-    ($name:expr, $version:expr, [$($input:expr),*], [$($output:expr),*], {$($key:expr => $value:expr),*}, $code:expr, $runtime:expr) => {{
-        let mut metadata = ::std::collections::HashMap::new();
-        $(
-            metadata.insert(String::from($key), String::from($value));
-        )*
-        firm_protocols::registry::FunctionData {
-            name: String::from($name),
-            version: String::from($version),
-            runtime: ::std::option::Option::from($runtime),
-            code_attachment_id: ::std::option::Option::from($code),
-            metadata,
-            inputs: vec![$($input),*],
-            outputs: vec![$($output),*],
-            attachment_ids: vec![],
-        }
-    }};
 
     ($name:expr, $version:expr) => {{
         $crate::function_data!($name, $version, runtime!())
@@ -128,20 +110,23 @@ macro_rules! function_data {
     }};
 
     ($name:expr, $version:expr, $runtime:expr, $code:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}) => {{
-        let mut m = ::std::collections::HashMap::new();
-        $(
-            m.insert(String::from($key), String::from($value));
-        )*
+        $crate::function_data!($name, $version, $runtime, $code, None, None, [$($attach),*], {$($key => $value),*})
+    }};
 
-        firm_protocols::registry::FunctionData {
+    ($name:expr, $version:expr, $runtime:expr, $code:expr, $input:expr, $output:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}) => {{
+        let mut metadata = ::std::collections::HashMap::new();
+        $(
+            metadata.insert(String::from($key), String::from($value));
+        )*
+        $crate::firm_protocols::registry::FunctionData {
             name: String::from($name),
             version: String::from($version),
             runtime: ::std::option::Option::from($runtime),
-            code_attachment_id: $code,
-            metadata: m,
-            inputs: vec![],
-            outputs: vec![],
-            attachment_ids: vec![$($attach),*],
+            code_attachment_id: ::std::option::Option::from($code),
+            metadata,
+            input: ::std::option::Option::from($input),
+            output: ::std::option::Option::from($output),
+            attachment_ids: vec![$(($attach),)*].into_iter().collect(),
         }
     }};
 }
@@ -152,7 +137,7 @@ macro_rules! runtime {
         $crate::runtime!("runtime")
     }};
     ($name:expr) => {{
-        firm_protocols::functions::Runtime {
+        $crate::firm_protocols::functions::Runtime {
             name: String::from($name),
             entrypoint: String::new(),
             arguments: ::std::collections::HashMap::new(),
@@ -175,10 +160,10 @@ macro_rules! attachment_data {
         $(
                 m.insert(String::from($key), String::from($value));
         )*
-        firm_protocols::registry::AttachmentData {
+        $crate::firm_protocols::registry::AttachmentData {
             name: String::from($name),
             metadata: m,
-            checksums: Some(firm_protocols::functions::Checksums { sha256: String::from($sha256) }),
+            checksums: Some($crate::firm_protocols::functions::Checksums { sha256: String::from($sha256) }),
         }
     }};
 }
@@ -219,19 +204,46 @@ macro_rules! filters {
         $(
             metadata.insert(String::from($only_key), String::new());
          )*
-        firm_protocols::registry::Filters {
-            name_filter: Some(firm_protocols::registry::NameFilter {
+        $crate::firm_protocols::registry::Filters {
+            name: Some($crate::firm_protocols::registry::NameFilter {
                 pattern: String::from($name),
                 exact_match: false,
             }),
-            metadata_filter: metadata,
-            order: Some(firm_protocols::registry::Ordering {
+            metadata: metadata,
+            order: Some($crate::firm_protocols::registry::Ordering {
                 reverse: false,
-                key: firm_protocols::registry::OrderingKey::NameVersion as i32,
+                key: $crate::firm_protocols::registry::OrderingKey::NameVersion as i32,
                 offset: $offset as u32,
                 limit: $limit as u32,
             }),
             version_requirement: None,
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! stream {
+    () => {{
+        $crate::stream!({})
+    }};
+
+    ({$($key:expr => $value:expr),*}) => {{
+        $crate::firm_protocols::execution::Stream {
+            channels: vec![$((String::from($key),$value.to_channel())),*].into_iter().collect()
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! stream_spec {
+    ({$($key:expr => $value:expr),*}) => {{
+        $crate::stream_spec!({$($key => $value),*}, {})
+    }};
+
+    ({$($key:expr => $value:expr),*}, {$($opt_key:expr => $opt_value:expr),*}) => {{
+        $crate::firm_protocols::functions::StreamSpec {
+            required: vec![$((String::from($key),$value)),*].into_iter().collect(),
+            optional: vec![$((String::from($opt_key),$opt_value)),*].into_iter().collect(),
         }
     }};
 }

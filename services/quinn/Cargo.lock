@@ -380,6 +380,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "firm-types"
+version = "0.1.0"
+dependencies = [
+ "firm-protocols",
+ "prost",
+ "thiserror",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1248,8 +1257,8 @@ dependencies = [
  "bb8",
  "bb8-postgres",
  "config",
- "firm-protocols",
  "firm-protocols-test-helpers",
+ "firm-types",
  "futures",
  "lazy_static",
  "postgres-types",

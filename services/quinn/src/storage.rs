@@ -6,8 +6,8 @@ use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
 
-pub use firm_protocols::{
-    functions::{AttachmentUrl, AuthMethod, Type},
+pub use firm_types::{
+    functions::{AttachmentUrl, AuthMethod, ChannelType},
     registry::{AttachmentHandle, OrderingKey},
 };
 
@@ -42,8 +42,8 @@ pub struct Function {
     pub name: String,
     pub version: Version,
     pub runtime: Runtime,
-    pub inputs: Vec<FunctionInput>,
-    pub outputs: Vec<FunctionOutput>,
+    pub input_spec: StreamSpec,
+    pub output_spec: StreamSpec,
     pub metadata: HashMap<String, String>,
     pub code: Option<Uuid>,
     pub attachments: Vec<Uuid>,
@@ -51,18 +51,24 @@ pub struct Function {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct FunctionInput {
-    pub name: String,
-    pub description: String,
-    pub required: bool,
-    pub argument_type: Type,
+pub struct StreamSpec {
+    pub required: HashMap<String, ChannelSpec>,
+    pub optional: HashMap<String, ChannelSpec>,
+}
+
+impl StreamSpec {
+    pub fn empty() -> Self {
+        Self {
+            required: HashMap::new(),
+            optional: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct FunctionOutput {
-    pub name: String,
+pub struct ChannelSpec {
     pub description: String,
-    pub argument_type: Type,
+    pub argument_type: ChannelType,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]

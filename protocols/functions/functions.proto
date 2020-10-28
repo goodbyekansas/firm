@@ -10,8 +10,8 @@ message Function {
   string name = 1;
   string version = 2;
   map<string, string> metadata = 3;
-  repeated Input inputs = 4;
-  repeated Output outputs = 5;
+  StreamSpec input = 4;
+  StreamSpec output = 5;
   Attachment code = 6;
   repeated Attachment attachments = 7;
   Runtime runtime = 8;
@@ -24,7 +24,7 @@ message Functions {
 }
 
 
-enum Type {
+enum ChannelType {
   STRING = 0;
   BOOL = 1;
   INT = 2;
@@ -33,18 +33,15 @@ enum Type {
 }
 
 
-message Input {
-  string name = 1;
-  bool required = 2;
-  Type type = 3;
-  string description = 4;
+message StreamSpec {
+  map<string, ChannelSpec> required = 1;
+  map<string, ChannelSpec> optional = 2;
 }
 
 
-message Output {
-  string name = 1;
-  Type type = 2;
-  string description = 3;
+message ChannelSpec {
+  ChannelType type = 1;
+  string description = 2;
 }
 
 

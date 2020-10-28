@@ -5,18 +5,17 @@
 compile_error!("WASI function helper lib only supports running in WASI");
 
 use std::{
-    borrow::Borrow,
     collections::{hash_map::RandomState, HashMap},
     path::PathBuf,
+    string::FromUtf8Error,
 };
 
 use prost::Message;
 use thiserror::Error;
 
-pub use firm_protocols::execution::OutputValue;
-use firm_protocols::{
-    execution::InputValue,
-    functions::{Attachment, Type},
+pub use firm_types::execution::Stream;
+use firm_types::{
+    execution::Channel, functions::Attachment, stream::ToChannel, stream::TryFromChannel,
     wasi::StartProcessRequest,
 };
 
@@ -53,8 +52,11 @@ pub enum Error {
     #[error("Host error occured. Error code: {0}")]
     HostError(u32),
 
-    #[error("Failed to convert to requested type")]
-    ConversionError(),
+    #[error("{0}")]
+    ConversionError(#[from] firm_types::stream::ChannelConversionError),
+
+    #[error("String conversion error: {0}")]
+    StringConversionError(#[from] FromUtf8Error),
 
     #[error("Failed to find input \"{0}\"")]
     FailedToFindInput(String),
@@ -90,9 +92,7 @@ fn _map_attachment<S: AsRef<str> + std::fmt::Display>(
     ))?;
     unsafe { attachment_path_buffer.set_len(attachment_path_bytes_len as usize) };
 
-    Ok(PathBuf::from(
-        String::from_utf8(attachment_path_buffer).map_err(|_| Error::ConversionError())?,
-    ))
+    Ok(PathBuf::from(String::from_utf8(attachment_path_buffer)?))
 }
 
 /// Map an attachment that the WASI host knows about, given by `attachment_name`.
@@ -139,9 +139,7 @@ fn _map_attachment_from_descriptor(
     ))?;
     unsafe { attachment_path_buffer.set_len(attachment_path_bytes_len as usize) };
 
-    Ok(PathBuf::from(
-        String::from_utf8(attachment_path_buffer).map_err(|_| Error::ConversionError())?,
-    ))
+    Ok(PathBuf::from(String::from_utf8(attachment_path_buffer)?))
 }
 
 /// Map an attachment from a descriptor that the WASI host does not know about.
@@ -245,156 +243,11 @@ pub fn run_host_process<S1: AsRef<str>, S2: AsRef<str>>(
     .map(|_| exit_code)
 }
 
-pub trait FromInputValue: Sized {
-    fn from_arg(arg: &InputValue) -> Option<Self>;
-}
-
-pub trait ToOutputValue: Sized {
-    fn to_return_value(&self, name: &str) -> OutputValue;
-}
-
-impl FromInputValue for String {
-    fn from_arg(arg: &InputValue) -> Option<Self> {
-        match Type::from_i32(arg.r#type) {
-            Some(Type::String) => String::from_utf8(arg.value.clone()).ok(),
-            _ => None,
-        }
-    }
-}
-
-impl<'a, T> ToOutputValue for &'a T
+pub fn get_input<S, T>(key: S) -> Result<T, Error>
 where
-    T: ToOutputValue + 'a,
+    S: AsRef<str>,
+    T: TryFromChannel,
 {
-    fn to_return_value(&self, name: &str) -> OutputValue {
-        T::to_return_value(self, name)
-    }
-}
-
-impl ToOutputValue for &str {
-    fn to_return_value(&self, name: &str) -> OutputValue {
-        OutputValue {
-            name: name.to_owned(),
-            value: self.as_bytes().to_vec(),
-            r#type: Type::String as i32,
-        }
-    }
-}
-
-impl ToOutputValue for String {
-    fn to_return_value(&self, name: &str) -> OutputValue {
-        OutputValue {
-            name: name.to_owned(),
-            value: self.as_bytes().to_vec(),
-            r#type: Type::String as i32,
-        }
-    }
-}
-
-macro_rules! bytes_as_64_bit_array {
-    ($bytes: expr) => {{
-        [
-            $bytes.get(0).cloned().unwrap_or_default(),
-            $bytes.get(1).cloned().unwrap_or_default(),
-            $bytes.get(2).cloned().unwrap_or_default(),
-            $bytes.get(3).cloned().unwrap_or_default(),
-            $bytes.get(4).cloned().unwrap_or_default(),
-            $bytes.get(5).cloned().unwrap_or_default(),
-            $bytes.get(6).cloned().unwrap_or_default(),
-            $bytes.get(7).cloned().unwrap_or_default(),
-        ]
-    }};
-}
-
-impl FromInputValue for i64 {
-    fn from_arg(arg: &InputValue) -> Option<Self> {
-        match Type::from_i32(arg.r#type) {
-            Some(Type::Int) => {
-                if arg.value.len() == 8 {
-                    Some(i64::from_le_bytes(bytes_as_64_bit_array!(arg.value)))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-}
-
-impl ToOutputValue for i64 {
-    fn to_return_value(&self, name: &str) -> OutputValue {
-        OutputValue {
-            name: name.to_owned(),
-            value: self.to_le_bytes().to_vec(),
-            r#type: Type::Int as i32,
-        }
-    }
-}
-
-impl FromInputValue for f64 {
-    fn from_arg(arg: &InputValue) -> Option<Self> {
-        match Type::from_i32(arg.r#type) {
-            Some(Type::Float) => {
-                if arg.value.len() == 8 {
-                    Some(f64::from_le_bytes(bytes_as_64_bit_array!(arg.value)))
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-}
-
-impl ToOutputValue for f64 {
-    fn to_return_value(&self, name: &str) -> OutputValue {
-        OutputValue {
-            name: name.to_owned(),
-            value: self.to_le_bytes().to_vec(),
-            r#type: Type::Float as i32,
-        }
-    }
-}
-
-impl FromInputValue for bool {
-    fn from_arg(arg: &InputValue) -> Option<Self> {
-        match Type::from_i32(arg.r#type) {
-            Some(Type::Bool) => arg.value.first().map(|b| *b != 0),
-            _ => None,
-        }
-    }
-}
-
-impl ToOutputValue for bool {
-    fn to_return_value(&self, name: &str) -> OutputValue {
-        OutputValue {
-            name: name.to_owned(),
-            value: vec![*self as u8],
-            r#type: Type::Bool as i32,
-        }
-    }
-}
-
-impl FromInputValue for Vec<u8> {
-    fn from_arg(arg: &InputValue) -> Option<Self> {
-        match Type::from_i32(arg.r#type) {
-            Some(Type::Bytes) => Some(arg.value.clone()),
-            _ => None,
-        }
-    }
-}
-
-impl ToOutputValue for Vec<u8> {
-    fn to_return_value(&self, name: &str) -> OutputValue {
-        OutputValue {
-            name: name.to_owned(),
-            value: self.to_vec(),
-            r#type: Type::Bytes as i32,
-        }
-    }
-}
-
-pub fn get_input<S: AsRef<str>, T: FromInputValue>(key: S) -> Result<T, Error> {
     let mut size: u64 = 0;
     host_call!(raw::get_input_len(
         key.as_ref().as_ptr(),
@@ -412,20 +265,24 @@ pub fn get_input<S: AsRef<str>, T: FromInputValue>(key: S) -> Result<T, Error> {
     unsafe {
         value_buffer.set_len(size as usize);
     }
-    InputValue::decode(value_buffer.as_slice())
+    Channel::decode(value_buffer.as_slice())
         .map_err(|e| e.into())
-        .and_then(|a| T::from_arg(&a).ok_or_else(Error::ConversionError))
+        .and_then(|ref c| T::try_from(c).map_err(Error::from))
 }
 
-pub fn set_output<S: AsRef<str>, T: ToOutputValue>(name: S, value: T) -> Result<(), Error> {
-    let ret_value = value.borrow().to_return_value(name.as_ref());
-    set_output_with_return_value(&ret_value)
+pub fn set_output<S: AsRef<str>, T: ToChannel>(name: S, value: T) -> Result<(), Error> {
+    set_output_channel(name, &value.to_channel())
 }
 
-pub fn set_output_with_return_value(ret_value: &OutputValue) -> Result<(), Error> {
-    let mut value = Vec::with_capacity(ret_value.encoded_len());
-    ret_value.encode(&mut value)?;
-    host_call!(raw::set_output(value.as_mut_ptr(), value.len()))
+pub fn set_output_channel<S: AsRef<str>>(name: S, channel: &Channel) -> Result<(), Error> {
+    let mut value = Vec::with_capacity(channel.encoded_len());
+    channel.encode(&mut value)?;
+    host_call!(raw::set_output(
+        name.as_ref().as_ptr(),
+        name.as_ref().as_bytes().len(),
+        value.as_mut_ptr(),
+        value.len()
+    ))
 }
 
 pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
@@ -438,14 +295,13 @@ pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
 pub mod executor {
     use std::path::PathBuf;
 
-    use firm_protocols::{
-        execution::InputValue,
-        functions::Attachment,
-        wasi::{Attachments, InputValues},
+    use firm_types::{
+        execution::Channel, execution::Stream, functions::Attachment, stream::StreamExt,
+        stream::TryFromChannel, wasi::Attachments,
     };
     use prost::Message;
 
-    use crate::{get_input, map_attachment_from_descriptor, Error, FromInputValue};
+    use crate::{get_input, map_attachment_from_descriptor, Error};
 
     pub trait AttachmentDownload {
         fn download(&self) -> Result<PathBuf, Error>;
@@ -464,7 +320,7 @@ pub mod executor {
         code: Attachment,
         sha256: String,
         entrypoint: String,
-        arguments: Vec<InputValue>,
+        stream: Stream,
         attachments: Vec<Attachment>,
     }
 
@@ -477,11 +333,8 @@ pub mod executor {
                 })?,
                 sha256: get_input("_sha256")?,
                 entrypoint: get_input("_entrypoint")?,
-                arguments: get_input("_arguments").and_then(|a: Vec<u8>| {
-                    InputValues::decode(a.as_slice())
-                        .map_err(|e| e.into())
-                        .map(|v| v.values)
-                })?,
+                stream: get_input("_arguments")
+                    .and_then(|a: Vec<u8>| Stream::decode(a.as_slice()).map_err(|e| e.into()))?,
                 attachments: get_input("_attachments").and_then(|a: Vec<u8>| {
                     Attachments::decode(a.as_slice())
                         .map_err(|e| e.into())
@@ -508,17 +361,20 @@ pub mod executor {
         /// Get an argument designated by `key` for the
         /// function that the execution environment is
         /// expected to execute
-        pub fn argument<S: AsRef<str>, T: FromInputValue>(&self, key: S) -> Result<T, Error> {
-            self.get_argument_descriptor(key)
-                .and_then(|a| T::from_arg(a).ok_or_else(Error::ConversionError))
+        pub fn get_channel_value<S, T>(&self, key: S) -> Result<T, Error>
+        where
+            S: AsRef<str>,
+            T: TryFromChannel,
+        {
+            self.get_channel(key)
+                .and_then(|c| T::try_from(c).map_err(Error::from))
         }
 
         /// Get an argument descriptor designated by `key` for the function that
         /// the execution environment is expected to execute
-        pub fn get_argument_descriptor<S: AsRef<str>>(&self, key: S) -> Result<&InputValue, Error> {
-            self.arguments
-                .iter()
-                .find(|a| a.name == key.as_ref())
+        pub fn get_channel<S: AsRef<str>>(&self, key: S) -> Result<&Channel, Error> {
+            self.stream
+                .get_channel(key.as_ref())
                 .ok_or_else(|| Error::FailedToFindInput(key.as_ref().to_owned()))
         }
 
@@ -584,11 +440,14 @@ pub mod net {
 mod tests {
     use super::*;
     use executor::AttachmentDownload;
-    use firm_protocols::{
+    use firm_types::{
+        execution::channel::Value as ValueType,
         functions::{Attachment, AttachmentUrl, AuthMethod},
-        wasi::InputValues,
+        stream::TryRefFromChannel,
     };
     use mock::MockResultRegistry;
+
+    use firm_protocols_test_helpers::stream;
 
     #[test]
     fn test_map_attachment() {
@@ -706,30 +565,27 @@ mod tests {
 
     #[test]
     fn test_get_input() {
-        let fa = InputValue {
-            name: "namn".to_owned(),
-            r#type: Type::String as i32,
-            value: "🏌️‍♂️".as_bytes().to_vec(),
-        };
-        let falen = fa.encoded_len();
+        let channel = "🏌️‍♂".to_channel();
 
-        MockResultRegistry::set_get_input_len_impl(move |_key| Ok(falen));
+        let channel_len = channel.encoded_len();
 
-        let cloned_fa = fa.clone();
-        MockResultRegistry::set_get_input_impl(move |_key| Ok(cloned_fa.clone()));
+        MockResultRegistry::set_get_input_len_impl(move |_key| Ok(channel_len));
+
+        let cloned_channel = channel.clone();
+        MockResultRegistry::set_get_input_impl(move |_key| Ok(cloned_channel.clone()));
 
         let res: Result<String, _> = get_input("kallebulasularula");
         assert!(res.is_ok());
-        assert_eq!(res.unwrap().as_bytes(), fa.value.as_slice());
+        assert_eq!(&res.unwrap(), String::try_ref_from(&channel).unwrap());
 
         // Asking for wrong type
         let res: Result<i64, _> = get_input("cool-grunka");
         assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), Error::ConversionError()));
+        assert!(matches!(res.unwrap_err(), Error::ConversionError(_)));
 
         let res: Result<bool, _> = get_input("cool-grunka");
         assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), Error::ConversionError()));
+        assert!(matches!(res.unwrap_err(), Error::ConversionError(_)));
 
         // Fail on length (how!?)
         MockResultRegistry::set_get_input_len_impl(move |_key| Err(1));
@@ -745,9 +601,8 @@ mod tests {
         let name = "sugar";
         let value = "kalle";
         MockResultRegistry::set_set_output_impl(move |res| {
-            assert_eq!(res.name, name);
-            assert_eq!(std::str::from_utf8(&res.value).unwrap(), value);
-            assert_eq!(Type::from_i32(res.r#type).unwrap(), Type::String);
+            assert!(matches!(res.value, Some(ValueType::Strings(_))));
+            assert_eq!(String::try_from(&res).unwrap(), value);
             Ok(())
         });
 
@@ -758,9 +613,8 @@ mod tests {
         let name = "sugar int";
         let value = 50i64;
         MockResultRegistry::set_set_output_impl(move |res| {
-            assert_eq!(res.name, name);
-            assert_eq!(res.value, value.to_le_bytes());
-            assert_eq!(Type::from_i32(res.r#type).unwrap(), Type::Int);
+            assert!(matches!(res.value, Some(ValueType::Integers(_))));
+            assert_eq!(i64::try_from(&res).unwrap(), value);
             Ok(())
         });
 
@@ -773,9 +627,8 @@ mod tests {
         let cloned_value = value.clone();
 
         MockResultRegistry::set_set_output_impl(move |res| {
-            assert_eq!(res.name, name);
-            assert_eq!(res.value, value);
-            assert_eq!(Type::from_i32(res.r#type).unwrap(), Type::Bytes);
+            assert!(matches!(res.value, Some(ValueType::Bytes(_))));
+            assert_eq!(<[u8]>::try_ref_from(&res).unwrap(), value);
             Ok(())
         });
 
@@ -787,13 +640,8 @@ mod tests {
         let value = 0.65;
 
         MockResultRegistry::set_set_output_impl(move |res| {
-            assert_eq!(res.name, name);
-            assert_eq!(res.value.len(), 8);
-            assert!(
-                (f64::from_le_bytes(bytes_as_64_bit_array!(res.value)) - value).abs()
-                    < f64::EPSILON
-            );
-            assert_eq!(Type::from_i32(res.r#type).unwrap(), Type::Float);
+            assert!(matches!(res.value, Some(ValueType::Floats(_))));
+            assert!((f32::try_from(&res).unwrap() - value).abs() < f32::EPSILON);
             Ok(())
         });
 
@@ -805,10 +653,8 @@ mod tests {
         let value = true;
 
         MockResultRegistry::set_set_output_impl(move |res| {
-            assert_eq!(res.name, name);
-            assert_eq!(res.value.len(), 1);
-            assert_eq!(res.value[0], value as u8);
-            assert_eq!(Type::from_i32(res.r#type).unwrap(), Type::Bool);
+            assert!(matches!(res.value, Some(ValueType::Bools(_))));
+            assert_eq!(bool::try_from(&res).unwrap(), value);
             Ok(())
         });
 
@@ -895,23 +741,10 @@ mod tests {
             Ok("sune.txt".to_owned())
         });
 
-        let arguments = InputValues {
-            values: vec![
-                InputValue {
-                    name: "sune".to_owned(),
-                    r#type: Type::Bool as i32,
-                    value: vec![0u8],
-                },
-                InputValue {
-                    name: "rune".to_owned(),
-                    r#type: Type::String as i32,
-                    value: "datta!".as_bytes().to_vec(),
-                },
-            ],
-        };
+        let stream = stream!({"sune" => false, "rune" => "datta!"});
 
-        let mut buff = Vec::with_capacity(arguments.encoded_len());
-        arguments.encode(&mut buff).unwrap();
+        let mut buff = Vec::with_capacity(stream.encoded_len());
+        stream.encode(&mut buff).unwrap();
 
         let code_attachment = Attachment {
             checksums: None,
@@ -927,35 +760,13 @@ mod tests {
         let mut code_buff = Vec::with_capacity(code_attachment.encoded_len());
         code_attachment.encode(&mut code_buff).unwrap();
 
-        MockResultRegistry::set_inputs(&[
-            InputValue {
-                name: "_code".to_owned(),
-                r#type: Type::Bytes as i32,
-                value: code_buff,
-            },
-            InputValue {
-                name: "_sha256".to_owned(),
-                r#type: Type::String as i32,
-                value: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                    .as_bytes()
-                    .to_vec(),
-            },
-            InputValue {
-                name: "_entrypoint".to_owned(),
-                r#type: Type::String as i32,
-                value: "windows.exe".as_bytes().to_vec(),
-            },
-            InputValue {
-                name: "_arguments".to_owned(),
-                r#type: Type::Bytes as i32,
-                value: buff,
-            },
-            InputValue {
-                name: "_attachments".to_owned(),
-                r#type: Type::Bytes as i32,
-                value: vec![],
-            },
-        ]);
+        MockResultRegistry::set_input_stream(stream!({
+            "_code" => code_buff,
+            "_sha256" => "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "_entrypoint" => "windows.exe",
+            "_arguments" => buff,
+            "_attachments" => vec![] as Vec<u8>
+        }));
 
         let eargs = executor::ExecutorArgs::from_wasi_host();
         assert!(eargs.is_ok());
@@ -971,10 +782,10 @@ mod tests {
         );
         assert_eq!(eargs.entrypoint(), "windows.exe");
 
-        assert_eq!(eargs.argument::<&str, bool>("sune").unwrap(), false);
+        assert_eq!(false, eargs.get_channel_value("sune").unwrap());
         assert_eq!(
-            eargs.argument::<&str, String>("rune").unwrap(),
-            "datta!".to_owned()
+            "datta!",
+            eargs.get_channel_value::<_, String>("rune").unwrap()
         );
     }
 

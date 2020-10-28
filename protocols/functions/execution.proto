@@ -6,54 +6,64 @@ import "functions/functions.proto";
 
 
 service Execution {
-  rpc Execute (ExecutionParameters) returns (ExecutionResult);
+  rpc ExecuteFunction (ExecutionParameters) returns (ExecutionResult);
 }
 
 
 message ExecutionParameters {
-  functions.Function function = 1;
-  repeated InputValue arguments = 2;
-}
-
-
-message InputValues {
-  repeated InputValue values = 1;
-}
-
-
-message InputValue {
   string name = 1;
-  functions.Type type = 2;
-  bytes value = 3; // TODO: Fix list of thigns. Maybe use one of repeated bytes or just bytes
+  string version_requirement = 2;
+  Stream arguments = 3;
 }
 
 
-/*
-TODO big brain 🧠 mode over here
-message FunctionArgument {
-  string name = 1;
+message Stream {
+  map<string, Channel> channels = 1;
+}
+
+
+message Channel {
   oneof value {
-    repeated string strings = 2;
-    repeated int ints = 3;
-    repeated float floats = 4;
-    repeated bool bools = 5;
-    repeated bytes bytes = 6;
+    Strings strings = 1;
+    Integers integers = 2;
+    Floats floats = 3;
+    Booleans bools = 4;
+    Bytes bytes = 5;
   }
 }
-  Return value should also do this and the burn parsing code 🗒️ ➡️ 🔥
-*/
+
+
+message Bytes {
+  bytes values = 1;
+}
+
+
+message Strings {
+  repeated string values = 1;
+}
+
+
+message Integers {
+  repeated int64 values = 1;
+}
+
+
+message Floats {
+  repeated float values = 1;
+}
+
+
+message Booleans {
+  repeated bool values = 1;
+}
 
 
 message ExecutionResult {
   ExecutionId execution_id = 1;
   oneof result {
     ExecutionError error = 2;
-    OutputValues ok = 3;
+    Stream ok = 3;
   }
-}
-
-message OutputValues {
-  repeated OutputValue values = 1;
 }
 
 
@@ -62,19 +72,7 @@ message ExecutionId {
 }
 
 
-message OutputValue {
-  string name = 1;
-  functions.Type type = 2;
-  bytes value = 3;
-}
-
-
 message ExecutionError {
   string msg = 1;
 }
 
-
-message Context {
-  repeated InputValue arguments = 1;
-  repeated functions.Attachment attachments = 2;
-}

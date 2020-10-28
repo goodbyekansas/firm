@@ -4,9 +4,8 @@ use std::{
     thread::{self, ThreadId},
 };
 
-use firm_protocols::{
-    execution::{InputValue, OutputValue},
-    functions::Attachment,
+use firm_types::{
+    execution::Channel, execution::Stream, functions::Attachment, stream::StreamExt,
     wasi::StartProcessRequest,
 };
 use lazy_static::lazy_static;
@@ -152,8 +151,13 @@ pub unsafe fn get_input(
 /// # Safety
 /// This is a mock implementation and while it uses
 /// unsafe functions it does nothing technically unsafe
-pub unsafe fn set_output(value_ptr: *const u8, value_len: usize) -> u32 {
-    MockResultRegistry::execute_set_output(value_ptr, value_len)
+pub unsafe fn set_output(
+    key_ptr: *const u8,
+    key_len: usize,
+    value_ptr: *const u8,
+    value_len: usize,
+) -> u32 {
+    MockResultRegistry::execute_set_output(key_ptr, key_len, value_ptr, value_len)
 }
 
 /// Set an error for this function
@@ -196,8 +200,8 @@ pub struct MockResultRegistry {
         MockCallbacks<dyn Fn(StartProcessRequest) -> Result<u64, u32> + Send>,
     run_host_process_closure: MockCallbacks<dyn Fn(StartProcessRequest) -> Result<i32, u32> + Send>,
     get_input_len_closure: MockCallbacks<dyn Fn(&str) -> Result<usize, u32> + Send>,
-    get_input_closure: MockCallbacks<dyn Fn(&str) -> Result<InputValue, u32> + Send>,
-    set_output_closure: MockCallbacks<dyn Fn(OutputValue) -> Result<(), u32> + Send>,
+    get_input_closure: MockCallbacks<dyn Fn(&str) -> Result<Channel, u32> + Send>,
+    set_output_closure: MockCallbacks<dyn Fn(Channel) -> Result<(), u32> + Send>,
     set_error_closure: MockCallbacks<dyn Fn(&str) -> Result<(), u32> + Send>,
 
     #[cfg(feature = "net")]
@@ -561,7 +565,7 @@ impl MockResultRegistry {
 
     pub fn set_get_input_impl<F>(closure: F)
     where
-        F: Fn(&str) -> Result<InputValue, u32> + 'static + Send,
+        F: Fn(&str) -> Result<Channel, u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -599,7 +603,7 @@ impl MockResultRegistry {
 
     pub fn set_set_output_impl<F>(closure: F)
     where
-        F: Fn(OutputValue) -> Result<(), u32> + 'static + Send,
+        F: Fn(Channel) -> Result<(), u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -608,14 +612,19 @@ impl MockResultRegistry {
             .insert(thread::current().id(), Box::new(closure));
     }
 
-    fn execute_set_output(value_ptr: *const u8, value_len: usize) -> u32 {
+    fn execute_set_output(
+        _key_ptr: *const u8,
+        _key_len: usize,
+        value_ptr: *const u8,
+        value_len: usize,
+    ) -> u32 {
         let mut vec = Vec::with_capacity(value_len);
         unsafe {
             value_ptr.copy_to(vec.as_mut_ptr(), value_len);
             vec.set_len(value_len);
         }
 
-        let return_value = OutputValue::decode(vec.as_slice()).unwrap();
+        let return_value = Channel::decode(vec.as_slice()).unwrap();
         MOCK_RESULT_REGISTRY
             .lock()
             .unwrap()
@@ -698,24 +707,20 @@ impl MockResultRegistry {
             )
     }
 
-    pub fn set_inputs(args: &[InputValue]) {
-        let argument_lengths: Vec<(String, usize)> = args
+    pub fn set_input_stream(stream: Stream) {
+        let channel_lengths: HashMap<String, usize> = stream
+            .channels
             .iter()
-            .map(|a| (a.name.clone(), a.encoded_len()))
+            .map(|(name, channel)| (name.clone(), channel.encoded_len()))
             .collect();
-        MockResultRegistry::set_get_input_len_impl(move |key| {
-            match argument_lengths.iter().find(|(name, _)| name == key) {
-                None => Err(1),
-                Some((_, len)) => Ok(*len),
-            }
+        MockResultRegistry::set_get_input_len_impl(move |key| match channel_lengths.get(key) {
+            None => Err(1),
+            Some(len) => Ok(*len),
         });
 
-        let arguments = args.to_vec();
-        MockResultRegistry::set_get_input_impl(move |key| {
-            match arguments.iter().find(|i| i.name == key) {
-                None => Err(1),
-                Some(a) => Ok(a.clone()),
-            }
+        MockResultRegistry::set_get_input_impl(move |key| match stream.get_channel(key) {
+            None => Err(1),
+            Some(channel) => Ok(channel.clone()),
         });
     }
 }

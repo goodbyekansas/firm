@@ -18,9 +18,9 @@ message Nothing {}
 
 
 message Filters {
-  NameFilter name_filter = 1;
+  NameFilter name = 1;
   VersionRequirement version_requirement = 2;
-  map<string, string> metadata_filter = 3;
+  map<string, string> metadata = 3;
   Ordering order = 4;
 }
 
@@ -57,8 +57,8 @@ message FunctionData {
   string name = 1;
   string version = 2;
   map<string, string> metadata = 3;
-  repeated functions.Input inputs = 4;
-  repeated functions.Output outputs = 5;
+  functions.StreamSpec input = 4;
+  functions.StreamSpec output = 5;
   AttachmentId code_attachment_id = 6;
   functions.Runtime runtime = 7;
   repeated AttachmentId attachment_ids = 8;

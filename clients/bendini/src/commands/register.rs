@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use firm_protocols::{
+use firm_types::{
     registry::{registry_client::RegistryClient, FunctionData},
     tonic,
 };

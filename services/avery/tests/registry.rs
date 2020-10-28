@@ -4,7 +4,7 @@ use futures::{self, pin_mut};
 use slog::o;
 use url::Url;
 
-use firm_protocols::{
+use firm_types::{
     registry::{
         registry_server::Registry, AttachmentId, AttachmentStreamUpload, Filters, FunctionId,
         NameFilter, Ordering, OrderingKey,
@@ -241,11 +241,11 @@ fn test_sorting() {
 
     // Reverse version sorting
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(Filters {
-        name_filter: Some(NameFilter {
+        name: Some(NameFilter {
             pattern: "my-name-a".to_owned(),
             exact_match: true,
         }),
-        metadata_filter: HashMap::new(),
+        metadata: HashMap::new(),
         order: Some(Ordering {
             offset: 0,
             limit: 10,
@@ -279,11 +279,11 @@ fn test_sorting() {
     )
     .unwrap();
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(Filters {
-        name_filter: Some(NameFilter {
+        name: Some(NameFilter {
             pattern: "sune".to_owned(),
             exact_match: false,
         }),
-        metadata_filter: HashMap::new(),
+        metadata: HashMap::new(),
         order: Some(Ordering {
             key: OrderingKey::NameVersion as i32,
             reverse: true,

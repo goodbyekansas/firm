@@ -14,17 +14,21 @@ use thiserror::Error;
 use url::Url;
 
 use crate::executor::wasi::WasiExecutor;
-use firm_protocols::{
+use firm_types::{
     execution::{
-        execution_result::Result as ProtoResult,
-        execution_server::Execution as ExecutionServiceTrait, ExecutionError, ExecutionId,
-        ExecutionParameters, ExecutionResult, InputValue, OutputValue, OutputValues,
+        channel::Value as ValueType, execution_result::Result as ProtoResult,
+        execution_server::Execution as ExecutionServiceTrait, Channel, ExecutionError, ExecutionId,
+        ExecutionParameters, ExecutionResult, Stream as ValueStream, Strings,
     },
-    functions::{Attachment, AuthMethod, Function, Input, Output, Type},
-    registry::{registry_server::Registry, Filters, Ordering, OrderingKey, VersionRequirement},
+    functions::{Attachment, AuthMethod, Function},
+    registry::{
+        registry_server::Registry, Filters, NameFilter, Ordering, OrderingKey, VersionRequirement,
+    },
+    stream::{StreamExt, ToChannel},
     tonic,
-    wasi::{Attachments, InputValues},
+    wasi::Attachments,
 };
+use uuid::Uuid;
 use ExecutorError::AttachmentReadError;
 
 pub struct ExecutionService {
@@ -133,11 +137,11 @@ impl ExecutionService {
         let result = self
             .registry
             .list(tonic::Request::new(Filters {
-                name_filter: None,
+                name: None,
                 version_requirement: version_requirement.map(|vr| VersionRequirement {
                     expression: vr.to_string(),
                 }),
-                metadata_filter: execution_env_metadata,
+                metadata: execution_env_metadata,
                 order: Some(Ordering {
                     key: OrderingKey::NameVersion as i32,
                     reverse: false,
@@ -155,35 +159,63 @@ impl ExecutionService {
 
 #[tonic::async_trait]
 impl ExecutionServiceTrait for ExecutionService {
-    async fn execute(
+    async fn execute_function(
         &self,
         request: tonic::Request<ExecutionParameters>,
     ) -> Result<tonic::Response<ExecutionResult>, tonic::Status> {
+        // TODO: We do not have a cookie for this yet. Should be a cookie for looking up logs of the execution etc.
+        let execution_id = ExecutionId {
+            uuid: Uuid::new_v4().to_string(),
+        };
         // lookup function
         let payload = request.into_inner();
-        let args = payload.arguments;
-        let function = payload.function.ok_or_else(|| {
-            tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                "Execute request needs to contain a function.",
-            )
-        })?;
+        let function = self
+            .registry
+            .list(tonic::Request::new(Filters {
+                name: Some(NameFilter {
+                    pattern: payload.name.clone(),
+                    exact_match: true,
+                }),
+                version_requirement: Some(VersionRequirement {
+                    expression: payload.version_requirement.clone(),
+                }),
+                metadata: HashMap::new(),
+                order: Some(Ordering {
+                    key: OrderingKey::NameVersion as i32,
+                    reverse: false,
+                    offset: 0,
+                    limit: 1,
+                }),
+            }))
+            .await?
+            .into_inner()
+            .functions
+            .first()
+            .cloned()
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "Could not find function \"{}\" with version requirement: \"{}\"",
+                    &payload.name, &payload.version_requirement
+                ))
+            })?;
 
         // validate args
-        validate_args(function.inputs.iter(), &args).map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!(
-                    "Invalid function arguments: {}",
-                    e.iter()
-                        .map(|ae| format!("{}", ae))
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                ),
-            )
-        })?;
+        let args = payload.arguments.unwrap_or_default();
+        args.validate(&function.input.clone().unwrap_or_default())
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    format!(
+                        "Invalid function arguments: {}",
+                        e.iter()
+                            .map(|ae| format!("{}", ae))
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                    ),
+                )
+            })?;
 
-        let runtime = function.runtime.as_ref().ok_or_else(|| {
+        let runtime = function.runtime.clone().ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::Internal,
                 "Function descriptor did not contain any runtime specification.",
@@ -205,22 +237,20 @@ impl ExecutionServiceTrait for ExecutionService {
                 let res = executor.execute(
                     ExecutorParameters {
                         function_name: function_name.clone(),
-                        entrypoint: runtime.entrypoint.to_owned(),
+                        entrypoint: runtime.entrypoint,
                         code: function.code.clone(),
-                        arguments: runtime.arguments.clone(),
+                        arguments: runtime.arguments,
                     },
                     args,
                     function.attachments.clone(),
                 );
                 match res {
-                    Ok(Ok(r)) => validate_results(function.outputs.iter(), &r)
+                    Ok(Ok(r)) => r
+                        .validate(&function.output.unwrap_or_default())
                         .map(|_| {
                             tonic::Response::new(ExecutionResult {
-                                // TODO: We do not have a cookie for this yet. Should be a cookie for looking up logs of the execution etc.
-                                execution_id: Some(ExecutionId {
-                                    uuid: uuid::Uuid::new_v4().to_string(),
-                                }),
-                                result: Some(ProtoResult::Ok(OutputValues { values: r })),
+                                execution_id: Some(execution_id),
+                                result: Some(ProtoResult::Ok(r)),
                             })
                         })
                         .map_err(|e| {
@@ -237,10 +267,7 @@ impl ExecutionServiceTrait for ExecutionService {
                             )
                         }),
                     Ok(Err(e)) => Ok(tonic::Response::new(ExecutionResult {
-                        // TODO: We do not have a cookie for this yet. Should be a cookie for looking up logs of the execution etc.
-                        execution_id: Some(ExecutionId {
-                            uuid: uuid::Uuid::new_v4().to_string(),
-                        }),
+                        execution_id: Some(execution_id),
                         result: Some(ProtoResult::Error(ExecutionError { msg: e })),
                     })),
 
@@ -265,9 +292,9 @@ pub trait FunctionExecutor: Debug {
     fn execute(
         &self,
         executor_context: ExecutorParameters,
-        arguments: Vec<InputValue>,
+        arguments: ValueStream,
         attachments: Vec<Attachment>,
-    ) -> Result<Result<Vec<OutputValue>, String>, ExecutorError>;
+    ) -> Result<Result<ValueStream, String>, ExecutorError>;
 }
 
 pub trait AttachmentDownload {
@@ -347,10 +374,23 @@ impl FunctionExecutor for FunctionAdapter {
     fn execute(
         &self,
         executor_context: ExecutorParameters,
-        arguments: Vec<InputValue>,
+        arguments: ValueStream,
         attachments: Vec<Attachment>,
-    ) -> Result<Result<Vec<OutputValue>, String>, ExecutorError> {
-        let mut executor_function_arguments = vec![];
+    ) -> Result<Result<ValueStream, String>, ExecutorError> {
+        let mut executor_function_arguments = ValueStream {
+            channels: executor_context
+                .arguments
+                .into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        Channel {
+                            value: Some(ValueType::Strings(Strings { values: vec![v] })),
+                        },
+                    )
+                })
+                .collect(),
+        };
 
         // not having any code for the function is a valid case used for example to execute
         // external functions (gcp, aws lambdas, etc)
@@ -358,56 +398,34 @@ impl FunctionExecutor for FunctionAdapter {
             let mut code_buf = Vec::with_capacity(code.encoded_len());
             code.encode(&mut code_buf)?;
 
-            executor_function_arguments.push(InputValue {
-                name: "_code".to_owned(),
-                r#type: Type::Bytes as i32,
-                value: code_buf,
-            });
+            executor_function_arguments
+                .channels
+                .insert("_code".to_owned(), code_buf.to_channel());
 
             let checksums = code.checksums.ok_or(ExecutorError::MissingChecksums)?;
-            executor_function_arguments.push(InputValue {
-                name: "_sha256".to_owned(),
-                r#type: Type::String as i32,
-                value: checksums.sha256.as_bytes().to_vec(),
-            });
+            executor_function_arguments
+                .channels
+                .insert("_sha256".to_owned(), checksums.sha256.to_channel());
         }
 
-        executor_function_arguments.push(InputValue {
-            name: "_entrypoint".to_owned(),
-            r#type: Type::String as i32,
-            value: executor_context.entrypoint.as_bytes().to_vec(),
-        });
-
-        executor_function_arguments.append(
-            &mut executor_context
-                .arguments
-                .into_iter()
-                .map(|(k, v)| InputValue {
-                    name: k,
-                    r#type: Type::String as i32,
-                    value: v.as_bytes().to_vec(),
-                })
-                .collect(),
+        executor_function_arguments.channels.insert(
+            "_entrypoint".to_owned(),
+            executor_context.entrypoint.to_channel(),
         );
 
         // nest arguments and attachments
-        let proto_args = InputValues { values: arguments };
-        let mut arguments_buf: Vec<u8> = Vec::with_capacity(proto_args.encoded_len());
-        proto_args.encode(&mut arguments_buf)?;
-        executor_function_arguments.push(InputValue {
-            name: "_arguments".to_owned(),
-            r#type: Type::Bytes as i32,
-            value: arguments_buf,
-        });
+        let mut arguments_buf: Vec<u8> = Vec::with_capacity(arguments.encoded_len());
+        arguments.encode(&mut arguments_buf)?;
+        executor_function_arguments
+            .channels
+            .insert("_arguments".to_owned(), arguments_buf.to_channel());
 
         let proto_attachments = Attachments { attachments };
         let mut attachments_buf: Vec<u8> = Vec::with_capacity(proto_attachments.encoded_len());
         proto_attachments.encode(&mut attachments_buf)?;
-        executor_function_arguments.push(InputValue {
-            name: "_attachments".to_owned(),
-            r#type: Type::Bytes as i32,
-            value: attachments_buf,
-        });
+        executor_function_arguments
+            .channels
+            .insert("_attachments".to_owned(), attachments_buf.to_channel());
 
         let function_exe_env =
             self.executor_function.runtime.clone().ok_or_else(|| {
@@ -424,175 +442,6 @@ impl FunctionExecutor for FunctionAdapter {
             executor_function_arguments,
             self.executor_function.attachments.clone(),
         )
-    }
-}
-
-fn validate_argument_type(arg_type: Type, argument_value: &[u8]) -> Result<(), String> {
-    match arg_type {
-        Type::String => str::from_utf8(&argument_value)
-            .map(|_| ())
-            .map_err(|_| arg_type.to_string()),
-        Type::Int | Type::Float => {
-            if argument_value.len() == 8 {
-                Ok(())
-            } else {
-                Err(arg_type.to_string())
-            }
-        }
-        Type::Bool => {
-            if argument_value.len() == 1 {
-                Ok(())
-            } else {
-                Err(arg_type.to_string())
-            }
-        }
-        Type::Bytes => Ok(()), // really do not know a lot about bytes,
-    }
-}
-
-fn get_reasonable_value_string(argument_value: &[u8]) -> String {
-    const MAX_PRINTABLE_VALUE_LENGTH: usize = 256;
-    if argument_value.len() < MAX_PRINTABLE_VALUE_LENGTH {
-        String::from_utf8(argument_value.to_vec())
-            .unwrap_or_else(|_| String::from("invalid utf-8 string 🚑"))
-    } else {
-        format!(
-            "too long value (> {} bytes, vaccuum tubes will explode) 💣",
-            MAX_PRINTABLE_VALUE_LENGTH
-        )
-    }
-}
-
-pub fn validate_results<'a, I>(
-    outputs: I,
-    results: &[OutputValue],
-) -> Result<(), Vec<ExecutorError>>
-where
-    I: IntoIterator<Item = &'a Output>,
-{
-    let (_, errors): (Vec<_>, Vec<_>) = outputs
-        .into_iter()
-        .map(|output| {
-            results
-                .iter()
-                .find(|arg| arg.name == output.name)
-                .map_or_else(
-                    || Err(ExecutorError::RequiredResultMissing(output.name.clone())),
-                    |arg| {
-                        if output.r#type == arg.r#type {
-                            Type::from_i32(arg.r#type).map_or_else(
-                                || Err(ExecutorError::ResultTypeOutOfRange(arg.r#type)),
-                                |at| {
-                                    validate_argument_type(at, &arg.value).map_err(|tp| {
-                                        ExecutorError::InvalidResultValue {
-                                            result_name: arg.name.clone(),
-                                            tp,
-                                            value: get_reasonable_value_string(&arg.value),
-                                        }
-                                    })
-                                },
-                            )
-                        } else {
-                            Err(ExecutorError::MismatchedResultType {
-                                result_name: output.name.clone(),
-                                expected: ProtoArgumentTypeToString::to_string(&output.r#type),
-                                got: ProtoArgumentTypeToString::to_string(&arg.r#type),
-                            })
-                        }
-                    },
-                )
-        })
-        .partition(Result::is_ok);
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.into_iter().map(Result::unwrap_err).collect())
-    }
-}
-
-/// Validate arguments
-///
-/// `inputs` is the functions' description of the arguments and `args` is the passed-in arguments
-/// as an array of `InputValue`. This function returns all validation errors as a
-/// `Vec<ExecutionError>`.
-fn validate_args<'a, I>(inputs: I, args: &[InputValue]) -> Result<(), Vec<ExecutorError>>
-where
-    I: IntoIterator<Item = &'a Input>,
-{
-    // TODO: Currently we do not error on unknown arguments that were supplied
-    // this can be done by generating a list of the arguments that we have used.
-    // This list must be equal in size to the supplied arguments list.
-
-    let (_, errors): (Vec<_>, Vec<_>) = inputs
-        .into_iter()
-        .map(|input| {
-            args.iter().find(|arg| arg.name == input.name).map_or_else(
-                // argument was not found in the sent in args
-                || {
-                    if input.required {
-                        Err(ExecutorError::RequiredArgumentMissing(input.name.clone()))
-                    } else {
-                        Ok(())
-                    }
-                },
-                // argument was found in the sent in args, validate it
-                |arg| {
-                    if input.r#type == arg.r#type {
-                        Type::from_i32(arg.r#type).map_or_else(
-                            || Err(ExecutorError::OutOfRangeArgumentType(arg.r#type)),
-                            |at| {
-                                validate_argument_type(at, &arg.value).map_err(|tp| {
-                                    ExecutorError::InvalidArgumentValue {
-                                        argument_name: arg.name.clone(),
-                                        tp,
-                                        value: get_reasonable_value_string(&arg.value),
-                                    }
-                                })
-                            },
-                        )
-                    } else {
-                        Err(ExecutorError::MismatchedArgumentType {
-                            argument_name: input.name.clone(),
-                            expected: ProtoArgumentTypeToString::to_string(&input.r#type),
-                            got: ProtoArgumentTypeToString::to_string(&arg.r#type),
-                        })
-                    }
-                },
-            )
-        })
-        .partition(Result::is_ok);
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.into_iter().map(Result::unwrap_err).collect())
-    }
-}
-
-trait ProtoArgumentTypeToString {
-    fn to_string(&self) -> String;
-}
-
-impl ProtoArgumentTypeToString for Type {
-    fn to_string(&self) -> String {
-        match self {
-            Type::String => "string",
-            Type::Int => "int",
-            Type::Bool => "bool",
-            Type::Float => "float",
-            Type::Bytes => "bytes",
-        }
-        .to_owned()
-    }
-}
-
-impl ProtoArgumentTypeToString for i32 {
-    fn to_string(&self) -> String {
-        match Type::from_i32(*self) {
-            Some(at) => ProtoArgumentTypeToString::to_string(&at),
-            None => "invalid type".to_owned(),
-        }
     }
 }
 
@@ -631,49 +480,6 @@ pub enum ExecutorError {
     #[error("Function \"{0}\" did not have a runtime specified.")]
     MissingRuntime(String),
 
-    #[error("Out of range argument type found: {0}. Protobuf definitions out of date?")]
-    OutOfRangeArgumentType(i32),
-
-    #[error(
-        "Argument \"{argument_name}\" has unexpected type. Expected \"{expected}\", got \"{got}\""
-    )]
-    MismatchedArgumentType {
-        argument_name: String,
-        expected: String,
-        got: String,
-    },
-
-    #[error("Argument \"{argument_name}\" could not be parsed into \"{tp}\". Value: \"{value}\"")]
-    InvalidArgumentValue {
-        argument_name: String,
-        tp: String,
-        value: String,
-    },
-
-    #[error("Failed to find required argument {0}")]
-    RequiredArgumentMissing(String),
-
-    #[error("Failed to find mandatory result \"{0}\"")]
-    RequiredResultMissing(String),
-
-    #[error(
-        "Output result \"{result_name}\" has unexpected type. Expected \"{expected}\", got \"{got}\""
-    )]
-    MismatchedResultType {
-        result_name: String,
-        expected: String,
-        got: String,
-    },
-    #[error("Out of range result type found: {0}. Protobuf definitions out of date?")]
-    ResultTypeOutOfRange(i32),
-
-    #[error("Result \"{result_name}\" could not be parsed into \"{tp}\". Value: \"{value}\"")]
-    InvalidResultValue {
-        result_name: String,
-        tp: String,
-        value: String,
-    },
-
     #[error("Function is missing checksums.")]
     MissingChecksums,
 
@@ -706,8 +512,10 @@ mod tests {
     use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
     use crate::registry::RegistryService;
-    use firm_protocols::{functions::Runtime, registry::FunctionData};
-    use firm_protocols_test_helpers::{attachment, attachment_file, code_file, function_data};
+    use firm_protocols_test_helpers::{
+        attachment, attachment_file, code_file, function_data, stream,
+    };
+    use firm_types::{functions::Runtime, registry::FunctionData};
 
     macro_rules! null_logger {
         () => {{
@@ -719,202 +527,6 @@ mod tests {
         () => {{
             RegistryService::new(null_logger!())
         }};
-    }
-
-    #[test]
-    fn parse_required() {
-        let inputs = vec![Input {
-            name: "very_important_argument".to_owned(),
-            description: "This is importante!".to_owned(),
-            r#type: Type::String as i32,
-            required: true,
-        }];
-
-        let args = vec![InputValue {
-            name: "very_important_argument".to_owned(),
-            r#type: Type::String as i32,
-            value: b"yes".to_vec(),
-        }];
-
-        let r = validate_args(inputs.iter(), &[]);
-        assert!(r.is_err());
-
-        let r = validate_args(inputs.iter(), &args);
-        assert!(r.is_ok());
-    }
-
-    #[test]
-    fn parse_optional() {
-        let inputs = vec![Input {
-            name: "not_very_important_argument".to_owned(),
-            description: "I do not like this".to_owned(),
-            r#type: Type::String as i32,
-            required: false,
-        }];
-
-        let r = validate_args(inputs.iter(), &[]);
-        assert!(r.is_ok());
-    }
-
-    #[test]
-    fn parse_types() {
-        let inputs = vec![
-            Input {
-                name: "string_arg".to_owned(),
-                description: "This is a string arg".to_owned(),
-                r#type: Type::String as i32,
-                required: true,
-            },
-            Input {
-                name: "bool_arg".to_owned(),
-                description: "This is a bool arg".to_owned(),
-                r#type: Type::Bool as i32,
-                required: true,
-            },
-            Input {
-                name: "int_arg".to_owned(),
-                description: "This is an int arg".to_owned(),
-                r#type: Type::Int as i32,
-                required: true,
-            },
-            Input {
-                name: "float_arg".to_owned(),
-                description: "This is a floater 💩".to_owned(),
-                r#type: Type::Float as i32,
-                required: true,
-            },
-            Input {
-                name: "bytes_arg".to_owned(),
-                description: "This is a bytes argument".to_owned(),
-                r#type: Type::Bytes as i32,
-                required: false,
-            },
-        ];
-
-        let correct_args = vec![
-            InputValue {
-                name: "string_arg".to_owned(),
-                r#type: Type::String as i32,
-                value: b"yes".to_vec(),
-            },
-            InputValue {
-                name: "bool_arg".to_owned(),
-                r#type: Type::Bool as i32,
-                value: vec![true as u8],
-            },
-            InputValue {
-                name: "int_arg".to_owned(),
-                r#type: Type::Int as i32,
-                value: 4i64.to_le_bytes().to_vec(),
-            },
-            InputValue {
-                name: "float_arg".to_owned(),
-                r#type: Type::Float as i32,
-                value: 4.5f64.to_le_bytes().to_vec(),
-            },
-            InputValue {
-                name: "bytes_arg".to_owned(),
-                r#type: Type::Bytes as i32,
-                value: vec![13, 37, 13, 37, 13, 37],
-            },
-        ];
-
-        let r = validate_args(inputs.iter(), &correct_args);
-
-        assert!(r.is_ok());
-
-        // one has the wrong type 🤯
-        let almost_correct_args = vec![
-            InputValue {
-                name: "string_arg".to_owned(),
-                r#type: Type::String as i32,
-                value: b"yes".to_vec(),
-            },
-            InputValue {
-                name: "bool_arg".to_owned(),
-                r#type: Type::Bool as i32,
-                value: 4i64.to_le_bytes().to_vec(),
-            },
-            InputValue {
-                name: "int_arg".to_owned(),
-                r#type: Type::Int as i32,
-                value: 4i64.to_le_bytes().to_vec(),
-            },
-            InputValue {
-                name: "float_arg".to_owned(),
-                r#type: Type::Float as i32,
-                value: 4.5f64.to_le_bytes().to_vec(),
-            },
-        ];
-        let r = validate_args(inputs.iter(), &almost_correct_args);
-
-        assert!(r.is_err());
-        assert_eq!(1, r.unwrap_err().len());
-
-        // all of them has the wrong type 🚓💨
-        let no_correct_args = vec![
-            InputValue {
-                name: "string_arg".to_owned(),
-                r#type: Type::String as i32,
-                value: vec![0, 159, 146, 150], // not a valid utf-8 string,
-            },
-            InputValue {
-                name: "bool_arg".to_owned(),
-                r#type: Type::Bool as i32,
-                value: 4i64.to_le_bytes().to_vec(),
-            },
-            InputValue {
-                name: "int_arg".to_owned(),
-                r#type: Type::Int as i32,
-                value: vec![0, 159, 146, 150, 99], // too long to be an int,
-            },
-            InputValue {
-                name: "float_arg".to_owned(),
-                r#type: Type::Float as i32,
-                value: vec![0, 159, 146, 150, 99], // too long to be a float,
-            },
-        ];
-        let r = validate_args(inputs.iter(), &no_correct_args);
-
-        assert!(r.is_err());
-        assert_eq!(4, r.unwrap_err().len());
-    }
-
-    // Tests for validating results
-    #[test]
-    fn validate_outputs() {
-        let outputs = vec![Output {
-            name: "very_important_output".to_owned(),
-            description: "Yes?".to_owned(),
-            r#type: Type::String as i32,
-        }];
-
-        let result = vec![OutputValue {
-            name: "very_important_output".to_owned(),
-            r#type: Type::String as i32,
-            value: vec![],
-        }];
-
-        // no values
-        let r = validate_results(outputs.iter(), &[]);
-        assert!(r.is_err());
-
-        // ok values
-        let r = validate_results(outputs.iter(), &result);
-        assert!(r.is_ok());
-
-        // give bad type
-        let result = vec![OutputValue {
-            name: "very_important_output".to_owned(),
-            r#type: Type::String as i32,
-            value: vec![0, 159, 146, 150], // not a valid utf-8 string,,
-        }];
-
-        let r = validate_results(outputs.iter(), &result);
-        assert!(r.is_err());
-        let err = r.unwrap_err();
-        assert_eq!(1, err.len());
-        assert!(matches!(err.first().unwrap(), ExecutorError::InvalidResultValue { .. }));
     }
 
     #[test]
@@ -954,7 +566,7 @@ mod tests {
     #[derive(Default, Debug)]
     pub struct FakeExecutor {
         executor_context: RefCell<ExecutorParameters>,
-        arguments: RefCell<Vec<InputValue>>,
+        arguments: RefCell<ValueStream>,
         attachments: RefCell<Vec<Attachment>>,
         downloaded_code: RefCell<Vec<u8>>,
     }
@@ -963,9 +575,9 @@ mod tests {
         fn execute(
             &self,
             executor_context: ExecutorParameters,
-            arguments: Vec<InputValue>,
+            arguments: ValueStream,
             attachments: Vec<Attachment>,
-        ) -> Result<Result<Vec<OutputValue>, String>, ExecutorError> {
+        ) -> Result<Result<ValueStream, String>, ExecutorError> {
             *self.downloaded_code.borrow_mut() = executor_context
                 .code
                 .as_ref()
@@ -974,7 +586,7 @@ mod tests {
             *self.executor_context.borrow_mut() = executor_context;
             *self.arguments.borrow_mut() = arguments;
             *self.attachments.borrow_mut() = attachments;
-            Ok(Ok(Vec::new()))
+            Ok(Ok(stream!()))
         }
     }
 
@@ -995,7 +607,7 @@ mod tests {
             Box::new(fake.clone()),
             Function {
                 runtime: Some(Runtime {
-                    name: "Avlivningsmiljö 🗡️".to_owned(),
+                    name: "Springtid 🏃⌚".to_owned(),
                     entrypoint: "ingångspoäng 💯".to_owned(),
                     arguments: HashMap::new(),
                 }),
@@ -1004,18 +616,13 @@ mod tests {
                 name: "wienerbröööööööö".to_owned(),
                 version: "2019.3-5-PR2".to_owned(),
                 metadata: HashMap::new(),
-                inputs: vec![],
-                outputs: vec![],
+                input: None,
+                output: None,
                 created_at: 0,
             },
             null_logger!(),
         );
         let code = "asd";
-        let args = vec![InputValue {
-            name: "test-arg".to_owned(),
-            r#type: Type::String as i32,
-            value: b"test-value".to_vec(),
-        }];
         let entry = "entry";
         let attachments = vec![attachment!("fake://")];
         let result = nested.execute(
@@ -1025,7 +632,7 @@ mod tests {
                 code: Some(code_file!(code.as_bytes())),
                 arguments: runtime_args.clone(),
             },
-            args,
+            stream!({"test-arg" => "test-value"}),
             attachments,
         );
         // Test that code got passed
@@ -1036,69 +643,45 @@ mod tests {
         {
             let arguments = fake.arguments.borrow();
 
-            assert_eq!(arguments.len(), 6);
-            let code_attachment = Attachment::decode(
-                arguments
-                    .iter()
-                    .find(|a| a.name == "_code")
-                    .unwrap()
-                    .value
-                    .as_slice(),
-            )
-            .unwrap();
+            assert_eq!(arguments.channels.len(), 6);
+            let code_attachment =
+                Attachment::decode(arguments.get_channel_as_ref::<[u8]>("_code").unwrap()).unwrap();
+
             assert_eq!(code_attachment.download().unwrap(), code.as_bytes());
             assert_eq!(
                 arguments
-                    .iter()
-                    .find(|a| a.name == "_entrypoint")
-                    .unwrap()
-                    .value,
-                entry.as_bytes()
+                    .get_channel_as_ref::<String>("_entrypoint")
+                    .unwrap(),
+                entry
             );
             assert_eq!(
-                arguments
-                    .iter()
-                    .find(|a| a.name == "_sha256")
-                    .unwrap()
-                    .value,
-                "688787d8ff144c502c7f5cffaafe2cc588d86079f9de88304c26b0cb99ce91c6".as_bytes()
+                arguments.get_channel_as_ref::<String>("_sha256").unwrap(),
+                "688787d8ff144c502c7f5cffaafe2cc588d86079f9de88304c26b0cb99ce91c6"
             );
 
-            let inner_arguments: InputValues = InputValues::decode(
-                arguments
-                    .iter()
-                    .find(|a| a.name == "_arguments")
-                    .unwrap()
-                    .value
-                    .as_slice(),
-            )
-            .unwrap();
+            let inner_arguments: ValueStream =
+                ValueStream::decode(arguments.get_channel_as_ref::<[u8]>("_arguments").unwrap())
+                    .unwrap();
+
             assert_eq!(
                 inner_arguments
-                    .values
-                    .iter()
-                    .find(|a| a.name == "test-arg")
-                    .unwrap()
-                    .value,
-                b"test-value"
+                    .get_channel_as_ref::<String>("test-arg")
+                    .unwrap(),
+                "test-value"
             );
 
             // Test that we get the execution environment args we supplied earlier
             let fake_exe_args = &fake.executor_context.borrow().arguments.clone();
             assert_eq!(fake_exe_args.len(), 0);
             assert_eq!(
-                arguments.iter().find(|v| v.name == "sune").unwrap().value,
-                b"bune"
+                arguments.get_channel_as_ref::<String>("sune").unwrap(),
+                "bune"
             );
         }
 
         // Test president! 🕴
         {
-            let args = vec![InputValue {
-                name: "_code".to_owned(), // deliberately use a reserved word 👿
-                r#type: Type::String as i32,
-                value: b"this-is-not-code".to_vec(),
-            }];
+            let args = stream!({"_code" => "this-is-not-code"}); // deliberately use a reserved word 👿
 
             let mut runtime_args = HashMap::new();
             runtime_args.insert("the-arg".to_owned(), "this-is-exec-arg".to_owned());
@@ -1115,19 +698,13 @@ mod tests {
 
             assert!(result.is_ok());
             let args = &fake.arguments.borrow();
-            assert!(args.iter().any(|a| a.name == "_code"));
-            assert!(args.iter().any(|a| a.name == "_sha256"));
-            assert!(args.iter().any(|a| a.name == "_entrypoint"));
+            assert!(args.has_channel("_code"));
+            assert!(args.has_channel("_sha256"));
+            assert!(args.has_channel("_entrypoint"));
 
             // make sure that we get the actual code and not the argument named _code
-            let code_attachment = Attachment::decode(
-                args.iter()
-                    .find(|a| a.name == "_code")
-                    .unwrap()
-                    .value
-                    .as_slice(),
-            )
-            .unwrap();
+            let code_attachment =
+                Attachment::decode(args.get_channel_as_ref::<[u8]>("_code").unwrap()).unwrap();
             assert_eq!(
                 String::from_utf8(code_attachment.download().unwrap()).unwrap(),
                 "code"
@@ -1148,18 +725,14 @@ mod tests {
                 name: "mandelkubb".to_owned(),
                 version: "2022.1-5-PR50".to_owned(),
                 metadata: HashMap::new(),
-                inputs: vec![],
-                outputs: vec![],
+                input: None,
+                output: None,
                 created_at: 0u64,
             },
             null_logger!(),
         );
         {
-            let args = vec![InputValue {
-                name: "test-arg".to_owned(),
-                r#type: Type::String as i32,
-                value: b"test-value".to_vec(),
-            }];
+            let args = stream!({"test-arg" => "test-value"});
             let result = nested2.execute(
                 ExecutorParameters {
                     function_name: "test".to_owned(),
@@ -1173,9 +746,9 @@ mod tests {
 
             assert!(result.is_ok());
             let args = &fake.arguments.borrow();
-            assert!(args.iter().any(|a| a.name == "_code"));
-            assert!(args.iter().any(|a| a.name == "_sha256"));
-            assert!(args.iter().any(|a| a.name == "_entrypoint"));
+            assert!(args.channels.contains_key("_code"));
+            assert!(args.channels.contains_key("_sha256"));
+            assert!(args.channels.contains_key("_entrypoint"));
         }
     }
 
@@ -1221,8 +794,8 @@ mod tests {
                 name: "oran-func".to_owned(),
                 version: "0.1.1".to_owned(),
                 metadata: wasi_executor_metadata,
-                inputs: vec![],
-                outputs: vec![],
+                input: None,
+                output: None,
                 attachment_ids: vec![],
             },
             FunctionData {
@@ -1235,8 +808,8 @@ mod tests {
                 name: "precious-granag".to_owned(),
                 version: "8.1.5".to_owned(),
                 metadata: nested_executor_metadata,
-                inputs: vec![],
-                outputs: vec![],
+                input: None,
+                output: None,
                 attachment_ids: vec![],
             },
             FunctionData {
@@ -1249,8 +822,8 @@ mod tests {
                 name: "precious-granag".to_owned(),
                 version: "3.2.2".to_owned(),
                 metadata: broken_executor_metadata,
-                inputs: vec![],
-                outputs: vec![],
+                input: None,
+                output: None,
                 attachment_ids: vec![],
             },
         ]

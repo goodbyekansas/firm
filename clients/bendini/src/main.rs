@@ -7,7 +7,7 @@ mod manifest;
 use std::path::PathBuf;
 
 // 3rd party
-use firm_protocols::{
+use firm_types::{
     execution::execution_client::ExecutionClient,
     registry::registry_client::RegistryClient,
     tonic::{

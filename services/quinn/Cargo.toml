@@ -29,7 +29,7 @@ url = "2"
 uuid = { version = "0.8", features = ["v4"] }
 
 
-firm-protocols = { path = "nix-deps/rust-firm-protocols" }
+firm-types = { path = "nix-deps/firm-types" }
 
 [dev-dependencies]
 firm-protocols-test-helpers = { path = "nix-deps/rust-firm-protocols-test-helpers" }

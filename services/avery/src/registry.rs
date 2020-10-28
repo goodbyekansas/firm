@@ -14,10 +14,10 @@ use slog::{info, warn, Logger};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
-use firm_protocols::{
+use firm_types::{
     functions::{
-        Attachment, AttachmentUrl, AuthMethod, Function as ProtoFunction, Functions, Input, Output,
-        Runtime,
+        Attachment, AttachmentUrl, AuthMethod, Function as ProtoFunction, Functions, Runtime,
+        StreamSpec,
     },
     registry::{
         registry_server::Registry, AttachmentData, AttachmentHandle, AttachmentId,
@@ -39,8 +39,8 @@ struct Function {
     created_at: u64,
     version: Version,
     runtime: Runtime,
-    inputs: Vec<Input>,
-    outputs: Vec<Output>,
+    input: Option<StreamSpec>,
+    output: Option<StreamSpec>,
     code: Option<AttachmentId>,
     attachments: Vec<AttachmentId>,
     metadata: HashMap<String, String>,
@@ -94,7 +94,7 @@ impl RegistryService {
     pub async fn upload_stream_attachment<S>(
         &self,
         attachment_stream_upload_request: tonic::Request<S>,
-    ) -> Result<tonic::Response<firm_protocols::registry::Nothing>, tonic::Status>
+    ) -> Result<tonic::Response<firm_types::registry::Nothing>, tonic::Status>
     where
         S: std::marker::Unpin + Stream<Item = Result<AttachmentStreamUpload, tonic::Status>>,
     {
@@ -208,7 +208,7 @@ impl RegistryService {
                 }
             })?;
 
-        Ok(tonic::Response::new(firm_protocols::registry::Nothing {}))
+        Ok(tonic::Response::new(firm_types::registry::Nothing {}))
     }
 
     fn get_attachment(&self, id: &AttachmentId) -> Result<(Attachment, PathBuf), tonic::Status> {
@@ -260,8 +260,8 @@ impl RegistryService {
             name: f.name.clone(),
             version: f.version.to_string(),
             metadata: f.metadata.clone(),
-            inputs: f.inputs.clone(),
-            outputs: f.outputs.clone(),
+            input: f.input.clone(),
+            output: f.output.clone(),
             runtime: Some(f.runtime.clone()),
             code,
             attachments,
@@ -284,13 +284,13 @@ impl Registry for RegistryService {
         })?;
 
         let payload = list_request.into_inner();
-        let required_metadata = if payload.metadata_filter.is_empty() {
+        let required_metadata = if payload.metadata.is_empty() {
             None
         } else {
-            Some(payload.metadata_filter.clone())
+            Some(payload.metadata.clone())
         };
 
-        let name_filter = payload.name_filter.unwrap_or_default();
+        let name_filter = payload.name.unwrap_or_default();
 
         let order = payload.order.unwrap_or_else(|| Ordering {
             key: OrderingKey::NameVersion as i32,
@@ -457,8 +457,8 @@ impl Registry for RegistryService {
             version,
             runtime,
             metadata: payload.metadata,
-            inputs: payload.inputs,
-            outputs: payload.outputs,
+            input: payload.input,
+            output: payload.output,
             code: payload.code_attachment_id,
             attachments: payload.attachment_ids,
             created_at: std::time::SystemTime::now()
@@ -550,7 +550,7 @@ impl Registry for RegistryService {
     async fn upload_streamed_attachment(
         &self,
         attachment_stream_upload_request: tonic::Request<tonic::Streaming<AttachmentStreamUpload>>,
-    ) -> Result<tonic::Response<firm_protocols::registry::Nothing>, tonic::Status> {
+    ) -> Result<tonic::Response<firm_types::registry::Nothing>, tonic::Status> {
         // TODO: use metadata for "global" upload data such as AttachmentId
         self.upload_stream_attachment(attachment_stream_upload_request)
             .await

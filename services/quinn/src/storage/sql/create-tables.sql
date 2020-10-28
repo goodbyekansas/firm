@@ -23,18 +23,7 @@ exception
 end $$;
 
 do $$ begin
-    create type function_input as (
-        name varchar(128),
-        description text,
-        required bool,
-        argument_type argument_type
-    );
-exception
-    when duplicate_object then null;
-end $$;
-
-do $$ begin
-    create type function_output as (
+    create type channel_spec as (
         name varchar(128),
         description text,
         argument_type argument_type
@@ -74,8 +63,9 @@ create table if not exists functions (
     version version,
     metadata hstore,
     code uuid null,
-    inputs function_input[],
-    outputs function_output[],
+    required_inputs channel_spec[],
+    optional_inputs channel_spec[],
+    outputs channel_spec[],
     runtime runtime,
     created_at timestamp default (now() at time zone 'utc'),
     constraint name_version_key primary key(name, version),
@@ -124,8 +114,9 @@ create or replace function insert_function (
     version version,
     metadata hstore,
     code uuid,
-    inputs function_input[],
-    outputs function_output[],
+    required_inputs channel_spec[],
+    optional_inputs channel_spec[],
+    outputs channel_spec[],
     runtime runtime,
     attachment_ids uuid[]
 ) returns function_with_attachments as
@@ -140,7 +131,8 @@ begin
         version,
         metadata,
         code,
-        inputs,
+        required_inputs,
+        optional_inputs,
         outputs,
         runtime,
         default
