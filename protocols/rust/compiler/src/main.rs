@@ -24,17 +24,14 @@ struct Options {
 
 fn main() {
     let options = Options::from_args();
-    match fs::create_dir_all(&options.out_dir).and_then(|_| {
+    if let Err(e) = fs::create_dir_all(&options.out_dir).and_then(|_| {
         tonic_build::configure()
             .out_dir(&options.out_dir)
             .build_client(options.build_services)
             .build_server(options.build_services)
             .compile(&options.files, &options.includes)
     }) {
-        Err(e) => {
-            eprintln!("{}", e);
-            std::process::exit(1);
-        }
-        _ => {}
+        eprintln!("{}", e);
+        std::process::exit(1);
     };
 }
