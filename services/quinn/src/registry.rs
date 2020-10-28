@@ -1,6 +1,6 @@
 use std::convert::{TryFrom, TryInto};
 
-use firm_protocols::{registry::registry_server::Registry, tonic};
+use firm_types::{registry::registry_server::Registry, tonic};
 use futures::TryFutureExt;
 use slog::{o, Logger};
 
@@ -33,8 +33,8 @@ impl RegistryService {
 impl Registry for RegistryService {
     async fn list(
         &self,
-        request: tonic::Request<firm_protocols::registry::Filters>,
-    ) -> Result<tonic::Response<firm_protocols::functions::Functions>, tonic::Status> {
+        request: tonic::Request<firm_types::registry::Filters>,
+    ) -> Result<tonic::Response<firm_types::functions::Functions>, tonic::Status> {
         self.function_storage
             .list(&storage::Filters::try_from(request.into_inner())?)
             .and_then(|functions| async move {
@@ -48,15 +48,15 @@ impl Registry for RegistryService {
                 .await
             })
             .map_ok(|functions| {
-                tonic::Response::new(firm_protocols::functions::Functions { functions })
+                tonic::Response::new(firm_types::functions::Functions { functions })
             })
             .map_err(|e| e.into())
             .await
     }
     async fn get(
         &self,
-        request: tonic::Request<firm_protocols::registry::FunctionId>,
-    ) -> Result<tonic::Response<firm_protocols::functions::Function>, tonic::Status> {
+        request: tonic::Request<firm_types::registry::FunctionId>,
+    ) -> Result<tonic::Response<firm_types::functions::Function>, tonic::Status> {
         self.function_storage
             .get(&request.into_inner().try_into()?)
             .map_err(|e| e.into())
@@ -75,8 +75,8 @@ impl Registry for RegistryService {
 
     async fn register(
         &self,
-        request: tonic::Request<firm_protocols::registry::FunctionData>,
-    ) -> Result<tonic::Response<firm_protocols::functions::Function>, tonic::Status> {
+        request: tonic::Request<firm_types::registry::FunctionData>,
+    ) -> Result<tonic::Response<firm_types::functions::Function>, tonic::Status> {
         self.function_storage
             .insert(storage::Function::try_from(request.into_inner())?)
             .map_err(|se| se.into())
@@ -94,8 +94,8 @@ impl Registry for RegistryService {
     }
     async fn register_attachment(
         &self,
-        request: tonic::Request<firm_protocols::registry::AttachmentData>,
-    ) -> Result<tonic::Response<firm_protocols::registry::AttachmentHandle>, tonic::Status> {
+        request: tonic::Request<firm_types::registry::AttachmentData>,
+    ) -> Result<tonic::Response<firm_types::registry::AttachmentHandle>, tonic::Status> {
         self.function_storage
             .insert_attachment(storage::FunctionAttachmentData::try_from(
                 request.into_inner(),
@@ -104,8 +104,8 @@ impl Registry for RegistryService {
             .await
             .and_then(|attachment| {
                 Ok(tonic::Response::new(
-                    firm_protocols::registry::AttachmentHandle {
-                        id: Some(firm_protocols::registry::AttachmentId {
+                    firm_types::registry::AttachmentHandle {
+                        id: Some(firm_types::registry::AttachmentId {
                             uuid: attachment.id.to_string(),
                         }),
                         upload_url: Some(
@@ -119,10 +119,8 @@ impl Registry for RegistryService {
     }
     async fn upload_streamed_attachment(
         &self,
-        _request: tonic::Request<
-            tonic::Streaming<firm_protocols::registry::AttachmentStreamUpload>,
-        >,
-    ) -> Result<tonic::Response<firm_protocols::registry::Nothing>, tonic::Status> {
+        _request: tonic::Request<tonic::Streaming<firm_types::registry::AttachmentStreamUpload>>,
+    ) -> Result<tonic::Response<firm_types::registry::Nothing>, tonic::Status> {
         Err(tonic::Status::new(
             tonic::Code::Unimplemented,
             "The Quinn registry does not support uploading via streaming upload, use URL instead."

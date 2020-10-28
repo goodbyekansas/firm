@@ -1,4 +1,4 @@
-use firm_protocols::{
+use firm_types::{
     registry::{registry_server::Registry, Filters, FunctionId, NameFilter, Ordering},
     tonic,
 };
@@ -338,11 +338,11 @@ fn sorting() {
 
     // reverse
     let list_request = futures::executor::block_on(registry.list(tonic::Request::new(Filters {
-        name_filter: Some(NameFilter {
+        name: Some(NameFilter {
             pattern: "my-name-a".to_owned(),
             exact_match: true,
         }),
-        metadata_filter: HashMap::new(),
+        metadata: HashMap::new(),
         order: Some(Ordering {
             offset: 0,
             limit: 10,
@@ -360,11 +360,11 @@ fn sorting() {
 
     // not reverse
     let list_request = futures::executor::block_on(registry.list(tonic::Request::new(Filters {
-        name_filter: Some(NameFilter {
+        name: Some(NameFilter {
             pattern: "my-name-a".to_owned(),
             exact_match: true,
         }),
-        metadata_filter: HashMap::new(),
+        metadata: HashMap::new(),
         order: Some(Ordering {
             offset: 0,
             limit: 10,
@@ -400,11 +400,11 @@ fn sorting() {
     .unwrap();
 
     let list_request = futures::executor::block_on(registry.list(tonic::Request::new(Filters {
-        name_filter: Some(NameFilter {
+        name: Some(NameFilter {
             pattern: "sune".to_owned(),
             exact_match: true,
         }),
-        metadata_filter: HashMap::new(),
+        metadata: HashMap::new(),
         order: Some(Ordering {
             offset: 0,
             limit: 10,

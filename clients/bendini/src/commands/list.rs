@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use firm_protocols::{
+use firm_types::{
     registry::{registry_client::RegistryClient, Filters, Ordering, OrderingKey},
     tonic,
 };
@@ -13,8 +13,8 @@ pub async fn run(
 ) -> Result<(), error::BendiniError> {
     println!("Listing functions");
     let list_request = Filters {
-        name_filter: None,
-        metadata_filter: HashMap::new(),
+        name: None,
+        metadata: HashMap::new(),
         order: Some(Ordering {
             limit: 25,
             offset: 0,

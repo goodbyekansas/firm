@@ -107,8 +107,8 @@ dependencies = [
  "ansi_term 0.12.1",
  "async-stream 0.3.0",
  "atty",
- "firm-protocols",
  "firm-protocols-test-helpers",
+ "firm-types",
  "futures",
  "indicatif",
  "prost",
@@ -295,6 +295,15 @@ dependencies = [
  "sha2",
  "tempfile",
  "uuid",
+]
+
+[[package]]
+name = "firm-types"
+version = "0.1.0"
+dependencies = [
+ "firm-protocols",
+ "prost",
+ "thiserror",
 ]
 
 [[package]]

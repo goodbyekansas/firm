@@ -10,9 +10,9 @@ use prost::Message;
 use tar::Archive;
 
 use super::{sandbox::Sandbox, WasmBuffer, WasmItemPtr, WasmString};
-use crate::executor::AttachmentDownload;
-use firm_protocols::{
-    execution::{InputValue, OutputValue},
+use crate::executor::{AttachmentDownload, StreamExt};
+use firm_types::{
+    execution::{Channel, Stream},
     functions::Attachment,
 };
 
@@ -160,34 +160,24 @@ pub fn map_attachment_from_descriptor(
         .map(|_bytes_written| ())
 }
 
-pub fn get_input_len(
-    key: WasmString,
-    len: WasmItemPtr<u32>,
-    arguments: &[InputValue],
-) -> WasiResult<()> {
+pub fn get_input_len(key: WasmString, len: WasmItemPtr<u32>, arguments: &Stream) -> WasiResult<()> {
     let key: String = key
         .try_into()
         .map_err(|e| WasiError::FailedToReadStringPointer("input key".to_owned(), e))?;
 
     arguments
-        .iter()
-        .find(|a| a.name == key)
+        .get_channel(&key)
         .ok_or_else(|| WasiError::FailedToFindKey(key))
         .and_then(|a| len.set(a.encoded_len() as u32))
 }
 
-pub fn get_input(
-    key: WasmString,
-    value: &mut WasmBuffer,
-    arguments: &[InputValue],
-) -> WasiResult<()> {
+pub fn get_input(key: WasmString, value: &mut WasmBuffer, arguments: &Stream) -> WasiResult<()> {
     let key: String = key
         .try_into()
         .map_err(|e| WasiError::FailedToReadStringPointer("input key".to_owned(), e))?;
 
     arguments
-        .iter()
-        .find(|a| a.name == key)
+        .get_channel(&key)
         .ok_or_else(|| WasiError::FailedToFindKey(key))
         .and_then(|a| {
             a.encode(&mut value.buffer_mut())
@@ -195,8 +185,21 @@ pub fn get_input(
         })
 }
 
-pub fn set_output(value: WasmBuffer) -> WasiResult<OutputValue> {
-    OutputValue::decode(value.buffer()).map_err(WasiError::FailedToDecodeProtobuf)
+pub fn set_output(key: WasmString, value: WasmBuffer) -> WasiResult<Stream> {
+    let key: String = key
+        .try_into()
+        .map_err(|e| WasiError::FailedToReadStringPointer("output key".to_owned(), e))?;
+
+    let mut stream = Stream {
+        channels: std::collections::HashMap::new(),
+    };
+
+    stream.set_channel(
+        &key,
+        Channel::decode(value.buffer()).map_err(WasiError::FailedToDecodeProtobuf)?,
+    );
+
+    Ok(stream)
 }
 
 pub fn set_error(msg: WasmString) -> WasiResult<String> {
@@ -210,12 +213,12 @@ mod tests {
 
     use std::convert::TryFrom;
 
-    use firm_protocols::{execution::InputValue, functions::Type};
-    use firm_protocols_test_helpers::attachment;
-
+    use firm_protocols_test_helpers::{attachment, stream};
     use tempfile::Builder;
     use wasmer_runtime::{memory::Memory, WasmPtr};
     use wasmer_runtime::{types::MemoryDescriptor, units::Pages};
+
+    use crate::executor::ToChannel;
 
     macro_rules! create_mem {
         () => {{
@@ -258,11 +261,7 @@ mod tests {
         get_input_len(
             invalid_wasm_string!(&mem),
             WasmItemPtr::new(&mem, WasmPtr::new(0)),
-            &[InputValue {
-                name: "chorizo korvén".to_owned(),
-                r#type: Type::Bytes as i32,
-                value: vec![1, 2, 3],
-            }],
+            &stream!({"chorizo korvén" => vec![1u8, 2u8, 3u8]}),
         )
         .unwrap();
     }
@@ -278,11 +277,7 @@ mod tests {
                 &mem,
                 WasmPtr::new(key.buffer_len() /* after the string in memory */),
             ),
-            &[InputValue {
-                name: "chorizo korvén".to_owned(),
-                r#type: Type::Bytes as i32,
-                value: vec![1, 2, 3],
-            }],
+            &stream!({"chorizo korvén" => vec![1u8, 2u8, 3u8]}),
         );
 
         assert!(res.is_err());
@@ -291,11 +286,7 @@ mod tests {
         // get existing input
         let mem = create_mem!();
         let key = wasm_string!(&mem, 0, "input1");
-        let function_argument = InputValue {
-            name: "input1".to_owned(),
-            r#type: Type::Bytes as i32,
-            value: vec![1, 2, 3],
-        };
+        let function_argument = stream!({"input1" => vec![1u8, 2u8, 3u8]});
 
         let out_len = WasmItemPtr::new(
             &mem,
@@ -303,10 +294,13 @@ mod tests {
                 key.buffer_len(), /* put it after the string in memory */
             ),
         );
-        let res = get_input_len(key, out_len.clone(), &[function_argument.clone()]);
+        let res = get_input_len(key, out_len.clone(), &function_argument);
         assert!(res.is_ok());
         assert_eq!(
-            function_argument.encoded_len(),
+            function_argument
+                .get_channel("input1")
+                .unwrap()
+                .encoded_len(),
             out_len.get().unwrap() as usize
         );
 
@@ -314,15 +308,11 @@ mod tests {
         let mem = create_mem!();
         let key = wasm_string!(&mem, 0, "input1");
 
-        let function_argument = InputValue {
-            name: "input1".to_owned(),
-            r#type: Type::Bytes as i32,
-            value: vec![1, 2, 3],
-        };
+        let function_argument = stream!({"input1" => vec![1u8, 2u8, 3u8]});
 
         // creates a pointer that points beyond the end of memory
         let val = WasmItemPtr::new(&mem, WasmPtr::new(std::u32::MAX));
-        let res = get_input_len(key, val, &[function_argument]);
+        let res = get_input_len(key, val, &function_argument);
 
         assert!(res.is_err());
         assert!(matches!(
@@ -339,7 +329,7 @@ mod tests {
         let res = get_input(
             wasm_string!(&mem, 0, "input1"),
             &mut out_buffer!(&mem, 0u32, 0u32), // no point in creating a valid buffer
-            &[],
+            &stream!(),
         );
 
         assert!(res.is_err());
@@ -347,19 +337,18 @@ mod tests {
 
         // testing failed to encode protobuf
         let mem = create_mem!();
-        let function_argument = InputValue {
-            name: "input1".to_owned(),
-            r#type: Type::Bytes as i32,
-            value: vec![1, 2, 3],
-        };
+        let function_argument = stream!({"input1" => vec![1u8, 2u8, 3u8]});
 
-        let encoded_len = function_argument.encoded_len();
+        let encoded_len = function_argument
+            .get_channel("input1")
+            .unwrap()
+            .encoded_len();
 
         let key = wasm_string!(&mem, 0, "input1");
         let res = get_input(
             key.clone(),
             &mut out_buffer!(&mem, key.buffer_len(), (encoded_len - 1) as u32), // make buffer 1 too small
-            &[function_argument],
+            &function_argument,
         );
 
         assert!(res.is_err());
@@ -371,20 +360,17 @@ mod tests {
         // testing getting valid input
         let mem = create_mem!();
 
-        let function_argument = InputValue {
-            name: "input1".to_owned(),
-            r#type: Type::Bytes as i32,
-            value: vec![1, 2, 3],
-        };
+        let stream = stream!({"input1" => vec![1u8, 2u8, 3u8]});
 
         let key = wasm_string!(&mem, 0, "input1");
-        let encoded_len = function_argument.encoded_len();
 
+        let function_argument = stream.get_channel("input1").unwrap();
+        let encoded_len = function_argument.encoded_len();
         let mut reference_value = Vec::with_capacity(encoded_len);
         function_argument.encode(&mut reference_value).unwrap();
 
         let out_ptr = out_buffer!(&mem, key.buffer_len(), encoded_len as u32);
-        let res = get_input(key, &mut out_ptr.clone(), &[function_argument]);
+        let res = get_input(key, &mut out_ptr.clone(), &stream);
 
         assert!(res.is_ok());
 
@@ -395,19 +381,23 @@ mod tests {
     #[test]
     fn test_set_output() {
         let mem = create_mem!();
-        let return_value = OutputValue {
-            name: "sune".to_owned(),
-            r#type: Type::Int as i32,
-            value: vec![1, 2, 3, 4, 5, 6, 7, 8],
-        };
 
-        let mut buf = WasmBuffer::new(&mem, WasmPtr::new(0), return_value.encoded_len() as u32);
+        let return_value = vec![1u8, 2u8, 3u8, 4u8, 5u8, 6u8, 7u8, 8u8].to_channel();
+        let name = wasm_string!(&mem, 0, "sune");
+        let mut buf = WasmBuffer::new(
+            &mem,
+            WasmPtr::new(name.buffer_len()),
+            return_value.encoded_len() as u32,
+        );
         return_value.encode(&mut buf.buffer_mut()).unwrap();
 
-        let res = set_output(buf);
+        let res = set_output(name, buf);
 
         assert!(res.is_ok());
-        assert_eq!(return_value, res.unwrap());
+
+        let mut expected_stream = stream!();
+        expected_stream.set_channel("sune", return_value);
+        assert_eq!(expected_stream, res.unwrap());
     }
 
     #[test]

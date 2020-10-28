@@ -4,10 +4,12 @@ use std::{
 };
 
 use ansi_term::Colour::Green;
-use firm_protocols::functions::{Function, Input, Output, Runtime, Type};
+use firm_types::functions::{ChannelType, Function, Runtime, StreamSpec};
 use futures::{future::join, Future};
 use indicatif::MultiProgress;
 use tokio::task;
+
+const INDENT: &str = "  ";
 
 pub struct Displayer<'a, T> {
     display: &'a T,
@@ -21,10 +23,7 @@ impl<T> std::ops::Deref for Displayer<'_, T> {
     }
 }
 
-pub trait DisplayExt<'a, T>
-where
-    T: prost::Message,
-{
+pub trait DisplayExt<'a, T> {
     fn display(&'a self) -> Displayer<T>;
     fn display_format(&'a self, format: DisplayFormat) -> Displayer<T>;
 }
@@ -37,10 +36,7 @@ pub enum DisplayFormat {
     JSON,
 }
 
-impl<'a, U> DisplayExt<'a, U> for U
-where
-    U: prost::Message,
-{
+impl<'a, U> DisplayExt<'a, U> for U {
     fn display(&'a self) -> Displayer<U> {
         Displayer {
             display: self,
@@ -83,17 +79,14 @@ impl Display for Displayer<'_, Function> {
             return Ok(());
         }
 
-        let t = "  ";
-        let t2 = "    ";
-
-        writeln!(f, "{}{}", t, Green.paint(&self.name))?;
-        writeln!(f, "{}version: {}", t, &self.version)?;
+        writeln!(f, "{}{}", INDENT, Green.paint(&self.name))?;
+        writeln!(f, "{}version: {}", INDENT, &self.version)?;
 
         if self.format == DisplayFormat::Long {
             writeln!(
                 f,
                 "{}runtime:  {}",
-                t,
+                INDENT,
                 self.runtime
                     .as_ref()
                     .unwrap_or(&Runtime {
@@ -107,41 +100,24 @@ impl Display for Displayer<'_, Function> {
             writeln!(
                 f,
                 "{}codeUrl: {}",
-                t,
+                INDENT,
                 self.code
                     .as_ref()
                     .and_then(|c| c.url.clone())
                     .map_or_else(|| String::from("n/a"), |code| code.url)
             )?;
 
-            if self.inputs.is_empty() {
-                writeln!(f, "{}inputs:  [n/a]", t)?;
-            } else {
-                writeln!(f, "{}inputs:", t)?;
-                self.inputs
-                    .clone()
-                    .into_iter()
-                    .map(|i| writeln!(f, "{}{}", t2, i.display()))
-                    .collect::<fmt::Result>()?;
-            }
-            if self.outputs.is_empty() {
-                writeln!(f, "{}outputs: [n/a]", t)?;
-            } else {
-                writeln!(f, "{}outputs:", t)?;
-                self.outputs
-                    .clone()
-                    .into_iter()
-                    .map(|i| writeln!(f, "{}{}", t2, i.display()))
-                    .collect::<fmt::Result>()?;
-            }
+            write!(f, "{}inputs: {}", INDENT, self.input.display())?;
+            write!(f, "{}outputs: {}", INDENT, self.output.display())?;
+
             if self.metadata.is_empty() {
-                writeln!(f, "{}metadata:    [n/a]", t)
+                writeln!(f, "{}metadata:    [n/a]", INDENT)
             } else {
-                writeln!(f, "{}metadata:", t)?;
+                writeln!(f, "{}metadata:", INDENT)?;
                 self.metadata
                     .clone()
                     .iter()
-                    .map(|(x, y)| writeln!(f, "{}{}:{}", t2, x, y))
+                    .map(|(x, y)| writeln!(f, "{}{}:{}", INDENT.repeat(2), x, y))
                     .collect()
             }
         } else {
@@ -150,32 +126,50 @@ impl Display for Displayer<'_, Function> {
     }
 }
 
-impl Display for Displayer<'_, Input> {
+impl Display for Displayer<'_, Option<StreamSpec>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let required = if self.required {
-            "[required]"
+        if self.is_none() {
+            writeln!(f, " [n/a]")
         } else {
-            "[optional]"
-        };
+            self.as_ref()
+                .map(|stream_spec| {
+                    stream_spec
+                        .required
+                        .iter()
+                        .map(|(name, input)| {
+                            writeln!(
+                                f,
+                                "{tab}[required]:{type}:{name}:{description}",
+                                tab = INDENT.repeat(2),
+                                r#type = input.r#type,
+                                name = name,
+                                description = input.description
+                            )
+                        })
+                        .collect::<fmt::Result>()
+                })
+                .transpose()?;
 
-        write!(
-            f,
-            "{req_opt}:{ftype}:{name}",
-            name = self.name,
-            req_opt = required,
-            ftype = self.r#type,
-        )
-    }
-}
-
-impl Display for Displayer<'_, Output> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[ensured ]:{ftype}:{name}",
-            name = self.name,
-            ftype = self.r#type
-        )
+            self.as_ref()
+                .map(|stream_spec| {
+                    stream_spec
+                        .optional
+                        .iter()
+                        .map(|(name, input)| {
+                            writeln!(
+                                f,
+                                "{tab}[optional]:{type}:{name}:{description}",
+                                tab = INDENT.repeat(2),
+                                r#type = input.r#type,
+                                name = name,
+                                description = input.description
+                            )
+                        })
+                        .collect::<fmt::Result>()
+                })
+                .transpose()?;
+            Ok(())
+        }
     }
 }
 
@@ -184,13 +178,13 @@ impl Display for Displayer<'_, i32> {
         write!(
             f,
             "{}",
-            Type::from_i32(**self)
+            ChannelType::from_i32(**self)
                 .map(|at| match at {
-                    Type::String => "[string ]",
-                    Type::Bool => "[bool   ]",
-                    Type::Int => "[int    ]",
-                    Type::Float => "[float  ]",
-                    Type::Bytes => "[bytes  ]",
+                    ChannelType::String => "[string ]",
+                    ChannelType::Bool => "[bool   ]",
+                    ChannelType::Int => "[int    ]",
+                    ChannelType::Float => "[float  ]",
+                    ChannelType::Bytes => "[bytes  ]",
                 })
                 .unwrap_or("[Invalid type ]")
         )

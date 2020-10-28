@@ -1,6 +1,9 @@
-use std::convert::{TryFrom, TryInto};
+use std::{
+    collections::HashMap,
+    convert::{TryFrom, TryInto},
+};
 
-use firm_protocols::{
+use firm_types::{
     functions::Function as ProtoFunction,
     registry::{Filters, FunctionId, OrderingKey},
     tonic,
@@ -10,6 +13,7 @@ use crate::{
     storage::{self, AttachmentStorage, FunctionStorage, StorageError},
     validation,
 };
+
 use futures::FutureExt;
 use storage::{Function, FunctionAttachment};
 
@@ -51,13 +55,13 @@ impl TryFrom<Filters> for storage::Filters {
 
     fn try_from(req: Filters) -> Result<Self, Self::Error> {
         Ok(Self {
-            name: req.name_filter.map(|nf| storage::NameFilter {
+            name: req.name.map(|nf| storage::NameFilter {
                 pattern: nf.pattern,
                 exact_match: nf.exact_match,
             }),
 
             metadata: req
-                .metadata_filter
+                .metadata
                 .into_iter()
                 .map(|(k, v)| (k, if v.is_empty() { None } else { Some(v) }))
                 .collect(),
@@ -85,10 +89,10 @@ impl TryFrom<Filters> for storage::Filters {
     }
 }
 
-impl TryFrom<firm_protocols::functions::Runtime> for storage::Runtime {
+impl TryFrom<firm_types::functions::Runtime> for storage::Runtime {
     type Error = tonic::Status;
 
-    fn try_from(value: firm_protocols::functions::Runtime) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_types::functions::Runtime) -> Result<Self, Self::Error> {
         Ok(storage::Runtime {
             name: value.name.check_empty("runtime.name")?,
             entrypoint: value.entrypoint,
@@ -97,16 +101,14 @@ impl TryFrom<firm_protocols::functions::Runtime> for storage::Runtime {
     }
 }
 
-impl TryFrom<firm_protocols::functions::Input> for storage::FunctionInput {
+impl TryFrom<firm_types::functions::ChannelSpec> for storage::ChannelSpec {
     type Error = tonic::Status;
 
-    fn try_from(value: firm_protocols::functions::Input) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_types::functions::ChannelSpec) -> Result<Self, Self::Error> {
         let tp = value.r#type;
-        Ok(storage::FunctionInput {
-            name: value.name.check_empty("Function Input Name")?,
+        Ok(storage::ChannelSpec {
             description: value.description,
-            required: value.required,
-            argument_type: firm_protocols::functions::Type::from_i32(tp).ok_or_else(|| {
+            argument_type: firm_types::functions::ChannelType::from_i32(tp).ok_or_else(|| {
                 tonic::Status::new(
                     tonic::Code::InvalidArgument,
                     format!("Input type {} is out of range for enum", tp),
@@ -116,21 +118,51 @@ impl TryFrom<firm_protocols::functions::Input> for storage::FunctionInput {
     }
 }
 
-impl TryFrom<firm_protocols::functions::Output> for storage::FunctionOutput {
-    type Error = tonic::Status;
-
-    fn try_from(value: firm_protocols::functions::Output) -> Result<Self, Self::Error> {
-        let tp = value.r#type;
-        Ok(storage::FunctionOutput {
-            name: value.name.check_empty("Function Output Name")?,
+impl From<storage::ChannelSpec> for firm_types::functions::ChannelSpec {
+    fn from(value: storage::ChannelSpec) -> Self {
+        firm_types::functions::ChannelSpec {
             description: value.description,
-            argument_type: firm_protocols::functions::Type::from_i32(tp).ok_or_else(|| {
-                tonic::Status::new(
-                    tonic::Code::InvalidArgument,
-                    format!("Argument type {} is out of range for enum", tp),
-                )
-            })?,
+            r#type: value.argument_type as i32,
+        }
+    }
+}
+
+impl TryFrom<firm_types::functions::StreamSpec> for storage::StreamSpec {
+    type Error = tonic::Status;
+    fn try_from(value: firm_types::functions::StreamSpec) -> Result<Self, Self::Error> {
+        Ok(storage::StreamSpec {
+            required: value
+                .required
+                .into_iter()
+                .map(|(name, cs)| cs.try_into().map(|c| (name, c)))
+                .collect::<Result<HashMap<String, storage::ChannelSpec>, tonic::Status>>()?,
+            optional: value
+                .optional
+                .into_iter()
+                .map(|(name, cs)| cs.try_into().map(|c| (name, c)))
+                .collect::<Result<HashMap<String, storage::ChannelSpec>, tonic::Status>>()?,
         })
+    }
+}
+
+impl From<storage::StreamSpec> for Option<firm_types::functions::StreamSpec> {
+    fn from(value: storage::StreamSpec) -> Self {
+        if value.required.is_empty() && value.optional.is_empty() {
+            None
+        } else {
+            Some(firm_types::functions::StreamSpec {
+                required: value
+                    .required
+                    .into_iter()
+                    .map(|(name, c)| (name, c.into()))
+                    .collect(),
+                optional: value
+                    .optional
+                    .into_iter()
+                    .map(|(name, c)| (name, c.into()))
+                    .collect(),
+            })
+        }
     }
 }
 
@@ -139,7 +171,7 @@ trait ToUuid {
     fn to_uuid(&self) -> Result<uuid::Uuid, Self::Error>;
 }
 
-impl ToUuid for firm_protocols::registry::AttachmentId {
+impl ToUuid for firm_types::registry::AttachmentId {
     type Error = tonic::Status;
 
     fn to_uuid(&self) -> Result<uuid::Uuid, Self::Error> {
@@ -152,10 +184,10 @@ impl ToUuid for firm_protocols::registry::AttachmentId {
     }
 }
 
-impl TryFrom<firm_protocols::registry::FunctionData> for storage::Function {
+impl TryFrom<firm_types::registry::FunctionData> for storage::Function {
     type Error = tonic::Status;
 
-    fn try_from(value: firm_protocols::registry::FunctionData) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_types::registry::FunctionData) -> Result<Self, Self::Error> {
         Ok(storage::Function {
             name: validation::validate_name(&value.name)
                 .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, e.to_string()))?,
@@ -170,16 +202,8 @@ impl TryFrom<firm_protocols::registry::FunctionData> for storage::Function {
                     )
                 })
                 .and_then(|ee| ee.try_into())?,
-            inputs: value
-                .inputs
-                .into_iter()
-                .map(|a| a.try_into())
-                .collect::<Result<Vec<_>, _>>()?,
-            outputs: value
-                .outputs
-                .into_iter()
-                .map(|a| a.try_into())
-                .collect::<Result<Vec<_>, _>>()?,
+            input_spec: value.input.unwrap_or_default().try_into()?,
+            output_spec: value.output.unwrap_or_default().try_into()?,
             metadata: value.metadata,
             code: value.code_attachment_id.map(|a| a.to_uuid()).transpose()?,
             attachments: value
@@ -192,20 +216,20 @@ impl TryFrom<firm_protocols::registry::FunctionData> for storage::Function {
     }
 }
 
-impl TryFrom<firm_protocols::functions::Checksums> for storage::Checksums {
+impl TryFrom<firm_types::functions::Checksums> for storage::Checksums {
     type Error = tonic::Status;
 
-    fn try_from(value: firm_protocols::functions::Checksums) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_types::functions::Checksums) -> Result<Self, Self::Error> {
         Ok(storage::Checksums {
             sha256: value.sha256.check_empty("sha256")?,
         })
     }
 }
 
-impl TryFrom<firm_protocols::registry::AttachmentData> for storage::FunctionAttachmentData {
+impl TryFrom<firm_types::registry::AttachmentData> for storage::FunctionAttachmentData {
     type Error = tonic::Status;
 
-    fn try_from(value: firm_protocols::registry::AttachmentData) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_types::registry::AttachmentData) -> Result<Self, Self::Error> {
         Ok(storage::FunctionAttachmentData {
             name: value.name.check_empty("name")?,
             metadata: value.metadata,
@@ -247,14 +271,14 @@ pub trait FunctionResolver {
 
 struct AttachmentResolver<'a>(&'a dyn AttachmentStorage, FunctionAttachment);
 
-impl<'a> From<AttachmentResolver<'a>> for firm_protocols::functions::Attachment {
+impl<'a> From<AttachmentResolver<'a>> for firm_types::functions::Attachment {
     fn from(attachment_resolver: AttachmentResolver) -> Self {
         let (attachment_storage, att) = (attachment_resolver.0, attachment_resolver.1);
         Self {
             name: att.data.name.clone(),
             url: attachment_storage.get_download_url(&att).ok(), // TODO: no good, error here
             metadata: att.data.metadata,
-            checksums: Some(firm_protocols::functions::Checksums {
+            checksums: Some(firm_types::functions::Checksums {
                 sha256: att.data.checksums.sha256.to_string(),
             }),
             created_at: att.created_at,
@@ -271,7 +295,7 @@ impl FunctionResolver for &Function {
         attachment_store: &dyn AttachmentStorage,
     ) -> Result<ProtoFunction, StorageError> {
         Ok(ProtoFunction {
-            runtime: Some(firm_protocols::functions::Runtime {
+            runtime: Some(firm_types::functions::Runtime {
                 name: self.runtime.name.clone(),
                 entrypoint: self.runtime.entrypoint.clone(),
                 arguments: self.runtime.arguments.clone(),
@@ -286,25 +310,8 @@ impl FunctionResolver for &Function {
             name: self.name.clone(),
             version: self.version.to_string(),
             metadata: self.metadata.clone(),
-            inputs: self
-                .inputs
-                .iter()
-                .map(|i| firm_protocols::functions::Input {
-                    name: i.name.clone(),
-                    description: i.description.clone(),
-                    required: i.required,
-                    r#type: i.argument_type as i32,
-                })
-                .collect(),
-            outputs: self
-                .outputs
-                .iter()
-                .map(|o| firm_protocols::functions::Output {
-                    name: o.name.clone(),
-                    description: o.description.clone(),
-                    r#type: o.argument_type as i32,
-                })
-                .collect(),
+            input: self.input_spec.clone().into(),
+            output: self.output_spec.clone().into(),
             attachments: futures::future::try_join_all(self.attachments.iter().map(
                 |attachment_id| async move {
                     function_store

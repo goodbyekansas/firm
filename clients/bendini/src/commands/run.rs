@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 
-use firm_protocols::{
-    execution::{execution_client::ExecutionClient, ExecutionParameters, InputValue},
-    functions::{Input, Type},
+use firm_types::{
+    execution::{execution_client::ExecutionClient, ExecutionParameters, Stream},
+    functions::{ChannelType, StreamSpec},
     registry::{
         registry_client::RegistryClient, Filters, NameFilter, Ordering, OrderingKey,
         VersionRequirement,
     },
+    stream::ToChannel,
     tonic::{self, transport::Channel},
 };
 use tonic_middleware::HttpStatusInterceptor;
@@ -14,64 +15,49 @@ use tonic_middleware::HttpStatusInterceptor;
 use crate::error;
 use error::BendiniError;
 
-fn validate_arguments(
-    inputs: &[Input],
+// TODO this can be more general and move to firm_types
+fn parse_arguments(
+    input: &StreamSpec,
     arguments: Vec<(String, String)>,
-) -> Result<Vec<InputValue>, Vec<String>> {
+) -> Result<Stream, Vec<String>> {
     let (values, errors): (Vec<_>, Vec<_>) = arguments
         .iter()
         .map(|(key, val)| {
-            inputs
+            input
+                .required
                 .iter()
-                .find(|k| &k.name == key)
+                .chain(input.optional.iter())
+                .collect::<HashMap<_, _>>()
+                .get(key)
                 .ok_or(format!("argument {} is not expected.", key))
                 .and_then(|input| {
-                    let parsed_type = Type::from_i32(input.r#type).ok_or(format!(
+                    let parsed_type = ChannelType::from_i32(input.r#type).ok_or(format!(
                         "argument type {} is out of range (out of date protobuf definitions?)",
                         input.r#type
                     ))?;
                     match parsed_type {
-                        Type::String => Ok(InputValue {
-                            name: key.clone(),
-                            r#type: input.r#type,
-                            value: val.as_bytes().to_vec(),
-                        }),
-                        Type::Bool => val
+                        ChannelType::String => Ok(val.clone().to_channel()),
+                        ChannelType::Bool => val
                             .parse::<bool>()
                             .map_err(|e| {
                                 format!("cant parse argument {} into bool value. err: {}", key, e)
                             })
-                            .map(|x| InputValue {
-                                name: key.clone(),
-                                r#type: input.r#type,
-                                value: vec![x as u8],
-                            }),
-                        Type::Int => val
+                            .map(|x| x.to_channel()),
+                        ChannelType::Int => val
                             .parse::<i64>()
                             .map_err(|e| {
                                 format!("cant parse argument {} into int value. err: {}", key, e)
                             })
-                            .map(|x| InputValue {
-                                name: key.clone(),
-                                r#type: input.r#type,
-                                value: x.to_le_bytes().to_vec(),
-                            }),
-                        Type::Float => val
-                            .parse::<f64>()
+                            .map(|x| x.to_channel()),
+                        ChannelType::Float => val
+                            .parse::<f32>()
                             .map_err(|e| {
                                 format!("cant parse argument {} into float value. err: {}", key, e)
                             })
-                            .map(|x| InputValue {
-                                name: key.clone(),
-                                r#type: input.r#type,
-                                value: x.to_le_bytes().to_vec(),
-                            }),
-                        Type::Bytes => Ok(InputValue {
-                            name: key.clone(),
-                            r#type: input.r#type,
-                            value: val.as_bytes().to_vec(),
-                        }),
+                            .map(|x| x.to_channel()),
+                        ChannelType::Bytes => Ok(val.as_bytes().to_vec().to_channel()),
                     }
+                    .map(|channel| (key.to_owned(), channel))
                 })
         })
         .partition(Result::is_ok);
@@ -79,7 +65,9 @@ fn validate_arguments(
     if !errors.is_empty() {
         Err(errors.into_iter().map(Result::unwrap_err).collect())
     } else {
-        Ok(values.into_iter().map(Result::unwrap).collect())
+        Ok(Stream {
+            channels: values.into_iter().map(Result::unwrap).collect(),
+        })
     }
 }
 
@@ -96,16 +84,16 @@ pub async fn run(
             _ => Err(BendiniError::FailedToParseFunction(function_id)),
         }?;
 
-    let (function, input_values) = registry_client
+    let input_values = registry_client
         .list(tonic::Request::new(Filters {
-            name_filter: Some(NameFilter {
+            name: Some(NameFilter {
                 pattern: function_name.to_owned(),
                 exact_match: true,
             }),
             version_requirement: Some(VersionRequirement {
                 expression: function_version.to_owned(),
             }),
-            metadata_filter: HashMap::new(),
+            metadata: HashMap::new(),
             order: Some(Ordering {
                 offset: 0,
                 limit: 1,
@@ -122,17 +110,20 @@ pub async fn run(
             version: function_version.to_owned(),
         })
         .and_then(|f| {
-            validate_arguments(&f.inputs, arguments)
-                .map(|input_values| (f.clone(), input_values))
+            parse_arguments(&f.input.clone().unwrap_or_default(), arguments)
                 .map_err(|e| BendiniError::InvalidFunctionArguments(f.name.clone(), e))
         })?;
 
-    println!("Executing function: {}:{}", function.name, function.version);
+    println!(
+        "Executing function: {}:{}",
+        &function_name, &function_version
+    );
 
     execution_client
-        .execute(tonic::Request::new(ExecutionParameters {
-            function: Some(function),
-            arguments: input_values,
+        .execute_function(tonic::Request::new(ExecutionParameters {
+            name: function_name.to_owned(),
+            version_requirement: function_version.to_owned(),
+            arguments: Some(input_values),
         }))
         .await
         .map_err(|e| e.into())

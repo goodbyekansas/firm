@@ -1,13 +1,15 @@
 use slog::{error, info, o, Drain, Logger};
 
-use firm_protocols::{registry::registry_server::RegistryServer, tonic::transport::Server};
+use firm_types::{registry::registry_server::RegistryServer, tonic::transport::Server};
 use quinn::{config, registry};
 use std::error::Error;
 
 async fn run(log: Logger) -> Result<(), Box<dyn Error>> {
     let config_log = log.new(o!("component" => "config"));
 
-    let config = config::Configuration::new(config_log).await?;
+    let config = config::Configuration::new(config_log)
+        .await
+        .map_err(|ce| format!("Configuration error: {}", ce))?;
 
     let addr = format!(
         "0.0.0.0:{}",

@@ -1,20 +1,14 @@
 [package]
-name = "firm"
+name = "firm-types"
 version = "0.1.0"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
 [dependencies]
-lazy_static = { version = "1", optional = true }
-prost = "0.6"
 thiserror = "1"
+prost = "0.6"
 
-firm-types = { path = "nix-deps/firm-types" }
+firm-protocols = { path = "nix-deps/rust-firm-protocols" }
 
 [dev-dependencies]
-lazy_static = "1"
 firm-protocols-test-helpers = { path = "nix-deps/rust-firm-protocols-test-helpers" }
-
-[features]
-net = []
-mock = ["lazy_static"]

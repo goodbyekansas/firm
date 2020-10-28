@@ -20,12 +20,11 @@ use wasmer_runtime::{
 };
 use wasmer_wasi::{generate_import_object_from_state, get_wasi_version, state::WasiState};
 
-use crate::executor::{AttachmentDownload, ExecutorError, ExecutorParameters, FunctionExecutor};
-use error::{ToErrorCode, WasiError};
-use firm_protocols::{
-    execution::{InputValue, OutputValue},
-    functions::Attachment,
+use crate::executor::{
+    AttachmentDownload, ExecutorError, ExecutorParameters, FunctionExecutor, StreamExt,
 };
+use error::{ToErrorCode, WasiError};
+use firm_types::{execution::Stream, functions::Attachment};
 use process::StdIOConfig;
 use sandbox::Sandbox;
 
@@ -191,9 +190,9 @@ fn execute_function(
     function_name: &str,
     _entrypoint: &str,
     code: &[u8],
-    arguments: Vec<InputValue>,
+    arguments: Stream,
     attachments: Vec<Attachment>,
-) -> Result<Vec<OutputValue>, String> {
+) -> Result<Stream, String> {
     const ENTRY: &str = "_start";
     let module = compile(code).map_err(|e| format!("failed to compile wasm: {}", e))?;
 
@@ -250,7 +249,7 @@ fn execute_function(
     let sandboxes2 = sandboxes.clone();
 
     // inject firm specific functions in the wasm state
-    let v: Vec<Result<OutputValue, String>> = Vec::new();
+    let v: Result<Stream, String> = Ok(Stream::new());
     let results = Arc::new(RwLock::new(v));
     let res = Arc::clone(&results);
     let res2 = Arc::clone(&results);
@@ -394,18 +393,21 @@ fn execute_function(
                     &arguments1).to_error_code()
             }),
 
-            "set_output" => func!(move |ctx: &mut Ctx, val: WasmPtr<u8, Array>, vallen: u32| {
-                function::set_output(WasmBuffer::new(ctx.memory(0), val, vallen)).and_then(|v| {
-                    res.write().map(|mut writer| {
-                        writer.push(Ok(v));
+            "set_output" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, val: WasmPtr<u8, Array>, vallen: u32| {
+                function::set_output(WasmString::new(WasmBuffer::new(ctx.memory(0), key, keylen)),
+                WasmBuffer::new(ctx.memory(0), val, vallen)).and_then(|v| {
+                    res.write().map(|mut current_stream_or_error| {
+                        if let Ok(current_stream) = current_stream_or_error.as_mut() {
+                            current_stream.merge(v);
+                        }
                     }).map_err(|e| {WasiError::Unknown(format!("{}", e))})
                 }).to_error_code()
             }),
 
             "set_error" => func!(move |ctx: &mut Ctx, msg: WasmPtr<u8, Array>, msglen: u32| {
                 function::set_error(WasmString::new(WasmBuffer::new(ctx.memory(0), msg, msglen))).and_then(|v| {
-                    res2.write().map(|mut writer| {
-                        writer.push(Err(v));
+                    res2.write().map(|mut current_stream_or_error| {
+                        *current_stream_or_error = Err(v);
                     }).map_err(|e| {WasiError::Unknown(format!("{}", e))})
                 }).to_error_code()
             }),
@@ -432,13 +434,12 @@ fn execute_function(
 
     entry_function
         .call()
-        .map_err(|e| format!("Failed to call entrypoint function {}: {}", ENTRY, e))
-        .and_then(|_| {
-            results
-                .read()
-                .map_err(|e| format!("Failed to read function results: {}", e))
-        })
-        .and_then(|reader| reader.iter().cloned().collect())
+        .map_err(|e| format!("Failed to call entrypoint function {}: {}", ENTRY, e))?;
+
+    results
+        .read()
+        .map_err(|e| format!("Failed to read function results: {}", e))
+        .and_then(|results| results.clone()) // TODO: Smart clone for stream
 }
 
 #[derive(Debug)]
@@ -456,9 +457,9 @@ impl FunctionExecutor for WasiExecutor {
     fn execute(
         &self,
         executor_context: ExecutorParameters,
-        arguments: Vec<InputValue>,
+        arguments: Stream,
         attachments: Vec<Attachment>,
-    ) -> Result<Result<Vec<OutputValue>, String>, ExecutorError> {
+    ) -> Result<Result<Stream, String>, ExecutorError> {
         let code = executor_context
             .code
             .ok_or_else(|| ExecutorError::MissingCode("wasi".to_owned()))?;
@@ -480,7 +481,7 @@ impl FunctionExecutor for WasiExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use firm_protocols_test_helpers::code_file;
+    use firm_protocols_test_helpers::{code_file, stream};
 
     macro_rules! null_logger {
         () => {{
@@ -498,7 +499,7 @@ mod tests {
                 code: Some(code_file!(include_bytes!("hello.wasm"))),
                 arguments: std::collections::HashMap::new(),
             },
-            vec![],
+            stream!(),
             vec![],
         );
 

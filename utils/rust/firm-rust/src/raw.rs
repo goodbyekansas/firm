@@ -42,7 +42,12 @@ extern "C" {
         value_ptr: *mut u8,
         value_len: usize,
     ) -> u32;
-    pub fn set_output(value_ptr: *const u8, value_len: usize) -> u32;
+    pub fn set_output(
+        key_ptr: *const u8,
+        key_len: usize,
+        value_ptr: *const u8,
+        value_len: usize,
+    ) -> u32;
     pub fn set_error(msg_ptr: *const u8, msg_len: usize) -> u32;
 
     #[cfg(feature = "net")]

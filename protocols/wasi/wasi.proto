@@ -18,6 +18,3 @@ message Attachments {
   repeated functions.Attachment attachments = 1;
 }
 
-message InputValues {
-  repeated execution.InputValue values = 1;
-}

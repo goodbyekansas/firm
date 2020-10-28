@@ -11,24 +11,33 @@ let
     ];
   };
   protocols = import ./protocols project;
-
+  typesWithoutServices = project.declareComponent ./utils/rust/firm-types/firm-types.nix {
+    protocols = protocols.rust.onlyMessages;
+    protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.onlyMessages; };
+  };
+  typesWithServices = typesWithoutServices.override {
+    protocols = protocols.rust.withServices;
+    protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
+  };
   # declare the components of the project and their dependencies
   components = rec {
     inherit protocols;
 
+    firmTypesRust = typesWithoutServices;
     firmRust = project.declareComponent ./utils/rust/firm-rust/firm-rust.nix {
-      protocols = protocols.rust.onlyMessages;
+      types = firmTypesRust;
+      testHelpers = protocols.rust.testHelpers { protocols = protocols.rust.onlyMessages; };
     };
     tonicMiddleware = project.declareComponent ./utils/rust/tonic-middleware/tonic-middleware.nix {
       protocols = protocols.rust.withServices; # This brings tonic which we will need. A bit hard to see.
     };
     avery = project.declareComponent ./services/avery/avery.nix {
-      protocols = protocols.rust.withServices;
       protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
+      types = typesWithServices;
     };
     bendini = project.declareComponent ./clients/bendini/bendini.nix {
       inherit tonicMiddleware;
-      protocols = protocols.rust.withServices;
+      types = typesWithServices;
       protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
     };
 
@@ -42,7 +51,7 @@ let
     };
 
     quinn = project.declareComponent ./services/quinn/quinn.nix {
-      protocols = protocols.rust.withServices;
+      types = typesWithServices;
       protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
     };
   };

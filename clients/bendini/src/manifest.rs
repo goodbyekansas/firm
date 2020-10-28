@@ -7,10 +7,9 @@ use std::{
 use serde::Deserialize;
 use thiserror::Error;
 
-use firm_protocols::{
+use firm_types::{
     functions::{
-        Checksums as ProtoChecksums, Input as ProtoInput, Output as ProtoOutput,
-        Runtime as ProtoRuntime, Type,
+        ChannelSpec, ChannelType, Checksums as ProtoChecksums, Runtime as ProtoRuntime, StreamSpec,
     },
     registry::{AttachmentData, FunctionData},
 };
@@ -215,25 +214,66 @@ impl From<&FunctionManifest> for FunctionData {
             name: fm.name.clone(),
             version: fm.version.clone(),
             metadata: fm.metadata.clone(),
-            inputs: fm
-                .inputs
-                .iter()
-                .map(|(name, input)| ProtoInput {
-                    name: name.clone(),
-                    description: input.description.clone(),
-                    required: input.required,
-                    r#type: Type::from(&input.r#type) as i32,
+            input: if fm.inputs.is_empty() {
+                None
+            } else {
+                Some(StreamSpec {
+                    required: fm
+                        .inputs
+                        .iter()
+                        .filter_map(|(name, input)| {
+                            if input.required {
+                                Some((
+                                    name.clone(),
+                                    ChannelSpec {
+                                        r#type: ChannelType::from(&input.r#type) as i32,
+                                        description: input.description.to_owned(),
+                                    },
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    optional: fm
+                        .inputs
+                        .iter()
+                        .filter_map(|(name, input)| {
+                            if !input.required {
+                                Some((
+                                    name.clone(),
+                                    ChannelSpec {
+                                        r#type: ChannelType::from(&input.r#type) as i32,
+                                        description: input.description.to_owned(),
+                                    },
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
                 })
-                .collect(),
-            outputs: fm
-                .outputs
-                .iter()
-                .map(|(name, output)| ProtoOutput {
-                    name: name.clone(),
-                    description: output.description.clone(),
-                    r#type: Type::from(&output.r#type) as i32,
+            },
+            output: if fm.outputs.is_empty() {
+                None
+            } else {
+                Some(StreamSpec {
+                    required: fm
+                        .outputs
+                        .iter()
+                        .map(|(name, output)| {
+                            (
+                                name.clone(),
+                                ChannelSpec {
+                                    description: output.description.clone(),
+                                    r#type: ChannelType::from(&output.r#type) as i32,
+                                },
+                            )
+                        })
+                        .collect(),
+                    optional: HashMap::new(),
                 })
-                .collect(),
+            },
             code_attachment_id: None,
             runtime: Some(ProtoRuntime {
                 name: fm.runtime.r#type.clone(),
@@ -247,26 +287,26 @@ impl From<&FunctionManifest> for FunctionData {
 
 // this is here to get compile time checks that the two enum types
 // are identical
-impl From<Type> for ArgumentType {
-    fn from(at: Type) -> Self {
+impl From<ChannelType> for ArgumentType {
+    fn from(at: ChannelType) -> Self {
         match at {
-            Type::String => ArgumentType::String,
-            Type::Bool => ArgumentType::Bool,
-            Type::Int => ArgumentType::Int,
-            Type::Float => ArgumentType::Float,
-            Type::Bytes => ArgumentType::Bytes,
+            ChannelType::String => ArgumentType::String,
+            ChannelType::Bool => ArgumentType::Bool,
+            ChannelType::Int => ArgumentType::Int,
+            ChannelType::Float => ArgumentType::Float,
+            ChannelType::Bytes => ArgumentType::Bytes,
         }
     }
 }
 
-impl From<&ArgumentType> for Type {
+impl From<&ArgumentType> for ChannelType {
     fn from(at: &ArgumentType) -> Self {
         match *at {
-            ArgumentType::String => Type::String,
-            ArgumentType::Bool => Type::Bool,
-            ArgumentType::Int => Type::Int,
-            ArgumentType::Float => Type::Float,
-            ArgumentType::Bytes => Type::Bytes,
+            ArgumentType::String => ChannelType::String,
+            ArgumentType::Bool => ChannelType::Bool,
+            ArgumentType::Int => ChannelType::Int,
+            ArgumentType::Float => ChannelType::Float,
+            ArgumentType::Bytes => ChannelType::Bytes,
         }
     }
 }
@@ -279,7 +319,7 @@ mod tests {
 
     use tempfile::{NamedTempFile, TempDir};
 
-    use firm_protocols_test_helpers::{attachment_data, input, output, runtime};
+    use firm_protocols_test_helpers::{attachment_data, runtime};
 
     macro_rules! write_toml_to_tempfile {
         ($toml: expr) => {{
@@ -427,29 +467,41 @@ mod tests {
         [runtime]
         type = "wasm"
         [inputs.korv]
-        description = "korv"
+        description = "falu"
         type = "string"
         required = true
         [inputs.aaa]
-        description = "aaa"
+        description = "bbb"
         type = "float"
         [outputs.ost]
-        description = "ost"
+        description = "chez"
         type = "int"
         "#;
 
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
         let rr = FunctionData::from(&r.unwrap());
         assert_eq!(
-            rr.inputs.iter().find(|i| i.name == "korv").unwrap(),
-            &input!("korv", true, Type::String)
+            rr.input.as_ref().unwrap().required.get("korv"),
+            Some(&ChannelSpec {
+                r#type: ChannelType::String as i32,
+                description: "falu".to_owned(),
+            })
         );
         assert_eq!(
-            rr.inputs.iter().find(|i| i.name == "aaa").unwrap(),
-            &input!("aaa", Type::Float)
+            rr.input.unwrap().optional.get("aaa"),
+            Some(&ChannelSpec {
+                r#type: ChannelType::Float as i32,
+                description: "bbb".to_owned(),
+            })
         );
 
-        assert_eq!(rr.outputs.first().unwrap(), &output!("ost", Type::Int));
+        assert_eq!(
+            rr.output.unwrap().required.get("ost"),
+            Some(&ChannelSpec {
+                r#type: ChannelType::Int as i32,
+                description: "chez".to_owned()
+            })
+        );
     }
 
     #[test]
