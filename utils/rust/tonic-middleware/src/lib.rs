@@ -4,7 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use function_protocols::tonic::{
+use firm_protocols::tonic::{
     self,
     transport::{Body, Channel},
 };

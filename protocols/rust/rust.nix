@@ -1,11 +1,11 @@
 { base, pkgs, protobuf, rustProtoCompiler, includeServices }:
 let
   tonicDependencyString = ''tonic = { version = "0.3", features = ["tls", "tls-roots"] }'';
-  packageName = "function-protocols"; # TODO: Rename to firm-protocols
+  packageName = "firm-protocols";
 in
 base.languages.rust.mkUtility {
   inherit rustProtoCompiler;
-  name = "rust-protobuf-definitions";
+  name = "rust-firm-protocols";
   PROTOC = "${protobuf}/bin/protoc";
 
   src = ../.;

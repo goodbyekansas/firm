@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use function_protocols::{
+use firm_protocols::{
     registry::{registry_client::RegistryClient, Filters, Ordering, OrderingKey},
     tonic,
 };

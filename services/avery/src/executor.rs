@@ -14,7 +14,7 @@ use thiserror::Error;
 use url::Url;
 
 use crate::executor::wasi::WasiExecutor;
-use function_protocols::{
+use firm_protocols::{
     execution::{
         execution_result::Result as ProtoResult,
         execution_server::Execution as ExecutionServiceTrait, ExecutionError, ExecutionId,
@@ -706,8 +706,8 @@ mod tests {
     use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
     use crate::registry::RegistryService;
-    use function_protocols::{functions::Runtime, registry::FunctionData};
-    use function_protocols_test_helpers::{attachment, attachment_file, code_file, function_data};
+    use firm_protocols::{functions::Runtime, registry::FunctionData};
+    use firm_protocols_test_helpers::{attachment, attachment_file, code_file, function_data};
 
     macro_rules! null_logger {
         () => {{

@@ -359,6 +359,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4443176a9f2c162692bd3d352d745ef9413eec5782a80d8fd6f8a1ac692a07f7"
 
 [[package]]
+name = "firm-protocols"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "prost",
+ "tempfile",
+ "tonic",
+]
+
+[[package]]
+name = "firm-protocols-test-helpers"
+version = "0.1.0"
+dependencies = [
+ "firm-protocols",
+ "hex",
+ "sha2 0.8.2",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -394,27 +415,6 @@ name = "fuchsia-zircon-sys"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
-
-[[package]]
-name = "function-protocols"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "prost",
- "tempfile",
- "tonic",
-]
-
-[[package]]
-name = "function-protocols-test-helpers"
-version = "0.1.0"
-dependencies = [
- "function-protocols",
- "hex",
- "sha2 0.8.2",
- "tempfile",
- "uuid",
-]
 
 [[package]]
 name = "futures"
@@ -1248,8 +1248,8 @@ dependencies = [
  "bb8",
  "bb8-postgres",
  "config",
- "function-protocols",
- "function-protocols-test-helpers",
+ "firm-protocols",
+ "firm-protocols-test-helpers",
  "futures",
  "lazy_static",
  "postgres-types",

@@ -1,5 +1,5 @@
 [package]
-name = "function-protocols-test-helpers"
+name = "firm-protocols-test-helpers"
 version = "0.1.0"
 authors = ["Goodbye Kansas Pipeline team <pipeline@goodbyekansas.com>"]
 edition = "2018"
@@ -10,4 +10,4 @@ uuid = "0.8"
 sha2 = "0.8"
 hex = "0.4"
 
-function-protocols = { path = "nix-deps/rust-protobuf-definitions" }
+firm-protocols = { path = "nix-deps/rust-firm-protocols" }

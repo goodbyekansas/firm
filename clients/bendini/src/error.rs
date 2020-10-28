@@ -1,4 +1,4 @@
-use function_protocols::tonic::Status;
+use firm_protocols::tonic::Status;
 use thiserror::Error;
 
 use crate::manifest::ManifestError;

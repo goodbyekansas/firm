@@ -5,7 +5,7 @@ use std::{
 };
 
 use bb8_postgres::PostgresConnectionManager;
-use function_protocols::functions::Type as ProtoArgType;
+use firm_protocols::functions::Type as ProtoArgType;
 use futures::future::TryFutureExt;
 use postgres_types::{FromSql, ToSql};
 use slog::{info, Logger};

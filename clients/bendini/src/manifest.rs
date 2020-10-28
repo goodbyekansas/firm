@@ -7,7 +7,7 @@ use std::{
 use serde::Deserialize;
 use thiserror::Error;
 
-use function_protocols::{
+use firm_protocols::{
     functions::{
         Checksums as ProtoChecksums, Input as ProtoInput, Output as ProtoOutput,
         Runtime as ProtoRuntime, Type,
@@ -279,7 +279,7 @@ mod tests {
 
     use tempfile::{NamedTempFile, TempDir};
 
-    use function_protocols_test_helpers::{attachment_data, input, output, runtime};
+    use firm_protocols_test_helpers::{attachment_data, input, output, runtime};
 
     macro_rules! write_toml_to_tempfile {
         ($toml: expr) => {{

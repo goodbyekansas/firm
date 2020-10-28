@@ -6,7 +6,7 @@ use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
 
-pub use function_protocols::{
+pub use firm_protocols::{
     functions::{AttachmentUrl, AuthMethod, Type},
     registry::{AttachmentHandle, OrderingKey},
 };

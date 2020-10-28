@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use function_protocols::{
+use firm_protocols::{
     functions::AttachmentUrl,
     registry::{registry_client::RegistryClient, AttachmentId, AttachmentStreamUpload},
     tonic,
@@ -121,8 +121,8 @@ trait AuthBuilder {
 
 impl AuthBuilder for reqwest::RequestBuilder {
     fn build_auth(self, upload_url: &AttachmentUrl) -> reqwest::RequestBuilder {
-        match function_protocols::functions::AuthMethod::from_i32(upload_url.auth_method) {
-            Some(function_protocols::functions::AuthMethod::Oauth2) => self.bearer_auth(
+        match firm_protocols::functions::AuthMethod::from_i32(upload_url.auth_method) {
+            Some(firm_protocols::functions::AuthMethod::Oauth2) => self.bearer_auth(
                 std::env::var_os("OAUTH_TOKEN")
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_default(),

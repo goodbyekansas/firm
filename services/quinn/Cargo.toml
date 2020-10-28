@@ -29,11 +29,10 @@ url = "2"
 uuid = { version = "0.8", features = ["v4"] }
 
 
-function-protocols = { path = "nix-deps/rust-protobuf-definitions" }
-
+firm-protocols = { path = "nix-deps/rust-firm-protocols" }
 
 [dev-dependencies]
-function-protocols-test-helpers = { path = "nix-deps/rust-protobuf-test-helpers" }
+firm-protocols-test-helpers = { path = "nix-deps/rust-firm-protocols-test-helpers" }
 lazy_static = "1.4"
 
 [features]

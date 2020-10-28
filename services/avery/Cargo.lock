@@ -123,9 +123,9 @@ name = "avery"
 version = "0.1.0"
 dependencies = [
  "async-stream 0.3.0",
+ "firm-protocols",
+ "firm-protocols-test-helpers",
  "flate2",
- "function-protocols",
- "function-protocols-test-helpers",
  "futures",
  "hex",
  "prost",
@@ -573,6 +573,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "firm-protocols"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "prost",
+ "tempfile",
+ "tonic",
+]
+
+[[package]]
+name = "firm-protocols-test-helpers"
+version = "0.1.0"
+dependencies = [
+ "firm-protocols",
+ "hex",
+ "sha2 0.8.2",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "flate2"
 version = "1.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -605,27 +626,6 @@ name = "fuchsia-zircon-sys"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
-
-[[package]]
-name = "function-protocols"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "prost",
- "tempfile",
- "tonic",
-]
-
-[[package]]
-name = "function-protocols-test-helpers"
-version = "0.1.0"
-dependencies = [
- "function-protocols",
- "hex",
- "sha2 0.8.2",
- "tempfile",
- "uuid",
-]
 
 [[package]]
 name = "futures"
