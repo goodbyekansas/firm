@@ -90,8 +90,8 @@ impl TryFrom<firm_protocols::functions::Runtime> for storage::Runtime {
 
     fn try_from(value: firm_protocols::functions::Runtime) -> Result<Self, Self::Error> {
         Ok(storage::Runtime {
-            name: value.name.check_empty("execution_environment.name")?,
-            entrypoint: value.entrypoint, // TODO investigate if it's valid that this is empty
+            name: value.name.check_empty("runtime.name")?,
+            entrypoint: value.entrypoint,
             arguments: value.arguments,
         })
     }
