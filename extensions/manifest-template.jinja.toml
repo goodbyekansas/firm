@@ -19,7 +19,6 @@ type = "{{ manifest['runtime'].type }}"
 {% for name, input in manifest.inputs.items() %}
 [inputs.{{name}}]
 type = "{{input.type}}"
-{% endif %}
 required = {{ "true" if "required" in input and input.required else "false" }}
 {% endfor %}
 {% endif %}
