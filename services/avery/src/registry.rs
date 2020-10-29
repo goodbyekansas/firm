@@ -426,10 +426,10 @@ impl Registry for RegistryService {
         // TODO: Remove corresponding attachments
         functions.retain(|v| v.name != payload.name || v.version != version);
 
-        let execution_environment = payload.runtime.ok_or_else(|| {
+        let runtime = payload.runtime.ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::InvalidArgument,
-                String::from("Execution environment is required when registering function"),
+                String::from("Runtime is required when registering function"),
             )
         })?;
 
@@ -455,7 +455,7 @@ impl Registry for RegistryService {
         let function = Function {
             name: payload.name,
             version,
-            runtime: execution_environment,
+            runtime,
             metadata: payload.metadata,
             inputs: payload.inputs,
             outputs: payload.outputs,

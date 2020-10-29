@@ -8,19 +8,17 @@ version = "{{ manifest.version }}"
 {% endfor %}
 {% endif %}
 
-[execution-environment]
-{% if 'entrypoint' in manifest['execution-environment'] %}
-entrypoint = "{{ manifest['execution-environment'].entrypoint }}"
+[runtime]
+{% if 'entrypoint' in manifest['runtime'] %}
+entrypoint = "{{ manifest['runtime'].entrypoint }}"
 {% endif %}
-type = "{{ manifest['execution-environment'].type }}"
+type = "{{ manifest['runtime'].type }}"
 
 {% if "inputs" in manifest %}
 [inputs]
 {% for name, input in manifest.inputs.items() %}
 [inputs.{{name}}]
 type = "{{input.type}}"
-{% if "default" in input %}
-default = "{{input.default}}"
 {% endif %}
 required = {{ "true" if "required" in input and input.required else "false" }}
 {% endfor %}
