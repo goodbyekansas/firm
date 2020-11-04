@@ -433,7 +433,7 @@ impl Display for Displayer<'_, ChannelSpec> {
 mod tests {
 
     use super::*;
-    use firm_protocols_test_helpers::{stream, stream_spec};
+    use crate::{stream, stream_spec};
 
     #[test]
     fn parse_required() {

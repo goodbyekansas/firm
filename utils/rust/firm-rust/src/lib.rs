@@ -447,7 +447,7 @@ mod tests {
     };
     use mock::MockResultRegistry;
 
-    use firm_protocols_test_helpers::stream;
+    use firm_types::stream;
 
     #[test]
     fn test_map_attachment() {

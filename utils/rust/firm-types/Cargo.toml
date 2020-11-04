@@ -9,6 +9,3 @@ thiserror = "1"
 prost = "0.6"
 
 firm-protocols = { path = "nix-deps/rust-firm-protocols" }
-
-[dev-dependencies]
-firm-protocols-test-helpers = { path = "nix-deps/rust-firm-protocols-test-helpers" }

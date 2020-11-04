@@ -481,7 +481,7 @@ impl FunctionExecutor for WasiExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use firm_protocols_test_helpers::{code_file, stream};
+    use firm_types::{code_file, stream};
 
     macro_rules! null_logger {
         () => {{

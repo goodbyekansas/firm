@@ -1,6 +1,7 @@
 pub use firm_protocols::*;
 
 pub mod stream;
+pub mod test_helpers;
 
 pub struct Displayer<'a, T> {
     display: &'a T,

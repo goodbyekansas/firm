@@ -1,9 +1,9 @@
-{ pkgs, base, types, protocolsTestHelpers }:
+{ pkgs, base, types }:
 with pkgs;
 base.languages.rust.mkService {
   name = "quinn";
   src = ./.;
-  rustDependencies = [ types protocolsTestHelpers ];
+  rustDependencies = [ types ];
 
   nativeBuildInputs = [ pkgs.postgresql pkgs.coreutils pkgs.pkg-config pkgs.openssl ]
     ++ pkgs.stdenv.lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.darwin.apple_sdk.frameworks.Security;

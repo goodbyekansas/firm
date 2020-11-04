@@ -4,7 +4,7 @@ use firm_types::{
 };
 use quinn::{config, registry::RegistryService, storage::OrderingKey};
 
-use firm_protocols_test_helpers::{attachment_data, filters, function_data, runtime};
+use firm_types::{attachment_data, filters, function_data, runtime};
 use std::collections::HashMap;
 
 macro_rules! null_logger {

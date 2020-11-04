@@ -27,5 +27,3 @@ tonic-middleware = { path = "nix-deps/tonic-middleware" }
 
 [dev-dependencies]
 tempfile = "3"
-firm-protocols-test-helpers = { path = "nix-deps/rust-firm-protocols-test-helpers" }
-

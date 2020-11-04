@@ -13,7 +13,6 @@ firm-types = { path = "nix-deps/firm-types" }
 
 [dev-dependencies]
 lazy_static = "1"
-firm-protocols-test-helpers = { path = "nix-deps/rust-firm-protocols-test-helpers" }
 
 [features]
 net = []
