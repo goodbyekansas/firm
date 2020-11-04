@@ -30,6 +30,3 @@ flate2 = "1"
 tar = "0.4"
 
 firm-types = { path = "nix-deps/firm-types" }
-
-[dev-dependencies]
-firm-protocols-test-helpers = { path = "nix-deps/rust-firm-protocols-test-helpers" }

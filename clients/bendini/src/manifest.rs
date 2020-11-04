@@ -319,7 +319,7 @@ mod tests {
 
     use tempfile::{NamedTempFile, TempDir};
 
-    use firm_protocols_test_helpers::{attachment_data, runtime};
+    use firm_types::{attachment_data, runtime};
 
     macro_rules! write_toml_to_tempfile {
         ($toml: expr) => {{

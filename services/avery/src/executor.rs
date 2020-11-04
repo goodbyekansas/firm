@@ -512,9 +512,7 @@ mod tests {
     use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
     use crate::registry::RegistryService;
-    use firm_protocols_test_helpers::{
-        attachment, attachment_file, code_file, function_data, stream,
-    };
+    use firm_types::{attachment, attachment_file, code_file, function_data, stream};
     use firm_types::{functions::Runtime, registry::FunctionData};
 
     macro_rules! null_logger {

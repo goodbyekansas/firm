@@ -10,7 +10,7 @@ use firm_types::{
     tonic,
 };
 
-use firm_protocols_test_helpers::{filters, function_data, runtime, stream, stream_spec};
+use firm_types::{filters, function_data, runtime, stream, stream_spec};
 
 macro_rules! null_logger {
     () => {{
@@ -20,9 +20,9 @@ macro_rules! null_logger {
 
 macro_rules! register_code_attachment {
     ($service:expr) => {{
-        futures::executor::block_on($service.register_attachment(tonic::Request::new(
-            firm_protocols_test_helpers::attachment_data!("code"),
-        )))
+        futures::executor::block_on(
+            $service.register_attachment(tonic::Request::new(firm_types::attachment_data!("code"))),
+        )
         .unwrap()
         .into_inner()
     }};

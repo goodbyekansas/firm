@@ -213,7 +213,7 @@ mod tests {
 
     use std::convert::TryFrom;
 
-    use firm_protocols_test_helpers::{attachment, stream};
+    use firm_types::{attachment, stream};
     use tempfile::Builder;
     use wasmer_runtime::{memory::Memory, WasmPtr};
     use wasmer_runtime::{types::MemoryDescriptor, units::Pages};

@@ -12,7 +12,7 @@ use firm_types::{
     tonic,
 };
 
-use firm_protocols_test_helpers::{attachment_data, filters, function_data, runtime};
+use firm_types::{attachment_data, filters, function_data, runtime};
 
 use avery::registry::RegistryService as LocalRegistryService;
 

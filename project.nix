@@ -10,35 +10,34 @@ let
       (import ./extensions/function.nix)
     ];
   };
+
   protocols = import ./protocols project;
+
   typesWithoutServices = project.declareComponent ./utils/rust/firm-types/firm-types.nix {
     protocols = protocols.rust.onlyMessages;
-    protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.onlyMessages; };
   };
+
   typesWithServices = typesWithoutServices.override {
     protocols = protocols.rust.withServices;
-    protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
   };
+
   # declare the components of the project and their dependencies
   components = rec {
     inherit protocols;
 
-    firmTypesRust = typesWithoutServices;
-    firmRust = project.declareComponent ./utils/rust/firm-rust/firm-rust.nix {
-      types = firmTypesRust;
-      testHelpers = protocols.rust.testHelpers { protocols = protocols.rust.onlyMessages; };
-    };
-    tonicMiddleware = project.declareComponent ./utils/rust/tonic-middleware/tonic-middleware.nix {
-      protocols = protocols.rust.withServices; # This brings tonic which we will need. A bit hard to see.
-    };
     avery = project.declareComponent ./services/avery/avery.nix {
-      protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
       types = typesWithServices;
     };
+
     bendini = project.declareComponent ./clients/bendini/bendini.nix {
       inherit tonicMiddleware;
       types = typesWithServices;
-      protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
+    };
+
+    firmTypesRust = typesWithoutServices;
+
+    firmRust = project.declareComponent ./utils/rust/firm-rust/firm-rust.nix {
+      types = firmTypesRust;
     };
 
     osPackaging = project.declareComponent ./deployment/os-packaging.nix {
@@ -52,10 +51,16 @@ let
 
     quinn = project.declareComponent ./services/quinn/quinn.nix {
       types = typesWithServices;
-      protocolsTestHelpers = protocols.rust.testHelpers { protocols = protocols.rust.withServices; };
     };
+
+    tonicMiddleware = project.declareComponent ./utils/rust/tonic-middleware/tonic-middleware.nix {
+      protocols = protocols.rust.withServices; # This brings tonic which we will need. A bit hard to see.
+    };
+
   };
+
   capturedBendiniPackage = components.bendini.package;
+
   # TODO credentials must be removed. Need to have a local auth service for that.
   setupFunctionDeployment = { components, endpoint ? "tcp://[::1]", port ? 1939, credentials ? "" }: (builtins.mapAttrs
     (
