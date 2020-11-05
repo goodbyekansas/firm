@@ -201,7 +201,7 @@ pub struct MockResultRegistry {
     run_host_process_closure: MockCallbacks<dyn Fn(StartProcessRequest) -> Result<i32, u32> + Send>,
     get_input_len_closure: MockCallbacks<dyn Fn(&str) -> Result<usize, u32> + Send>,
     get_input_closure: MockCallbacks<dyn Fn(&str) -> Result<Channel, u32> + Send>,
-    set_output_closure: MockCallbacks<dyn Fn(Channel) -> Result<(), u32> + Send>,
+    set_output_closure: MockCallbacks<dyn Fn(&str, Channel) -> Result<(), u32> + Send>,
     set_error_closure: MockCallbacks<dyn Fn(&str) -> Result<(), u32> + Send>,
 
     #[cfg(feature = "net")]
@@ -603,7 +603,7 @@ impl MockResultRegistry {
 
     pub fn set_set_output_impl<F>(closure: F)
     where
-        F: Fn(Channel) -> Result<(), u32> + 'static + Send,
+        F: Fn(&str, Channel) -> Result<(), u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -613,11 +613,16 @@ impl MockResultRegistry {
     }
 
     fn execute_set_output(
-        _key_ptr: *const u8,
-        _key_len: usize,
+        key_ptr: *const u8,
+        key_len: usize,
         value_ptr: *const u8,
         value_len: usize,
     ) -> u32 {
+        let key = unsafe {
+            let slice = std::slice::from_raw_parts(key_ptr, key_len);
+            std::str::from_utf8(slice).unwrap()
+        };
+
         let mut vec = Vec::with_capacity(value_len);
         unsafe {
             value_ptr.copy_to(vec.as_mut_ptr(), value_len);
@@ -632,7 +637,7 @@ impl MockResultRegistry {
             .get(&thread::current().id())
             .map_or_else(
                 || 1,
-                |c| match c(return_value) {
+                |c| match c(key, return_value) {
                     Ok(_) => 0,
                     Err(e) => e,
                 },

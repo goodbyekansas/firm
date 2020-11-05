@@ -23,12 +23,13 @@ message GetInputCommand {
 
 
 message GetInputResponse {
-  execution.Channel argument = 1;
+  execution.Channel channel = 1;
 }
 
 
 message SetOutputCommand {
-  execution.Channel return_value = 1;
+  string name = 1;
+  execution.Channel channel = 2;
 }
 
 
