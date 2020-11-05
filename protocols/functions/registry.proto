@@ -57,11 +57,12 @@ message FunctionData {
   string name = 1;
   string version = 2;
   map<string, string> metadata = 3;
-  functions.StreamSpec input = 4;
-  functions.StreamSpec output = 5;
-  AttachmentId code_attachment_id = 6;
-  functions.Runtime runtime = 7;
-  repeated AttachmentId attachment_ids = 8;
+  map<string, functions.ChannelSpec> required_inputs = 4;
+  map<string, functions.ChannelSpec> optional_inputs = 5;
+  map<string, functions.ChannelSpec> outputs = 6;
+  AttachmentId code_attachment_id = 7;
+  functions.Runtime runtime = 8;
+  repeated AttachmentId attachment_ids = 9;
 }
 
 

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use firm_types::{
     execution::{execution_client::ExecutionClient, ExecutionParameters, Stream},
-    functions::{ChannelType, StreamSpec},
+    functions::{ChannelSpec, ChannelType},
     registry::{
         registry_client::RegistryClient, Filters, NameFilter, Ordering, OrderingKey,
         VersionRequirement,
@@ -16,18 +16,18 @@ use crate::error;
 use error::BendiniError;
 
 // TODO this can be more general and move to firm_types
-fn parse_arguments(
-    input: &StreamSpec,
+fn parse_arguments<'a, I>(
+    inputs: I,
     arguments: Vec<(String, String)>,
-) -> Result<Stream, Vec<String>> {
+) -> Result<Stream, Vec<String>>
+where
+    I: Iterator<Item = (&'a String, &'a ChannelSpec)>,
+{
+    let inputs = inputs.collect::<HashMap<_, _>>();
     let (values, errors): (Vec<_>, Vec<_>) = arguments
         .iter()
         .map(|(key, val)| {
-            input
-                .required
-                .iter()
-                .chain(input.optional.iter())
-                .collect::<HashMap<_, _>>()
+            inputs
                 .get(key)
                 .ok_or(format!("argument {} is not expected.", key))
                 .and_then(|input| {
@@ -110,8 +110,11 @@ pub async fn run(
             version: function_version.to_owned(),
         })
         .and_then(|f| {
-            parse_arguments(&f.input.clone().unwrap_or_default(), arguments)
-                .map_err(|e| BendiniError::InvalidFunctionArguments(f.name.clone(), e))
+            parse_arguments(
+                f.required_inputs.iter().chain(f.optional_inputs.iter()),
+                arguments,
+            )
+            .map_err(|e| BendiniError::InvalidFunctionArguments(f.name.clone(), e))
         })?;
 
     println!(

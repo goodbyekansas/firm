@@ -42,27 +42,13 @@ pub struct Function {
     pub name: String,
     pub version: Version,
     pub runtime: Runtime,
-    pub input_spec: StreamSpec,
-    pub output_spec: StreamSpec,
+    pub required_inputs: HashMap<String, ChannelSpec>,
+    pub optional_inputs: HashMap<String, ChannelSpec>,
+    pub outputs: HashMap<String, ChannelSpec>,
     pub metadata: HashMap<String, String>,
     pub code: Option<Uuid>,
     pub attachments: Vec<Uuid>,
     pub created_at: u64,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct StreamSpec {
-    pub required: HashMap<String, ChannelSpec>,
-    pub optional: HashMap<String, ChannelSpec>,
-}
-
-impl StreamSpec {
-    pub fn empty() -> Self {
-        Self {
-            required: HashMap::new(),
-            optional: HashMap::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]

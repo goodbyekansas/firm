@@ -369,17 +369,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "firm-protocols-test-helpers"
-version = "0.1.0"
-dependencies = [
- "firm-protocols",
- "hex",
- "sha2 0.8.2",
- "tempfile",
- "uuid",
-]
-
-[[package]]
 name = "firm-types"
 version = "0.1.0"
 dependencies = [
@@ -583,12 +572,6 @@ checksum = "5aca5565f760fb5b220e499d72710ed156fdb74e631659e99377d9ebfbd13ae8"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "hex"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "644f9158b2f133fd50f5fb3242878846d9eb792e445c893805ff0e3824006e35"
 
 [[package]]
 name = "hmac"
@@ -1181,7 +1164,7 @@ dependencies = [
  "md5",
  "memchr",
  "rand",
- "sha2 0.9.1",
+ "sha2",
  "stringprep",
 ]
 
@@ -1257,7 +1240,6 @@ dependencies = [
  "bb8",
  "bb8-postgres",
  "config",
- "firm-protocols-test-helpers",
  "firm-types",
  "futures",
  "lazy_static",
@@ -1649,18 +1631,6 @@ name = "sha-1"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7d94d0bede923b3cea61f3f1ff57ff8cdfd77b400fb8f9998949e0cf04163df"
-dependencies = [
- "block-buffer 0.7.3",
- "digest 0.8.1",
- "fake-simd",
- "opaque-debug 0.2.3",
-]
-
-[[package]]
-name = "sha2"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a256f46ea78a0c0d9ff00077504903ac881a1dafdc20da66545699e7776b3e69"
 dependencies = [
  "block-buffer 0.7.3",
  "digest 0.8.1",

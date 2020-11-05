@@ -16,8 +16,8 @@ use uuid::Uuid;
 
 use firm_types::{
     functions::{
-        Attachment, AttachmentUrl, AuthMethod, Function as ProtoFunction, Functions, Runtime,
-        StreamSpec,
+        Attachment, AttachmentUrl, AuthMethod, ChannelSpec, Function as ProtoFunction, Functions,
+        Runtime,
     },
     registry::{
         registry_server::Registry, AttachmentData, AttachmentHandle, AttachmentId,
@@ -39,8 +39,9 @@ struct Function {
     created_at: u64,
     version: Version,
     runtime: Runtime,
-    input: Option<StreamSpec>,
-    output: Option<StreamSpec>,
+    required_inputs: HashMap<String, ChannelSpec>,
+    optional_inputs: HashMap<String, ChannelSpec>,
+    outputs: HashMap<String, ChannelSpec>,
     code: Option<AttachmentId>,
     attachments: Vec<AttachmentId>,
     metadata: HashMap<String, String>,
@@ -260,8 +261,9 @@ impl RegistryService {
             name: f.name.clone(),
             version: f.version.to_string(),
             metadata: f.metadata.clone(),
-            input: f.input.clone(),
-            output: f.output.clone(),
+            required_inputs: f.required_inputs.clone(),
+            optional_inputs: f.optional_inputs.clone(),
+            outputs: f.outputs.clone(),
             runtime: Some(f.runtime.clone()),
             code,
             attachments,
@@ -457,8 +459,9 @@ impl Registry for RegistryService {
             version,
             runtime,
             metadata: payload.metadata,
-            input: payload.input,
-            output: payload.output,
+            required_inputs: payload.required_inputs,
+            optional_inputs: payload.optional_inputs,
+            outputs: payload.outputs,
             code: payload.code_attachment_id,
             attachments: payload.attachment_ids,
             created_at: std::time::SystemTime::now()

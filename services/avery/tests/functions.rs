@@ -10,7 +10,7 @@ use firm_types::{
     tonic,
 };
 
-use firm_types::{filters, function_data, runtime, stream, stream_spec};
+use firm_types::{channel_specs, filters, function_data, runtime, stream};
 
 macro_rules! null_logger {
     () => {{
@@ -69,7 +69,7 @@ fn test_execute() {
             "0.1.0",
             runtime!("wasi"),
             register_code_attachment!(sr).id,
-            stream_spec!(
+            channel_specs!(
                 {
                     "say" => ChannelSpec {
                         description: "no".to_owned(),
@@ -80,15 +80,18 @@ fn test_execute() {
                         r#type: ChannelType::Int as i32,
                     }
                 }
-            ),
-            stream_spec!(
+            )
+            .0,
+            std::collections::HashMap::new(),
+            channel_specs!(
                 {
                     "output_string" => ChannelSpec {
                         description: "yes".to_owned(),
                         r#type: ChannelType::String as i32,
                     }
                 }
-            ),
+            )
+            .0,
             [], // attachments
             {}  // metadata
         )]

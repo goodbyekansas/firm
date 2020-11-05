@@ -1,7 +1,6 @@
 use quinn::storage;
 use slog::{o, Drain, Logger};
 use std::collections::HashMap;
-use storage::StreamSpec;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -27,8 +26,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 entrypoint: "in här".to_owned(),
                 arguments: HashMap::new(),
             },
-            input_spec: StreamSpec::empty(),
-            output_spec: StreamSpec::empty(),
+            required_inputs: HashMap::new(),
+            optional_inputs: HashMap::new(),
+            outputs: HashMap::new(),
             metadata: HashMap::new(),
             code: None,
             attachments: vec![],
@@ -54,8 +54,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 entrypoint: "in här".to_owned(),
                 arguments: HashMap::new(),
             },
-            input_spec: StreamSpec::empty(),
-            output_spec: StreamSpec::empty(),
+            required_inputs: HashMap::new(),
+            optional_inputs: HashMap::new(),
+            outputs: HashMap::new(),
             metadata: HashMap::new(),
             code: None,
             attachments: vec![attachment_id],
@@ -71,8 +72,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 entrypoint: "in här".to_owned(),
                 arguments: HashMap::new(),
             },
-            input_spec: StreamSpec::empty(),
-            output_spec: StreamSpec::empty(),
+            required_inputs: HashMap::new(),
+            optional_inputs: HashMap::new(),
+            outputs: HashMap::new(),
             metadata: HashMap::new(),
             code: None,
             attachments: vec![],
@@ -88,8 +90,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 entrypoint: "in här".to_owned(),
                 arguments: HashMap::new(),
             },
-            input_spec: StreamSpec::empty(),
-            output_spec: StreamSpec::empty(),
+            required_inputs: HashMap::new(),
+            optional_inputs: HashMap::new(),
+            outputs: HashMap::new(),
             metadata: HashMap::new(),
             code: None,
             attachments: vec![],
