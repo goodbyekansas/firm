@@ -600,7 +600,7 @@ mod tests {
         // String
         let name = "sugar";
         let value = "kalle";
-        MockResultRegistry::set_set_output_impl(move |res| {
+        MockResultRegistry::set_set_output_impl(move |_key, res| {
             assert!(matches!(res.value, Some(ValueType::Strings(_))));
             assert_eq!(String::try_from(&res).unwrap(), value);
             Ok(())
@@ -612,7 +612,7 @@ mod tests {
         // int
         let name = "sugar int";
         let value = 50i64;
-        MockResultRegistry::set_set_output_impl(move |res| {
+        MockResultRegistry::set_set_output_impl(move |_key, res| {
             assert!(matches!(res.value, Some(ValueType::Integers(_))));
             assert_eq!(i64::try_from(&res).unwrap(), value);
             Ok(())
@@ -626,7 +626,7 @@ mod tests {
         let value = vec![15, 74, 23, 65, 53];
         let cloned_value = value.clone();
 
-        MockResultRegistry::set_set_output_impl(move |res| {
+        MockResultRegistry::set_set_output_impl(move |_key, res| {
             assert!(matches!(res.value, Some(ValueType::Bytes(_))));
             assert_eq!(<[u8]>::try_ref_from(&res).unwrap(), value);
             Ok(())
@@ -639,7 +639,7 @@ mod tests {
         let name = "sugar floats";
         let value = 0.65;
 
-        MockResultRegistry::set_set_output_impl(move |res| {
+        MockResultRegistry::set_set_output_impl(move |_key, res| {
             assert!(matches!(res.value, Some(ValueType::Floats(_))));
             assert!((f32::try_from(&res).unwrap() - value).abs() < f32::EPSILON);
             Ok(())
@@ -652,7 +652,7 @@ mod tests {
         let name = "sugar bool";
         let value = true;
 
-        MockResultRegistry::set_set_output_impl(move |res| {
+        MockResultRegistry::set_set_output_impl(move |_key, res| {
             assert!(matches!(res.value, Some(ValueType::Bools(_))));
             assert_eq!(bool::try_from(&res).unwrap(), value);
             Ok(())
@@ -665,7 +665,7 @@ mod tests {
         let name = "sugar bool";
         let value = true;
 
-        MockResultRegistry::set_set_output_impl(move |_res| Err(1));
+        MockResultRegistry::set_set_output_impl(move |_key, _res| Err(1));
 
         let res = set_output(name, value);
         assert!(res.is_err());

@@ -169,6 +169,15 @@ macro_rules! to_channel_impl {
     };
 }
 
+impl<T: ToChannel> ToChannel for Option<T> {
+    fn to_channel(self) -> Channel {
+        match self {
+            Some(value) => value.to_channel(),
+            None => Channel { value: None },
+        }
+    }
+}
+
 // bytes
 as_ref_try_from_impl!(u8, ValueType::Bytes, "byte");
 
