@@ -10,7 +10,7 @@ base.languages.rust.mkUtility {
 
   src = ../.;
 
-  configurePhase = ""; # don't want the standard rust configurePhase
+  configurePhase = ""; # don't need the standard rust configurePhase, because it's not a standard rust package
 
   buildPhase = ''
     $rustProtoCompiler/bin/rust-protobuf-compiler -I ./ ${if includeServices then "--build-services" else ""} -o ./${packageName}/src **/*.proto

@@ -201,7 +201,7 @@ impl ExecutionServiceTrait for ExecutionService {
 
         // validate args
         let args = payload.arguments.unwrap_or_default();
-        args.validate(&function.input.clone().unwrap_or_default())
+        args.validate(&function.required_inputs, Some(&function.optional_inputs))
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::InvalidArgument,
@@ -246,7 +246,7 @@ impl ExecutionServiceTrait for ExecutionService {
                 );
                 match res {
                     Ok(Ok(r)) => r
-                        .validate(&function.output.unwrap_or_default())
+                        .validate(&function.outputs, None)
                         .map(|_| {
                             tonic::Response::new(ExecutionResult {
                                 execution_id: Some(execution_id),
@@ -398,34 +398,24 @@ impl FunctionExecutor for FunctionAdapter {
             let mut code_buf = Vec::with_capacity(code.encoded_len());
             code.encode(&mut code_buf)?;
 
-            executor_function_arguments
-                .channels
-                .insert("_code".to_owned(), code_buf.to_channel());
+            executor_function_arguments.set_channel("_code", code_buf.to_channel());
 
             let checksums = code.checksums.ok_or(ExecutorError::MissingChecksums)?;
-            executor_function_arguments
-                .channels
-                .insert("_sha256".to_owned(), checksums.sha256.to_channel());
+            executor_function_arguments.set_channel("_sha256", checksums.sha256.to_channel());
         }
 
-        executor_function_arguments.channels.insert(
-            "_entrypoint".to_owned(),
-            executor_context.entrypoint.to_channel(),
-        );
+        executor_function_arguments
+            .set_channel("_entrypoint", executor_context.entrypoint.to_channel());
 
         // nest arguments and attachments
         let mut arguments_buf: Vec<u8> = Vec::with_capacity(arguments.encoded_len());
         arguments.encode(&mut arguments_buf)?;
-        executor_function_arguments
-            .channels
-            .insert("_arguments".to_owned(), arguments_buf.to_channel());
+        executor_function_arguments.set_channel("_arguments", arguments_buf.to_channel());
 
         let proto_attachments = Attachments { attachments };
         let mut attachments_buf: Vec<u8> = Vec::with_capacity(proto_attachments.encoded_len());
         proto_attachments.encode(&mut attachments_buf)?;
-        executor_function_arguments
-            .channels
-            .insert("_attachments".to_owned(), attachments_buf.to_channel());
+        executor_function_arguments.set_channel("_attachments", attachments_buf.to_channel());
 
         let function_exe_env =
             self.executor_function.runtime.clone().ok_or_else(|| {
@@ -614,8 +604,9 @@ mod tests {
                 name: "wienerbröööööööö".to_owned(),
                 version: "2019.3-5-PR2".to_owned(),
                 metadata: HashMap::new(),
-                input: None,
-                output: None,
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 created_at: 0,
             },
             null_logger!(),
@@ -723,8 +714,9 @@ mod tests {
                 name: "mandelkubb".to_owned(),
                 version: "2022.1-5-PR50".to_owned(),
                 metadata: HashMap::new(),
-                input: None,
-                output: None,
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 created_at: 0u64,
             },
             null_logger!(),
@@ -792,8 +784,9 @@ mod tests {
                 name: "oran-func".to_owned(),
                 version: "0.1.1".to_owned(),
                 metadata: wasi_executor_metadata,
-                input: None,
-                output: None,
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 attachment_ids: vec![],
             },
             FunctionData {
@@ -806,8 +799,9 @@ mod tests {
                 name: "precious-granag".to_owned(),
                 version: "8.1.5".to_owned(),
                 metadata: nested_executor_metadata,
-                input: None,
-                output: None,
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 attachment_ids: vec![],
             },
             FunctionData {
@@ -820,8 +814,9 @@ mod tests {
                 name: "precious-granag".to_owned(),
                 version: "3.2.2".to_owned(),
                 metadata: broken_executor_metadata,
-                input: None,
-                output: None,
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 attachment_ids: vec![],
             },
         ]

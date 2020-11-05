@@ -206,16 +206,9 @@ impl TryFrom<FunctionWithAttachments> for storage::Function {
                 .try_into()
                 .map_err(|e: String| storage::StorageError::BackendError(e.into()))?,
             runtime: f.func.runtime.into(),
-            input_spec: StreamSpec {
-                required: f.func.required_inputs,
-                optional: f.func.optional_inputs,
-            }
-            .into(),
-            output_spec: StreamSpec {
-                required: f.func.outputs,
-                optional: vec![],
-            }
-            .into(),
+            required_inputs: ChannelSpecs(f.func.required_inputs).into(),
+            optional_inputs: ChannelSpecs(f.func.optional_inputs).into(),
+            outputs: ChannelSpecs(f.func.outputs).into(),
             metadata: f
                 .func
                 .metadata
@@ -242,16 +235,12 @@ struct ChannelSpec {
     argument_type: Type,
 }
 
-struct StreamSpec {
-    required: Vec<ChannelSpec>,
-    optional: Vec<ChannelSpec>,
-}
+struct ChannelSpecs(Vec<ChannelSpec>);
 
-impl From<storage::StreamSpec> for StreamSpec {
-    fn from(fi: storage::StreamSpec) -> Self {
-        StreamSpec {
-            required: fi
-                .required
+impl From<HashMap<String, storage::ChannelSpec>> for ChannelSpecs {
+    fn from(specs: HashMap<String, storage::ChannelSpec>) -> Self {
+        Self(
+            specs
                 .into_iter()
                 .map(|(name, channel_spec)| ChannelSpec {
                     name,
@@ -259,49 +248,25 @@ impl From<storage::StreamSpec> for StreamSpec {
                     argument_type: channel_spec.argument_type.into(),
                 })
                 .collect(),
-            optional: fi
-                .optional
-                .into_iter()
-                .map(|(name, channel_spec)| ChannelSpec {
-                    name,
-                    description: channel_spec.description,
-                    argument_type: channel_spec.argument_type.into(),
-                })
-                .collect(),
-        }
+        )
     }
 }
 
-impl From<StreamSpec> for storage::StreamSpec {
-    fn from(fi: StreamSpec) -> Self {
-        storage::StreamSpec {
-            required: fi
-                .required
-                .into_iter()
-                .map(|channel_spec| {
-                    (
-                        channel_spec.name,
-                        storage::ChannelSpec {
-                            description: channel_spec.description,
-                            argument_type: channel_spec.argument_type.into(),
-                        },
-                    )
-                })
-                .collect(),
-            optional: fi
-                .optional
-                .into_iter()
-                .map(|channel_spec| {
-                    (
-                        channel_spec.name,
-                        storage::ChannelSpec {
-                            description: channel_spec.description,
-                            argument_type: channel_spec.argument_type.into(),
-                        },
-                    )
-                })
-                .collect(),
-        }
+impl From<ChannelSpecs> for HashMap<String, storage::ChannelSpec> {
+    fn from(stream_spec: ChannelSpecs) -> Self {
+        stream_spec
+            .0
+            .into_iter()
+            .map(|channel_spec| {
+                (
+                    channel_spec.name,
+                    storage::ChannelSpec {
+                        description: channel_spec.description,
+                        argument_type: channel_spec.argument_type.into(),
+                    },
+                )
+            })
+            .collect()
     }
 }
 
@@ -502,8 +467,6 @@ impl storage::FunctionStorage for PostgresStorage {
         let name = function_data.name.clone();
         let version = function_data.version.clone();
 
-        let input_spec: StreamSpec = function_data.input_spec.into();
-        let output_spec: StreamSpec = function_data.output_spec.into();
         self.get_connection()
             .await?
             .query_one(
@@ -513,9 +476,9 @@ impl storage::FunctionStorage for PostgresStorage {
                     &Version::from(&function_data.version),
                     &metadata,
                     &function_data.code,
-                    &input_spec.required,
-                    &input_spec.optional,
-                    &output_spec.required,
+                    &ChannelSpecs::from(function_data.required_inputs).0,
+                    &ChannelSpecs::from(function_data.optional_inputs).0,
+                    &ChannelSpecs::from(function_data.outputs).0,
                     &rt,
                     &function_data.attachments,
                 ],
@@ -744,8 +707,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -767,8 +731,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -788,8 +753,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -808,8 +774,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -854,27 +821,25 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: hashmap!("arg1".to_owned() => "some/path".to_owned(), "bune".to_owned() => "rune".to_owned()),
                 },
-                input_spec: storage::StreamSpec {
-                    required: hashmap!("best_input".to_owned() => storage::ChannelSpec {
-                        description: "notig".to_owned(),
-                        argument_type: storage::ChannelType::String,
-                    }),
-                    optional: hashmap!("worst_input".to_owned() => storage::ChannelSpec {
-                        argument_type: storage::ChannelType::Bool,
-                        description: "it truly is".to_owned(),
-                    }),
+
+                required_inputs: hashmap!("best_input".to_owned() => storage::ChannelSpec {
+                    description: "notig".to_owned(),
+                    argument_type: storage::ChannelType::String,
+                }),
+                optional_inputs: hashmap!("worst_input".to_owned() => storage::ChannelSpec {
+                    argument_type: storage::ChannelType::Bool,
+                    description: "it truly is".to_owned(),
+                }),
+
+                outputs: hashmap!("best output".to_owned() => storage::ChannelSpec {
+                    argument_type: storage::ChannelType::String,
+                    description: "beskrivning".to_owned(),
                 },
-                output_spec: storage::StreamSpec {
-                    required: hashmap!("best output".to_owned() => storage::ChannelSpec {
-                        argument_type: storage::ChannelType::String,
-                        description: "beskrivning".to_owned(),
-                    },
-                    "worst output".to_owned() => storage::ChannelSpec {
-                        argument_type: storage::ChannelType::Bool,
-                        description: "kuvaus".to_owned(),
-                    }),
-                    optional: HashMap::new(),
-                },
+                "worst output".to_owned() => storage::ChannelSpec {
+                    argument_type: storage::ChannelType::Bool,
+                    description: "kuvaus".to_owned(),
+                }),
+
                 metadata: hashmap!("meta".to_owned() => "ja tack, fisk är gott".to_owned(), "will_explode".to_owned() => "very yes".to_owned()),
                 code: Some(uuid::Uuid::new_v4()),
                 attachments: vec![attachment1.id, attachment2.id],
@@ -896,8 +861,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -921,8 +887,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![Uuid::new_v4()],
@@ -960,8 +927,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -1014,8 +982,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![att1_id],
@@ -1086,8 +1055,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: string_hashmap!("fisk" => "haj", "orm" => "🐍", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
@@ -1214,8 +1184,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: string_hashmap!("fisk" => "haj", "orm" => "🐍", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
@@ -1230,8 +1201,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: string_hashmap!("fisk" => "torsk", "orm" => "🐍", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
@@ -1246,8 +1218,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: string_hashmap!("fisk" => "abborre", "orm" => "🐍", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
@@ -1262,8 +1235,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: string_hashmap!("fisk" => "berggylta", "orm" => "nej", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
@@ -1329,8 +1303,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: string_hashmap!("fisk" => "berggylta", "orm" => "nej", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
@@ -1345,8 +1320,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: string_hashmap!("fisk" => "sutare", "orm" => "nej", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
@@ -1374,8 +1350,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: string_hashmap!("fisk" => "sutare", "orm" => "nej", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
@@ -1390,8 +1367,9 @@ mod tests {
                     entrypoint: "ingångspoäng".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: string_hashmap!("fisk" => "brugd", "orm" => "nej", "snake" => "snek"),
                 code: None,
                 attachments: vec![],
@@ -1437,8 +1415,9 @@ mod tests {
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -1453,8 +1432,9 @@ mod tests {
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -1469,8 +1449,9 @@ mod tests {
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -1485,8 +1466,9 @@ mod tests {
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -1501,8 +1483,9 @@ mod tests {
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -1517,8 +1500,9 @@ mod tests {
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],
@@ -1533,8 +1517,9 @@ mod tests {
                     entrypoint: "abandonAllHopeYeWhoEntersHere".to_owned(),
                     arguments: HashMap::new(),
                 },
-                input_spec: storage::StreamSpec::empty(),
-                output_spec: storage::StreamSpec::empty(),
+                required_inputs: HashMap::new(),
+                optional_inputs: HashMap::new(),
+                outputs: HashMap::new(),
                 metadata: HashMap::new(),
                 code: None,
                 attachments: vec![],

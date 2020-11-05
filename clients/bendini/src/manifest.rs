@@ -8,9 +8,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use firm_types::{
-    functions::{
-        ChannelSpec, ChannelType, Checksums as ProtoChecksums, Runtime as ProtoRuntime, StreamSpec,
-    },
+    functions::{ChannelSpec, ChannelType, Checksums as ProtoChecksums, Runtime as ProtoRuntime},
     registry::{AttachmentData, FunctionData},
 };
 
@@ -214,66 +212,53 @@ impl From<&FunctionManifest> for FunctionData {
             name: fm.name.clone(),
             version: fm.version.clone(),
             metadata: fm.metadata.clone(),
-            input: if fm.inputs.is_empty() {
-                None
-            } else {
-                Some(StreamSpec {
-                    required: fm
-                        .inputs
-                        .iter()
-                        .filter_map(|(name, input)| {
-                            if input.required {
-                                Some((
-                                    name.clone(),
-                                    ChannelSpec {
-                                        r#type: ChannelType::from(&input.r#type) as i32,
-                                        description: input.description.to_owned(),
-                                    },
-                                ))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                    optional: fm
-                        .inputs
-                        .iter()
-                        .filter_map(|(name, input)| {
-                            if !input.required {
-                                Some((
-                                    name.clone(),
-                                    ChannelSpec {
-                                        r#type: ChannelType::from(&input.r#type) as i32,
-                                        description: input.description.to_owned(),
-                                    },
-                                ))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
+            required_inputs: fm
+                .inputs
+                .iter()
+                .filter_map(|(name, input)| {
+                    if input.required {
+                        Some((
+                            name.clone(),
+                            ChannelSpec {
+                                r#type: ChannelType::from(&input.r#type) as i32,
+                                description: input.description.to_owned(),
+                            },
+                        ))
+                    } else {
+                        None
+                    }
                 })
-            },
-            output: if fm.outputs.is_empty() {
-                None
-            } else {
-                Some(StreamSpec {
-                    required: fm
-                        .outputs
-                        .iter()
-                        .map(|(name, output)| {
-                            (
-                                name.clone(),
-                                ChannelSpec {
-                                    description: output.description.clone(),
-                                    r#type: ChannelType::from(&output.r#type) as i32,
-                                },
-                            )
-                        })
-                        .collect(),
-                    optional: HashMap::new(),
+                .collect(),
+            optional_inputs: fm
+                .inputs
+                .iter()
+                .filter_map(|(name, input)| {
+                    if !input.required {
+                        Some((
+                            name.clone(),
+                            ChannelSpec {
+                                r#type: ChannelType::from(&input.r#type) as i32,
+                                description: input.description.to_owned(),
+                            },
+                        ))
+                    } else {
+                        None
+                    }
                 })
-            },
+                .collect(),
+            outputs: fm
+                .outputs
+                .iter()
+                .map(|(name, output)| {
+                    (
+                        name.clone(),
+                        ChannelSpec {
+                            description: output.description.clone(),
+                            r#type: ChannelType::from(&output.r#type) as i32,
+                        },
+                    )
+                })
+                .collect(),
             code_attachment_id: None,
             runtime: Some(ProtoRuntime {
                 name: fm.runtime.r#type.clone(),
@@ -481,14 +466,14 @@ mod tests {
         let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
         let rr = FunctionData::from(&r.unwrap());
         assert_eq!(
-            rr.input.as_ref().unwrap().required.get("korv"),
+            rr.required_inputs.get("korv"),
             Some(&ChannelSpec {
                 r#type: ChannelType::String as i32,
                 description: "falu".to_owned(),
             })
         );
         assert_eq!(
-            rr.input.unwrap().optional.get("aaa"),
+            rr.optional_inputs.get("aaa"),
             Some(&ChannelSpec {
                 r#type: ChannelType::Float as i32,
                 description: "bbb".to_owned(),
@@ -496,7 +481,7 @@ mod tests {
         );
 
         assert_eq!(
-            rr.output.unwrap().required.get("ost"),
+            rr.outputs.get("ost"),
             Some(&ChannelSpec {
                 r#type: ChannelType::Int as i32,
                 description: "chez".to_owned()

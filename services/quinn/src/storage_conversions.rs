@@ -127,45 +127,6 @@ impl From<storage::ChannelSpec> for firm_types::functions::ChannelSpec {
     }
 }
 
-impl TryFrom<firm_types::functions::StreamSpec> for storage::StreamSpec {
-    type Error = tonic::Status;
-    fn try_from(value: firm_types::functions::StreamSpec) -> Result<Self, Self::Error> {
-        Ok(storage::StreamSpec {
-            required: value
-                .required
-                .into_iter()
-                .map(|(name, cs)| cs.try_into().map(|c| (name, c)))
-                .collect::<Result<HashMap<String, storage::ChannelSpec>, tonic::Status>>()?,
-            optional: value
-                .optional
-                .into_iter()
-                .map(|(name, cs)| cs.try_into().map(|c| (name, c)))
-                .collect::<Result<HashMap<String, storage::ChannelSpec>, tonic::Status>>()?,
-        })
-    }
-}
-
-impl From<storage::StreamSpec> for Option<firm_types::functions::StreamSpec> {
-    fn from(value: storage::StreamSpec) -> Self {
-        if value.required.is_empty() && value.optional.is_empty() {
-            None
-        } else {
-            Some(firm_types::functions::StreamSpec {
-                required: value
-                    .required
-                    .into_iter()
-                    .map(|(name, c)| (name, c.into()))
-                    .collect(),
-                optional: value
-                    .optional
-                    .into_iter()
-                    .map(|(name, c)| (name, c.into()))
-                    .collect(),
-            })
-        }
-    }
-}
-
 trait ToUuid {
     type Error;
     fn to_uuid(&self) -> Result<uuid::Uuid, Self::Error>;
@@ -202,8 +163,21 @@ impl TryFrom<firm_types::registry::FunctionData> for storage::Function {
                     )
                 })
                 .and_then(|ee| ee.try_into())?,
-            input_spec: value.input.unwrap_or_default().try_into()?,
-            output_spec: value.output.unwrap_or_default().try_into()?,
+            required_inputs: value
+                .required_inputs
+                .into_iter()
+                .map(|(k, cs)| cs.try_into().map(|c| (k, c)))
+                .collect::<Result<HashMap<_, _>, _>>()?,
+            optional_inputs: value
+                .optional_inputs
+                .into_iter()
+                .map(|(k, cs)| cs.try_into().map(|c| (k, c)))
+                .collect::<Result<HashMap<_, _>, _>>()?,
+            outputs: value
+                .outputs
+                .into_iter()
+                .map(|(k, cs)| cs.try_into().map(|c| (k, c)))
+                .collect::<Result<HashMap<_, _>, _>>()?,
             metadata: value.metadata,
             code: value.code_attachment_id.map(|a| a.to_uuid()).transpose()?,
             attachments: value
@@ -310,8 +284,21 @@ impl FunctionResolver for &Function {
             name: self.name.clone(),
             version: self.version.to_string(),
             metadata: self.metadata.clone(),
-            input: self.input_spec.clone().into(),
-            output: self.output_spec.clone().into(),
+            required_inputs: self
+                .required_inputs
+                .iter()
+                .map(|(k, cs)| (k.to_owned(), cs.clone().into()))
+                .collect(),
+            optional_inputs: self
+                .optional_inputs
+                .iter()
+                .map(|(k, cs)| (k.to_owned(), cs.clone().into()))
+                .collect(),
+            outputs: self
+                .outputs
+                .iter()
+                .map(|(k, cs)| (k.to_owned(), cs.clone().into()))
+                .collect(),
             attachments: futures::future::try_join_all(self.attachments.iter().map(
                 |attachment_id| async move {
                     function_store

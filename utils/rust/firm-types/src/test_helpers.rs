@@ -108,10 +108,19 @@ macro_rules! function_data {
     }};
 
     ($name:expr, $version:expr, $runtime:expr, $code:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}) => {{
-        $crate::function_data!($name, $version, $runtime, $code, None, None, [$($attach),*], {$($key => $value),*})
+        $crate::function_data!(
+            $name,
+            $version,
+            $runtime,
+            $code,
+            ::std::collections::HashMap::new(),
+            ::std::collections::HashMap::new(),
+            ::std::collections::HashMap::new(),
+            [$($attach),*],
+            {$($key => $value),*})
     }};
 
-    ($name:expr, $version:expr, $runtime:expr, $code:expr, $input:expr, $output:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}) => {{
+    ($name:expr, $version:expr, $runtime:expr, $code:expr, $req_inputs:expr, $opt_inputs:expr, $outputs:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}) => {{
         let mut metadata = ::std::collections::HashMap::new();
         $(
             metadata.insert(String::from($key), String::from($value));
@@ -122,8 +131,9 @@ macro_rules! function_data {
             runtime: ::std::option::Option::from($runtime),
             code_attachment_id: ::std::option::Option::from($code),
             metadata,
-            input: ::std::option::Option::from($input),
-            output: ::std::option::Option::from($output),
+            required_inputs: $req_inputs,
+            optional_inputs: $opt_inputs,
+            outputs: $outputs,
             attachment_ids: vec![$(($attach),)*].into_iter().collect(),
         }
     }};
@@ -233,15 +243,15 @@ macro_rules! stream {
 }
 
 #[macro_export]
-macro_rules! stream_spec {
+macro_rules! channel_specs {
     ({$($key:expr => $value:expr),*}) => {{
-        $crate::stream_spec!({$($key => $value),*}, {})
+        (vec![$((String::from($key),$value)),*].into_iter().collect(), None::<::std::collections::HashMap<String, $crate::functions::ChannelSpec>>)
     }};
 
     ({$($key:expr => $value:expr),*}, {$($opt_key:expr => $opt_value:expr),*}) => {{
-        $crate::functions::StreamSpec {
-            required: vec![$((String::from($key),$value)),*].into_iter().collect(),
-            optional: vec![$((String::from($opt_key),$opt_value)),*].into_iter().collect(),
-        }
+        (
+            vec![$((String::from($key),$value)),*].into_iter().collect(),
+            Some(vec![$((String::from($opt_key),$opt_value)),*].into_iter().collect()),
+        )
     }};
 }

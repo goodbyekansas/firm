@@ -1,4 +1,7 @@
-use std::fmt::{Display, Formatter};
+use std::{
+    collections::HashMap,
+    fmt::{Display, Formatter},
+};
 
 use thiserror::Error;
 
@@ -7,7 +10,7 @@ use super::{
         channel::Value as ValueType, Booleans, Bytes, Channel, Floats, Integers,
         Stream as ValueStream, Strings,
     },
-    functions::{ChannelSpec, ChannelType, StreamSpec},
+    functions::{ChannelSpec, ChannelType},
     DisplayExt, Displayer,
 };
 
@@ -253,9 +256,15 @@ pub trait StreamExt {
 
     /// Validate this stream according to spec
     ///
-    /// `spec` is the spec for the stream from the function
+    /// `required` is the specs for the required channels
+    /// `optional` is the specs for the optional channels
+    ///
     /// This function returns all validation errors as a `Vec<StreamValidationError>`.
-    fn validate(&self, spec: &StreamSpec) -> Result<(), Vec<StreamValidationError>>;
+    fn validate(
+        &self,
+        required: &HashMap<String, ChannelSpec>,
+        optional: Option<&HashMap<String, ChannelSpec>>,
+    ) -> Result<(), Vec<StreamValidationError>>;
 
     /// Merge this stream with another one
     ///
@@ -319,9 +328,12 @@ impl StreamExt for ValueStream {
         self
     }
 
-    fn validate(&self, spec: &StreamSpec) -> Result<(), Vec<StreamValidationError>> {
-        let err: Vec<StreamValidationError> = spec
-            .required
+    fn validate(
+        &self,
+        required: &HashMap<String, ChannelSpec>,
+        optional: Option<&HashMap<String, ChannelSpec>>,
+    ) -> Result<(), Vec<StreamValidationError>> {
+        let err: Vec<StreamValidationError> = required
             .iter()
             .map(|(name, channel_spec)| {
                 self.channels
@@ -329,11 +341,13 @@ impl StreamExt for ValueStream {
                     .map(|channel| (name, channel, channel_spec))
                     .ok_or_else(|| StreamValidationError::RequiredChannelMissing(name.clone()))
             })
-            .chain(spec.optional.iter().filter_map(|(name, channel_spec)| {
-                self.channels.get(name).map(|c| Ok((name, c, channel_spec)))
+            .chain(optional.iter().flat_map(|o| {
+                o.iter().filter_map(|(name, channel_spec)| {
+                    self.channels.get(name).map(|c| Ok((name, c, channel_spec)))
+                })
             }))
             .chain(self.channels.keys().filter_map(|k| {
-                if spec.required.contains_key(k) || spec.optional.contains_key(k) {
+                if required.contains_key(k) || optional.map_or(false, |opt| opt.contains_key(k)) {
                     None
                 } else {
                     Some(Err(StreamValidationError::UnexpectedChannel(k.clone())))
@@ -433,26 +447,26 @@ impl Display for Displayer<'_, ChannelSpec> {
 mod tests {
 
     use super::*;
-    use crate::{stream, stream_spec};
+    use crate::{channel_specs, stream};
 
     #[test]
     fn parse_required() {
-        let input_spec = stream_spec!({"very_important_argument" => ChannelSpec {
+        let input_spec = channel_specs!({"very_important_argument" => ChannelSpec {
             description: "This is importante!".to_owned(),
             r#type: ChannelType::String as i32,
         }});
 
-        let r = stream!().validate(&input_spec);
+        let r = stream!().validate(&input_spec.0, input_spec.1.as_ref());
         assert!(r.is_err());
 
         let stream = stream!({"very_important_argument" => "yes"});
-        let r = stream.validate(&input_spec);
+        let r = stream.validate(&input_spec.0, input_spec.1.as_ref());
         assert!(r.is_ok());
     }
 
     #[test]
     fn parse_optional() {
-        let input_spec = stream_spec!(
+        let input_spec = channel_specs!(
             {},
             {
                 "not_very_important_argument" => ChannelSpec {
@@ -462,18 +476,20 @@ mod tests {
             }
         );
 
-        assert!(stream!().validate(&input_spec).is_ok());
+        assert!(stream!()
+            .validate(&input_spec.0, input_spec.1.as_ref())
+            .is_ok());
     }
 
     #[test]
     fn too_many_args() {
-        let input_spec = stream_spec!({"only_this_please" => ChannelSpec {
+        let input_spec = channel_specs!({"only_this_please" => ChannelSpec {
             description: "The only thing".to_owned(),
             r#type: ChannelType::String as i32,
         }});
         let stream = stream!({"only_this_please" => "no", "but_also_this" => "yes"});
 
-        let r = stream.validate(&input_spec);
+        let r = stream.validate(&input_spec.0, input_spec.1.as_ref());
         assert!(r.is_err());
         let e = r.unwrap_err();
         assert_eq!(e.len(), 1);
@@ -483,13 +499,13 @@ mod tests {
         ));
         let stream =
             stream!({"only_this_please" => "no", "but_also_this" => "yes", "and_this" => "ok"});
-        let r = stream.validate(&input_spec);
+        let r = stream.validate(&input_spec.0, input_spec.1.as_ref());
         assert!(r.is_err());
         let e = r.unwrap_err();
         assert_eq!(e.len(), 2);
 
         let stream = stream!({"but_also_this" => "yes", "and_this" => "ok"});
-        let r = stream.validate(&input_spec);
+        let r = stream.validate(&input_spec.0, input_spec.1.as_ref());
         assert!(r.is_err());
         let e = r.unwrap_err();
         assert_eq!(e.len(), 3);
@@ -497,7 +513,7 @@ mod tests {
 
     #[test]
     fn parse_types() {
-        let input_spec = stream_spec!({
+        let input_spec = channel_specs!({
             "string_arg" => ChannelSpec {
                 description: "This is a string arg".to_owned(),
                 r#type: ChannelType::String as i32,
@@ -532,7 +548,7 @@ mod tests {
             }
         );
 
-        let r = correct_args.validate(&input_spec);
+        let r = correct_args.validate(&input_spec.0, input_spec.1.as_ref());
 
         assert!(r.is_ok());
 
@@ -546,7 +562,7 @@ mod tests {
             }
         );
 
-        let r = almost_correct_args.validate(&input_spec);
+        let r = almost_correct_args.validate(&input_spec.0, input_spec.1.as_ref());
 
         assert!(r.is_err());
         assert_eq!(1, r.unwrap_err().len());
@@ -562,7 +578,7 @@ mod tests {
             }
         );
 
-        let r = no_correct_args.validate(&input_spec);
+        let r = no_correct_args.validate(&input_spec.0, input_spec.1.as_ref());
 
         assert!(r.is_err());
         assert_eq!(5, r.unwrap_err().len());

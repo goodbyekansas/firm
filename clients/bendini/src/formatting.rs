@@ -4,7 +4,7 @@ use std::{
 };
 
 use ansi_term::Colour::Green;
-use firm_types::functions::{ChannelType, Function, Runtime, StreamSpec};
+use firm_types::functions::{ChannelSpec, ChannelType, Function, Runtime};
 use futures::{future::join, Future};
 use indicatif::MultiProgress;
 use tokio::task;
@@ -107,8 +107,19 @@ impl Display for Displayer<'_, Function> {
                     .map_or_else(|| String::from("n/a"), |code| code.url)
             )?;
 
-            write!(f, "{}inputs: {}", INDENT, self.input.display())?;
-            write!(f, "{}outputs: {}", INDENT, self.output.display())?;
+            write!(
+                f,
+                "{}required inputs: {}",
+                INDENT,
+                self.required_inputs.display()
+            )?;
+            write!(
+                f,
+                "{}optional inputs: {}",
+                INDENT,
+                self.optional_inputs.display()
+            )?;
+            write!(f, "{}outputs: {}", INDENT, self.outputs.display())?;
 
             if self.metadata.is_empty() {
                 writeln!(f, "{}metadata:    [n/a]", INDENT)
@@ -126,49 +137,23 @@ impl Display for Displayer<'_, Function> {
     }
 }
 
-impl Display for Displayer<'_, Option<StreamSpec>> {
+impl Display for Displayer<'_, HashMap<String, ChannelSpec>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_none() {
+        if self.is_empty() {
             writeln!(f, " [n/a]")
         } else {
-            self.as_ref()
-                .map(|stream_spec| {
-                    stream_spec
-                        .required
-                        .iter()
-                        .map(|(name, input)| {
-                            writeln!(
-                                f,
-                                "{tab}[required]:{type}:{name}:{description}",
-                                tab = INDENT.repeat(2),
-                                r#type = input.r#type,
-                                name = name,
-                                description = input.description
-                            )
-                        })
-                        .collect::<fmt::Result>()
+            self.iter()
+                .map(|(name, channel_spec)| {
+                    writeln!(
+                        f,
+                        "{tab}{type}:{name}:{description}",
+                        tab = INDENT.repeat(2),
+                        r#type = channel_spec.r#type,
+                        name = name,
+                        description = channel_spec.description
+                    )
                 })
-                .transpose()?;
-
-            self.as_ref()
-                .map(|stream_spec| {
-                    stream_spec
-                        .optional
-                        .iter()
-                        .map(|(name, input)| {
-                            writeln!(
-                                f,
-                                "{tab}[optional]:{type}:{name}:{description}",
-                                tab = INDENT.repeat(2),
-                                r#type = input.r#type,
-                                name = name,
-                                description = input.description
-                            )
-                        })
-                        .collect::<fmt::Result>()
-                })
-                .transpose()?;
-            Ok(())
+                .collect::<fmt::Result>()
         }
     }
 }
