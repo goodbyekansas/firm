@@ -34,10 +34,13 @@ let
       types = typesWithServices;
     };
 
-    firmTypesRust = typesWithoutServices;
+    firmTypes = {
+      rust = typesWithoutServices;
+      python = project.declareComponent ./utils/python/firm-types/firm-types.nix { protocols = protocols.python; };
+    };
 
     firmRust = project.declareComponent ./utils/rust/firm-rust/firm-rust.nix {
-      types = firmTypesRust;
+      types = typesWithoutServices;
     };
 
     osPackaging = project.declareComponent ./deployment/os-packaging.nix {
