@@ -216,6 +216,9 @@ to_channel_impl!(f64, ValueType::Floats, Floats);
 to_channel_impl!(bool, ValueType::Booleans, Booleans);
 
 /// Convenience extensions on a stream
+///
+/// A stream is a collection of named
+/// channels that contain an async data stream
 pub trait StreamExt {
     /// Create a new empty stream
     fn new() -> Self;

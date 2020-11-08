@@ -7,5 +7,4 @@ edition = "2018"
 [dependencies]
 thiserror = "1"
 prost = "0.6"
-
-firm-protocols = { path = "nix-deps/rust-firm-protocols" }
+firm-protocols = { version = "0.1.0", registry = "nix" }

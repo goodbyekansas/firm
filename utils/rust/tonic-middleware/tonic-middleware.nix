@@ -2,5 +2,5 @@
 base.languages.rust.mkUtility {
   name = "tonic-middleware";
   src = ./.;
-  rustDependencies = [ protocols ];
+  propagatedBuildInputs = [ protocols.package ];
 }

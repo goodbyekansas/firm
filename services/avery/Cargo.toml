@@ -29,4 +29,4 @@ hex = "0.4"
 flate2 = "1"
 tar = "0.4"
 
-firm-types = { path = "nix-deps/firm-types" }
+firm-types = { version="0.1", registry = "nix" }

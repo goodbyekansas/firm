@@ -2,5 +2,5 @@
 base.languages.rust.mkUtility {
   name = "firm-types";
   src = ./.;
-  rustDependencies = [ protocols ];
+  propagatedBuildInputs = [ protocols.package ];
 }
