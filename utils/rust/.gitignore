@@ -1,4 +1,8 @@
 target
 **/*.rs.bk
+
+# all libraries in here
 Cargo.lock
 
+# generated stuff from Nedryland goes here
+.cargo
