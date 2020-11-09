@@ -188,10 +188,10 @@ as_ref_try_from_impl!(String, ValueType::Strings, "string");
 as_ref_try_from_impl!(i64, ValueType::Integers, "integer");
 
 // floats
-as_ref_try_from_impl!(f32, ValueType::Floats, "float");
+as_ref_try_from_impl!(f64, ValueType::Floats, "float");
 
 // bools
-as_ref_try_from_impl!(bool, ValueType::Bools, "boolean");
+as_ref_try_from_impl!(bool, ValueType::Booleans, "boolean");
 
 // bytes
 to_channel_impl!(u8, ValueType::Bytes, Bytes);
@@ -210,9 +210,10 @@ to_channel_impl!(u32, ValueType::Integers, Integers);
 
 // floats
 to_channel_impl!(f32, ValueType::Floats, Floats);
+to_channel_impl!(f64, ValueType::Floats, Floats);
 
 // bools
-to_channel_impl!(bool, ValueType::Bools, Booleans);
+to_channel_impl!(bool, ValueType::Booleans, Booleans);
 
 /// Convenience extensions on a stream
 pub trait StreamExt {
@@ -399,7 +400,7 @@ impl ChannelTypeMatches<ChannelSpec> for Channel {
             Some(ValueType::Strings(_)) => spec.r#type == ChannelType::String as i32,
             Some(ValueType::Integers(_)) => spec.r#type == ChannelType::Int as i32,
             Some(ValueType::Floats(_)) => spec.r#type == ChannelType::Float as i32,
-            Some(ValueType::Bools(_)) => spec.r#type == ChannelType::Bool as i32,
+            Some(ValueType::Booleans(_)) => spec.r#type == ChannelType::Bool as i32,
             Some(ValueType::Bytes(_)) => spec.r#type == ChannelType::Bytes as i32,
             None => false,
         }
@@ -426,8 +427,8 @@ impl Display for Displayer<'_, Option<ValueType>> {
             match **self {
                 Some(ValueType::Strings(_)) => "strings",
                 Some(ValueType::Integers(_)) => "integers",
-                Some(ValueType::Floats(_)) => "booleans",
-                Some(ValueType::Bools(_)) => "floats",
+                Some(ValueType::Booleans(_)) => "booleans",
+                Some(ValueType::Floats(_)) => "floats",
                 Some(ValueType::Bytes(_)) => "bytes",
                 None => "null",
             }

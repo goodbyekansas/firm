@@ -27,7 +27,7 @@ message Channel {
     Strings strings = 1;
     Integers integers = 2;
     Floats floats = 3;
-    Booleans bools = 4;
+    Booleans booleans = 4;
     Bytes bytes = 5;
   }
 }
@@ -49,7 +49,7 @@ message Integers {
 
 
 message Floats {
-  repeated float values = 1;
+  repeated double values = 1;
 }
 
 
