@@ -641,7 +641,7 @@ mod tests {
 
         MockResultRegistry::set_set_output_impl(move |_key, res| {
             assert!(matches!(res.value, Some(ValueType::Floats(_))));
-            assert!((f32::try_from(&res).unwrap() - value).abs() < f32::EPSILON);
+            assert!((f64::try_from(&res).unwrap() - value).abs() < f64::EPSILON);
             Ok(())
         });
 
@@ -653,7 +653,7 @@ mod tests {
         let value = true;
 
         MockResultRegistry::set_set_output_impl(move |_key, res| {
-            assert!(matches!(res.value, Some(ValueType::Bools(_))));
+            assert!(matches!(res.value, Some(ValueType::Booleans(_))));
             assert_eq!(bool::try_from(&res).unwrap(), value);
             Ok(())
         });
