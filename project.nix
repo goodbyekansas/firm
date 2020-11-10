@@ -69,17 +69,18 @@ let
     (
       name:
       comp:
-      comp // (
-        if (builtins.hasAttr "deployment" comp) && (builtins.hasAttr "function" comp.deployment) then {
-          deployment = comp.deployment // {
-            function = comp.deployment.function {
-              inherit endpoint port credentials;
-              bendini = capturedBendiniPackage;
-              local = endpoint == "tcp://[::1]";
+      if comp.isNedrylandComponent or false then
+        (comp // (
+          if (builtins.hasAttr "deployment" comp) && (builtins.hasAttr "function" comp.deployment) then {
+            deployment = comp.deployment // {
+              function = comp.deployment.function {
+                inherit endpoint port credentials;
+                bendini = capturedBendiniPackage;
+                local = endpoint == "tcp://[::1]";
+              };
             };
-          };
-        } else { }
-      )
+          } else { }
+        )) else setupFunctionDeployment { components = comp; inherit endpoint port credentials; }
     )
     (components)
   );
