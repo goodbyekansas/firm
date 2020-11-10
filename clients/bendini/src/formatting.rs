@@ -79,13 +79,13 @@ impl Display for Displayer<'_, Function> {
             return Ok(());
         }
 
-        writeln!(f, "{}{}", INDENT, Green.paint(&self.name))?;
+        writeln!(f, "{}", Green.paint(&self.name))?;
         writeln!(f, "{}version: {}", INDENT, &self.version)?;
 
         if self.format == DisplayFormat::Long {
             writeln!(
                 f,
-                "{}runtime:  {}",
+                "{}runtime: {}",
                 INDENT,
                 self.runtime
                     .as_ref()
@@ -109,20 +109,20 @@ impl Display for Displayer<'_, Function> {
 
             write!(
                 f,
-                "{}required inputs: {}",
+                "{}required inputs:{}",
                 INDENT,
                 self.required_inputs.display()
             )?;
             write!(
                 f,
-                "{}optional inputs: {}",
+                "{}optional inputs:{}",
                 INDENT,
                 self.optional_inputs.display()
             )?;
-            write!(f, "{}outputs: {}", INDENT, self.outputs.display())?;
+            write!(f, "{}outputs:{}", INDENT, self.outputs.display())?;
 
             if self.metadata.is_empty() {
-                writeln!(f, "{}metadata:    [n/a]", INDENT)
+                writeln!(f, "{}metadata: n/a", INDENT)
             } else {
                 writeln!(f, "{}metadata:", INDENT)?;
                 self.metadata
@@ -140,17 +140,22 @@ impl Display for Displayer<'_, Function> {
 impl Display for Displayer<'_, HashMap<String, ChannelSpec>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_empty() {
-            writeln!(f, " [n/a]")
+            writeln!(f, " n/a")
         } else {
+            writeln!(f)?;
             self.iter()
                 .map(|(name, channel_spec)| {
                     writeln!(
                         f,
-                        "{tab}{type}:{name}:{description}",
+                        "{tab}{name}:{type}{description}",
                         tab = INDENT.repeat(2),
-                        r#type = channel_spec.r#type,
+                        r#type = channel_spec.r#type.display(),
                         name = name,
-                        description = channel_spec.description
+                        description = if channel_spec.description.is_empty() {
+                            String::new()
+                        } else {
+                            format!(":{}", channel_spec.description)
+                        }
                     )
                 })
                 .collect::<fmt::Result>()
@@ -165,13 +170,13 @@ impl Display for Displayer<'_, i32> {
             "{}",
             ChannelType::from_i32(**self)
                 .map(|at| match at {
-                    ChannelType::String => "[string ]",
-                    ChannelType::Bool => "[bool   ]",
-                    ChannelType::Int => "[int    ]",
-                    ChannelType::Float => "[float  ]",
-                    ChannelType::Bytes => "[bytes  ]",
+                    ChannelType::String => "string",
+                    ChannelType::Bool => "bool",
+                    ChannelType::Int => "int",
+                    ChannelType::Float => "float",
+                    ChannelType::Bytes => "bytes",
                 })
-                .unwrap_or("[Invalid type ]")
+                .unwrap_or("invalid-type")
         )
     }
 }
