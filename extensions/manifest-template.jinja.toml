@@ -20,7 +20,9 @@ type = "{{ manifest['runtime'].type }}"
 [inputs.{{name}}]
 type = "{{input.type}}"
 required = {{ "true" if "required" in input and input.required else "false" }}
+{% if "description" in input %}
 description = "{{input.description}}"
+{% endif %}
 {% endfor %}
 {% endif %}
 
@@ -29,7 +31,9 @@ description = "{{input.description}}"
 {% for name, output in manifest.outputs.items() %}
 [outputs.{{name}}]
 type = "{{output.type}}"
+{% if "description" in output %}
 description = "{{output.description}}"
+{% endif %}
 {% endfor %}
 {% endif %}
 
