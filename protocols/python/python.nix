@@ -5,7 +5,7 @@ base.languages.python.mkUtility {
   name = "firm-protocols";
   version = "0.1.0";
   src = ../.;
-  nativeBuildInputs = (pythonPkgs: [ pythonPkgs.grpcio-tools pythonPkgs.mypy-protobuf ]);
+  nativeBuildInputs = (pythonPkgs: [ pythonPkgs.grpcio-tools pythonPkgs.mypy-protobuf pythonPkgs.mypy ]);
   propagatedBuildInputs = (pythonPkgs: [ pythonPkgs.grpcio ]);
   doStandardTests = false;
   preBuild = ''
@@ -29,7 +29,11 @@ base.languages.python.mkUtility {
     shopt -s nullglob
 
     for pyfile in ./firm_protocols/**/*_grpc.py; do
-      echo "# type: ignore" > ''${pyfile}i
+      stubgen $pyfile -o .
+
+      # Correcting some mistakes made by stubgen.
+      # Generate static methods without return types. We just replace that with any return type.
+      sed -i -E 's/\):/\) -> Any:/' ''${pyfile}i
     done
 
     # correct the imports since that is apparently impossible to do correctly
