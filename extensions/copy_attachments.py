@@ -4,10 +4,15 @@ import os
 import os.path
 import shutil
 import sys
+import tarfile
 
 
-def copyFileToOutput(path: str, target_filename: str) -> None:
-    shutil.copy(path, target_filename)
+def copy_file_to_output(path: str, target_filename: str) -> None:
+    if os.path.isdir(path):
+        with tarfile.open(target_filename, "w:gz") as tar:
+            tar.add(path, arcname=os.path.basename(path))
+    elif os.path.isfile(path):
+        shutil.copy(path, target_filename)
 
 
 def read_infile(path: str) -> dict:
@@ -39,7 +44,7 @@ if __name__ == "__main__":
     # only keep attachments that are either required or exists
     required_or_existing_attachments = {
         n: a
-        for n, a in json_data.get("attachments").items()
+        for n, a in json_data.get("attachments", {}).items()
         if a.get("required", True) or os.path.exists(a["path"])
     }
 
@@ -55,7 +60,8 @@ if __name__ == "__main__":
             print(f"Copying attachment {name} at {attachment['path']} to {target}")
 
         try:
-            copyFileToOutput(attachment["path"], target)
+            copy_file_to_output(attachment["path"], target)
+            attachment["path"] = target
         except Exception as e:
             print(
                 f"Failed to copy attachment {name} at {attachment['path']} to {target}: {e}"
