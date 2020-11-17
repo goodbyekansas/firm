@@ -11,7 +11,7 @@ let
     ];
   };
 
-  protocols = import ./protocols project;
+  protocols = project.declareComponent ./protocols/protocols.nix { };
 
   typesWithoutServices = project.declareComponent ./utils/rust/firm-types/firm-types.nix {
     protocols = protocols.rust.onlyMessages;
