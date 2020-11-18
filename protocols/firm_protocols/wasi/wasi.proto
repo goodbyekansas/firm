@@ -4,8 +4,7 @@ syntax = "proto3";
 // effectively a namespace
 package wasi;
 
-import "functions/functions.proto";
-import "functions/execution.proto";
+import "firm_protocols/functions/functions.proto";
 
 
 message StartProcessRequest {
