@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package registry;
 
-import "functions/functions.proto";
+import "firm_protocols/functions/functions.proto";
 
 service Registry {
   rpc List(Filters) returns (functions.Functions);

@@ -14,11 +14,11 @@ let
   protocols = project.declareComponent ./protocols/protocols.nix { };
 
   typesWithoutServices = project.declareComponent ./utils/rust/firm-types/firm-types.nix {
-    protocols = protocols.rust.onlyMessages;
+    protocols = protocols.withoutServices.rust;
   };
 
   typesWithServices = typesWithoutServices.override {
-    protocols = protocols.rust.withServices;
+    protocols = protocols.withServices.rust;
   };
 
   # declare the components of the project and their dependencies
@@ -36,7 +36,7 @@ let
 
     firmTypes = {
       rust = typesWithoutServices;
-      python = project.declareComponent ./utils/python/firm-types/firm-types.nix { protocols = protocols.python; };
+      python = project.declareComponent ./utils/python/firm-types/firm-types.nix { protocols = protocols.withoutServices.python; };
     };
 
     firmRust = project.declareComponent ./utils/rust/firm-rust/firm-rust.nix {
@@ -57,7 +57,7 @@ let
     };
 
     tonicMiddleware = project.declareComponent ./utils/rust/tonic-middleware/tonic-middleware.nix {
-      protocols = protocols.rust.withServices; # This brings tonic which we will need. A bit hard to see.
+      protocols = protocols.withServices.rust; # This brings tonic which we will need. A bit hard to see.
     };
 
   };
@@ -80,7 +80,13 @@ let
               };
             };
           } else { }
-        )) else setupFunctionDeployment { components = comp; inherit endpoint port credentials; }
+        )) else
+        (
+          if builtins.isAttrs comp then
+            (
+              setupFunctionDeployment { components = comp; inherit endpoint port credentials; }
+            ) else comp
+        )
     )
     (components)
   );

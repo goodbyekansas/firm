@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package execution;
 
-import "functions/functions.proto";
+import "firm_protocols/functions/functions.proto";
 
 
 service Execution {
