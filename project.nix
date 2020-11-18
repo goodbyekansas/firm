@@ -1,7 +1,7 @@
+{ nedrylandOverride ? null }:
 let
   sources = import ./nix/sources.nix;
-  nedryland = import sources.nedryland;
-
+  nedryland = (if nedrylandOverride == null then (import sources.nedryland) else nedrylandOverride);
   # Declare our project
   project = nedryland.mkProject {
     name = "firm";
