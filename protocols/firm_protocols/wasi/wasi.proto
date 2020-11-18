@@ -2,7 +2,7 @@
 syntax = "proto3";
 
 // effectively a namespace
-package wasi;
+package firm_protocols.wasi;
 
 import "firm_protocols/functions/functions.proto";
 
@@ -14,6 +14,6 @@ message StartProcessRequest {
 }
 
 message Attachments {
-  repeated functions.Attachment attachments = 1;
+  repeated firm_protocols.functions.Attachment attachments = 1;
 }
 

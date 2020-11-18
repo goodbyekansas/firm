@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use firm_types::{
-    registry::{registry_client::RegistryClient, FunctionData},
+    functions::{registry_client::RegistryClient, FunctionData},
     tonic,
 };
 use futures::future::try_join_all;

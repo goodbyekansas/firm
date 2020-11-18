@@ -8,7 +8,7 @@ use std::{
 
 use firm_types::{
     functions::AttachmentUrl,
-    registry::{registry_client::RegistryClient, AttachmentId, AttachmentStreamUpload},
+    functions::{registry_client::RegistryClient, AttachmentId, AttachmentStreamUpload},
     tonic,
 };
 use futures::{FutureExt, StreamExt};

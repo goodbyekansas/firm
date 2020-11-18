@@ -6,11 +6,10 @@ use std::{
 use thiserror::Error;
 
 use super::{
-    execution::{
-        channel::Value as ValueType, Booleans, Bytes, Channel, Floats, Integers,
-        Stream as ValueStream, Strings,
+    functions::{
+        channel::Value as ValueType, Booleans, Bytes, Channel, ChannelSpec, ChannelType, Floats,
+        Integers, Stream as ValueStream, Strings,
     },
-    functions::{ChannelSpec, ChannelType},
     DisplayExt, Displayer,
 };
 
@@ -244,7 +243,7 @@ pub trait StreamExt {
     ///
     /// # Example
     /// ```
-    /// use firm_protocols::execution::Stream;
+    /// use firm_protocols::functions::Stream;
     /// use firm_types::stream::StreamExt;
     ///
     /// let s = Stream::new();
@@ -258,7 +257,7 @@ pub trait StreamExt {
     ///
     /// # Example
     /// ```
-    /// use firm_protocols::execution::{Channel, Stream};
+    /// use firm_protocols::functions::{Channel, Stream};
     /// use firm_types::stream::StreamExt;
     ///
     /// let mut s = Stream::new();

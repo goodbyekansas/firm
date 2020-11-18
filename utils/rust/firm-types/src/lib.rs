@@ -1,4 +1,4 @@
-pub use firm_protocols::*;
+pub use ::firm_protocols::*;
 
 pub mod stream;
 pub mod test_helpers;

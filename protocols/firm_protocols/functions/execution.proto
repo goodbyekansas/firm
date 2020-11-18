@@ -1,8 +1,6 @@
 syntax = "proto3";
 
-package execution;
-
-import "firm_protocols/functions/functions.proto";
+package firm_protocols.functions;
 
 
 service Execution {

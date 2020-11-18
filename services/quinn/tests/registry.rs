@@ -1,5 +1,5 @@
 use firm_types::{
-    registry::{registry_server::Registry, Filters, FunctionId, NameFilter, Ordering},
+    functions::{registry_server::Registry, Filters, FunctionId, NameFilter, Ordering},
     tonic,
 };
 use quinn::{config, registry::RegistryService, storage::OrderingKey};

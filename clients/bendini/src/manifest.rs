@@ -7,9 +7,9 @@ use std::{
 use serde::Deserialize;
 use thiserror::Error;
 
-use firm_types::{
-    functions::{ChannelSpec, ChannelType, Checksums as ProtoChecksums, Runtime as ProtoRuntime},
-    registry::{AttachmentData, FunctionData},
+use firm_types::functions::{
+    AttachmentData, ChannelSpec, ChannelType, Checksums as ProtoChecksums, FunctionData,
+    Runtime as ProtoRuntime,
 };
 
 #[derive(Debug, Error)]

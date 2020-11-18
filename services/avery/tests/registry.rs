@@ -5,7 +5,7 @@ use slog::o;
 use url::Url;
 
 use firm_types::{
-    registry::{
+    functions::{
         registry_server::Registry, AttachmentId, AttachmentStreamUpload, Filters, FunctionId,
         NameFilter, Ordering, OrderingKey,
     },

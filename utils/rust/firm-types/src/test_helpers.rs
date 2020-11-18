@@ -125,7 +125,7 @@ macro_rules! function_data {
         $(
             metadata.insert(String::from($key), String::from($value));
         )*
-        $crate::registry::FunctionData {
+        $crate::functions::FunctionData {
             name: String::from($name),
             version: String::from($version),
             runtime: ::std::option::Option::from($runtime),
@@ -168,7 +168,7 @@ macro_rules! attachment_data {
         $(
                 m.insert(String::from($key), String::from($value));
         )*
-        $crate::registry::AttachmentData {
+        $crate::functions::AttachmentData {
             name: String::from($name),
             metadata: m,
             checksums: Some($crate::functions::Checksums { sha256: String::from($sha256) }),
@@ -212,15 +212,15 @@ macro_rules! filters {
         $(
             metadata.insert(String::from($only_key), String::new());
          )*
-        $crate::registry::Filters {
-            name: Some($crate::registry::NameFilter {
+        $crate::functions::Filters {
+            name: Some($crate::functions::NameFilter {
                 pattern: String::from($name),
                 exact_match: false,
             }),
             metadata: metadata,
-            order: Some($crate::registry::Ordering {
+            order: Some($crate::functions::Ordering {
                 reverse: false,
-                key: $crate::registry::OrderingKey::NameVersion as i32,
+                key: $crate::functions::OrderingKey::NameVersion as i32,
                 offset: $offset as u32,
                 limit: $limit as u32,
             }),
@@ -236,7 +236,7 @@ macro_rules! stream {
     }};
 
     ({$($key:expr => $value:expr),*}) => {{
-        $crate::execution::Stream {
+        $crate::functions::Stream {
             channels: vec![$((String::from($key),$value.to_channel())),*].into_iter().collect()
         }
     }};

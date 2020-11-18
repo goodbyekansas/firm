@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package functions;
+package firm_protocols.functions;
 
 
 /* This is the base function used whenever we talk about a function.

@@ -15,14 +15,12 @@ use url::Url;
 
 use crate::executor::wasi::WasiExecutor;
 use firm_types::{
-    execution::{
+    functions::{
         channel::Value as ValueType, execution_result::Result as ProtoResult,
-        execution_server::Execution as ExecutionServiceTrait, Channel, ExecutionError, ExecutionId,
-        ExecutionParameters, ExecutionResult, Stream as ValueStream, Strings,
-    },
-    functions::{Attachment, AuthMethod, Function},
-    registry::{
-        registry_server::Registry, Filters, NameFilter, Ordering, OrderingKey, VersionRequirement,
+        execution_server::Execution as ExecutionServiceTrait, registry_server::Registry,
+        Attachment, AuthMethod, Channel, ExecutionError, ExecutionId, ExecutionParameters,
+        ExecutionResult, Filters, Function, NameFilter, Ordering, OrderingKey,
+        Stream as ValueStream, Strings, VersionRequirement,
     },
     stream::{StreamExt, ToChannel},
     tonic,
@@ -502,8 +500,11 @@ mod tests {
     use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
     use crate::registry::RegistryService;
-    use firm_types::{attachment, attachment_file, code_file, function_data, stream};
-    use firm_types::{functions::Runtime, registry::FunctionData};
+    use firm_types::{
+        attachment, attachment_file, code_file, function_data,
+        functions::{FunctionData, Runtime},
+        stream,
+    };
 
     macro_rules! null_logger {
         () => {{
