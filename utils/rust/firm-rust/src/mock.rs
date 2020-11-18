@@ -5,7 +5,8 @@ use std::{
 };
 
 use firm_types::{
-    execution::Channel, execution::Stream, functions::Attachment, stream::StreamExt,
+    functions::{Attachment, Channel, Stream},
+    stream::StreamExt,
     wasi::StartProcessRequest,
 };
 use lazy_static::lazy_static;

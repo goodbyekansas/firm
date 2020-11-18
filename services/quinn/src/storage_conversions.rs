@@ -4,8 +4,7 @@ use std::{
 };
 
 use firm_types::{
-    functions::Function as ProtoFunction,
-    registry::{Filters, FunctionId, OrderingKey},
+    functions::{Filters, Function as ProtoFunction, FunctionId, OrderingKey},
     tonic,
 };
 
@@ -132,7 +131,7 @@ trait ToUuid {
     fn to_uuid(&self) -> Result<uuid::Uuid, Self::Error>;
 }
 
-impl ToUuid for firm_types::registry::AttachmentId {
+impl ToUuid for firm_types::functions::AttachmentId {
     type Error = tonic::Status;
 
     fn to_uuid(&self) -> Result<uuid::Uuid, Self::Error> {
@@ -145,10 +144,10 @@ impl ToUuid for firm_types::registry::AttachmentId {
     }
 }
 
-impl TryFrom<firm_types::registry::FunctionData> for storage::Function {
+impl TryFrom<firm_types::functions::FunctionData> for storage::Function {
     type Error = tonic::Status;
 
-    fn try_from(value: firm_types::registry::FunctionData) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_types::functions::FunctionData) -> Result<Self, Self::Error> {
         Ok(storage::Function {
             name: validation::validate_name(&value.name)
                 .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, e.to_string()))?,
@@ -200,10 +199,10 @@ impl TryFrom<firm_types::functions::Checksums> for storage::Checksums {
     }
 }
 
-impl TryFrom<firm_types::registry::AttachmentData> for storage::FunctionAttachmentData {
+impl TryFrom<firm_types::functions::AttachmentData> for storage::FunctionAttachmentData {
     type Error = tonic::Status;
 
-    fn try_from(value: firm_types::registry::AttachmentData) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_types::functions::AttachmentData) -> Result<Self, Self::Error> {
         Ok(storage::FunctionAttachmentData {
             name: value.name.check_empty("name")?,
             metadata: value.metadata,

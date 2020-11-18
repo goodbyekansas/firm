@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
 use firm_types::{
-    execution::{execution_client::ExecutionClient, ExecutionParameters, Stream},
-    functions::{ChannelSpec, ChannelType},
-    registry::{
-        registry_client::RegistryClient, Filters, NameFilter, Ordering, OrderingKey,
+    functions::{
+        execution_client::ExecutionClient, registry_client::RegistryClient, ChannelSpec,
+        ChannelType, ExecutionParameters, Filters, NameFilter, Ordering, OrderingKey, Stream,
         VersionRequirement,
     },
     stream::ToChannel,

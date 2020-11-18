@@ -13,9 +13,9 @@ use std::{
 use prost::Message;
 use thiserror::Error;
 
-pub use firm_types::execution::Stream;
+pub use firm_types::functions::Stream;
 use firm_types::{
-    execution::Channel, functions::Attachment, stream::ToChannel, stream::TryFromChannel,
+    functions::Attachment, functions::Channel, stream::ToChannel, stream::TryFromChannel,
     wasi::StartProcessRequest,
 };
 
@@ -296,8 +296,10 @@ pub mod executor {
     use std::path::PathBuf;
 
     use firm_types::{
-        execution::Channel, execution::Stream, functions::Attachment, stream::StreamExt,
-        stream::TryFromChannel, wasi::Attachments,
+        functions::{Attachment, Channel, Stream},
+        stream::StreamExt,
+        stream::TryFromChannel,
+        wasi::Attachments,
     };
     use prost::Message;
 
@@ -441,8 +443,7 @@ mod tests {
     use super::*;
     use executor::AttachmentDownload;
     use firm_types::{
-        execution::channel::Value as ValueType,
-        functions::{Attachment, AttachmentUrl, AuthMethod},
+        functions::{channel::Value as ValueType, Attachment, AttachmentUrl, AuthMethod},
         stream::TryRefFromChannel,
     };
     use mock::MockResultRegistry;

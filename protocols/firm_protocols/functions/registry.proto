@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package registry;
+package firm_protocols.functions;
 
 import "firm_protocols/functions/functions.proto";
 
@@ -57,11 +57,11 @@ message FunctionData {
   string name = 1;
   string version = 2;
   map<string, string> metadata = 3;
-  map<string, functions.ChannelSpec> required_inputs = 4;
-  map<string, functions.ChannelSpec> optional_inputs = 5;
-  map<string, functions.ChannelSpec> outputs = 6;
+  map<string, firm_protocols.functions.ChannelSpec> required_inputs = 4;
+  map<string, firm_protocols.functions.ChannelSpec> optional_inputs = 5;
+  map<string, firm_protocols.functions.ChannelSpec> outputs = 6;
   AttachmentId code_attachment_id = 7;
-  functions.Runtime runtime = 8;
+  firm_protocols.functions.Runtime runtime = 8;
   repeated AttachmentId attachment_ids = 9;
 }
 
@@ -76,7 +76,7 @@ message AttachmentStreamUpload {
 message AttachmentData {
   string name = 1;
   map<string, string> metadata = 2;
-  functions.Checksums checksums = 3;
+  firm_protocols.functions.Checksums checksums = 3;
 }
 
 
@@ -87,5 +87,5 @@ message AttachmentId {
 
 message AttachmentHandle {
   AttachmentId id = 1;
-  functions.AttachmentUrl upload_url = 2;
+  firm_protocols.functions.AttachmentUrl upload_url = 2;
 }

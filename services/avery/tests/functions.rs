@@ -3,9 +3,10 @@ use slog::o;
 use avery::{executor::ExecutionService, registry::RegistryService};
 
 use firm_types::{
-    execution::{execution_server::Execution, ExecutionParameters},
-    functions::{ChannelSpec, ChannelType},
-    registry::registry_server::Registry,
+    functions::{
+        execution_server::Execution, registry_server::Registry, ChannelSpec, ChannelType,
+        ExecutionParameters,
+    },
     stream::ToChannel,
     tonic,
 };

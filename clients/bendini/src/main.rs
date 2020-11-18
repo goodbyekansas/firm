@@ -8,8 +8,7 @@ use std::path::PathBuf;
 
 // 3rd party
 use firm_types::{
-    execution::execution_client::ExecutionClient,
-    registry::registry_client::RegistryClient,
+    functions::{execution_client::ExecutionClient, registry_client::RegistryClient},
     tonic::{
         self,
         transport::{ClientTlsConfig, Endpoint},

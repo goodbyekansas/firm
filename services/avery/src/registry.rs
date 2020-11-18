@@ -16,12 +16,10 @@ use uuid::Uuid;
 
 use firm_types::{
     functions::{
-        Attachment, AttachmentUrl, AuthMethod, ChannelSpec, Function as ProtoFunction, Functions,
+        registry_server::Registry, Attachment, AttachmentData, AttachmentHandle, AttachmentId,
+        AttachmentStreamUpload, AttachmentUrl, AuthMethod, ChannelSpec, Filters,
+        Function as ProtoFunction, FunctionData, FunctionId, Functions, Ordering, OrderingKey,
         Runtime,
-    },
-    registry::{
-        registry_server::Registry, AttachmentData, AttachmentHandle, AttachmentId,
-        AttachmentStreamUpload, Filters, FunctionData, FunctionId, Ordering, OrderingKey,
     },
     tonic,
 };
@@ -95,7 +93,7 @@ impl RegistryService {
     pub async fn upload_stream_attachment<S>(
         &self,
         attachment_stream_upload_request: tonic::Request<S>,
-    ) -> Result<tonic::Response<firm_types::registry::Nothing>, tonic::Status>
+    ) -> Result<tonic::Response<firm_types::functions::Nothing>, tonic::Status>
     where
         S: std::marker::Unpin + Stream<Item = Result<AttachmentStreamUpload, tonic::Status>>,
     {
@@ -209,7 +207,7 @@ impl RegistryService {
                 }
             })?;
 
-        Ok(tonic::Response::new(firm_types::registry::Nothing {}))
+        Ok(tonic::Response::new(firm_types::functions::Nothing {}))
     }
 
     fn get_attachment(&self, id: &AttachmentId) -> Result<(Attachment, PathBuf), tonic::Status> {
@@ -553,7 +551,7 @@ impl Registry for RegistryService {
     async fn upload_streamed_attachment(
         &self,
         attachment_stream_upload_request: tonic::Request<tonic::Streaming<AttachmentStreamUpload>>,
-    ) -> Result<tonic::Response<firm_types::registry::Nothing>, tonic::Status> {
+    ) -> Result<tonic::Response<firm_types::functions::Nothing>, tonic::Status> {
         // TODO: use metadata for "global" upload data such as AttachmentId
         self.upload_stream_attachment(attachment_stream_upload_request)
             .await

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use firm_types::{
-    registry::{registry_client::RegistryClient, Filters, Ordering, OrderingKey},
+    functions::{registry_client::RegistryClient, Filters, Ordering, OrderingKey},
     tonic,
 };
 use tonic_middleware::HttpStatusInterceptor;

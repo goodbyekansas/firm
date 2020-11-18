@@ -24,7 +24,7 @@ use crate::executor::{
     AttachmentDownload, ExecutorError, ExecutorParameters, FunctionExecutor, StreamExt,
 };
 use error::{ToErrorCode, WasiError};
-use firm_types::{execution::Stream, functions::Attachment};
+use firm_types::functions::{Attachment, Stream};
 use process::StdIOConfig;
 use sandbox::Sandbox;
 

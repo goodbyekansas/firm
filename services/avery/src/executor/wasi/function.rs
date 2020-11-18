@@ -11,10 +11,7 @@ use tar::Archive;
 
 use super::{sandbox::Sandbox, WasmBuffer, WasmItemPtr, WasmString};
 use crate::executor::{AttachmentDownload, StreamExt};
-use firm_types::{
-    execution::{Channel, Stream},
-    functions::Attachment,
-};
+use firm_types::functions::{Attachment, Channel, Stream};
 
 use slog::{info, Logger};
 

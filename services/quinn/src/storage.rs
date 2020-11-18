@@ -6,9 +6,8 @@ use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
 
-pub use firm_types::{
-    functions::{AttachmentUrl, AuthMethod, ChannelType},
-    registry::{AttachmentHandle, OrderingKey},
+pub use firm_types::functions::{
+    AttachmentHandle, AttachmentUrl, AuthMethod, ChannelType, OrderingKey,
 };
 
 mod gcs;
