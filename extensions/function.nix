@@ -53,27 +53,24 @@ base.extend.mkExtension {
   languages = {
     rust = {
       mkFunction =
-        attrs@{ name
+        { name
         , src
         , manifest
-        , buildInputs ? [ ]
         , extensions ? [ ]
         , targets ? [ ]
-        , rustDependencies ? [ ]
         , useNightly ? ""
         , extraChecks ? ""
         , buildFeatures ? [ ]
         , testFeatures ? [ ]
-        , ...
+        , packageAttrs ? { }
+        , componentAttrs ? { }
         }:
         let
-          package = base.languages.rust.mkPackage {
-            inherit src name rustDependencies useNightly buildInputs extraChecks buildFeatures testFeatures;
+          package = base.languages.rust.mkPackage (packageAttrs // {
+            inherit src name useNightly extraChecks buildFeatures testFeatures;
             targets = targets ++ [ "wasm32-wasi" ];
             defaultTarget = "wasm32-wasi";
-            shellInputs = attrs.shellInputs or [ ];
-            shellHook = attrs.shellHook or "";
-          };
+          });
 
           newPackage = package.overrideAttrs (
             oldAttrs: {
@@ -85,7 +82,8 @@ base.extend.mkExtension {
             }
           );
         in
-        mkFunction (attrs // {
+        mkFunction (componentAttrs // {
+          inherit name manifest;
           package = newPackage;
           code = "bin/${newPackage.name}.wasm";
         });
