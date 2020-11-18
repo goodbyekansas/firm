@@ -3,11 +3,12 @@ with pkgs;
 base.languages.rust.mkService {
   name = "quinn";
   src = ./.;
-  buildInputs = [ types.package ];
+  buildInputs = [ types.package pkgs.openssl ]
+    ++ pkgs.stdenv.lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.darwin.apple_sdk.frameworks.Security;
+
   externalDependenciesHash = "sha256-foZ5LA4L7+Oc96mrAtCNT9blUlfeKhxtQRWSBwSlWwk=";
 
-  nativeBuildInputs = [ pkgs.postgresql pkgs.coreutils pkgs.pkg-config pkgs.openssl ]
-    ++ pkgs.stdenv.lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.darwin.apple_sdk.frameworks.Security;
+  nativeBuildInputs = [ pkgs.postgresql pkgs.coreutils pkgs.pkg-config ];
 
   extraChecks = ''
     source scripts/postgres.bash
