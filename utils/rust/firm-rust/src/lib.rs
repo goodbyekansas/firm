@@ -36,6 +36,9 @@ impl ToResult for u32 {
     fn to_result(self) -> Result<(), Error> {
         match self {
             0 => Ok(()),
+            // TODO: Major hack. We depend on that the numbers for
+            // all errors will be the same forever (error.rs in wasi executor).
+            6 => Err(Error::HostChannelNotFound),
             ec => Err(Error::HostError(ec)),
         }
     }
@@ -52,14 +55,17 @@ pub enum Error {
     #[error("Host error occured. Error code: {0}")]
     HostError(u32),
 
+    #[error("Failed to find channel on host.")]
+    HostChannelNotFound,
+
+    #[error("Failed to find required input \"{0}\"")]
+    FailedToFindRequiredInput(String),
+
     #[error("{0}")]
     ConversionError(#[from] firm_types::stream::ChannelConversionError),
 
     #[error("String conversion error: {0}")]
     StringConversionError(#[from] FromUtf8Error),
-
-    #[error("Failed to find input \"{0}\"")]
-    FailedToFindInput(String),
 
     #[error("Failed to find attachment \"{0}\"")]
     FailedToFindAttachment(String),
@@ -243,10 +249,45 @@ pub fn run_host_process<S1: AsRef<str>, S2: AsRef<str>>(
     .map(|_| exit_code)
 }
 
-pub fn get_input<S, T>(key: S) -> Result<T, Error>
+pub struct InputValue<T>
+where
+    T: TryFromChannel,
+{
+    error: Option<Error>,
+    channel: Option<Channel>,
+    default_value: Option<T>,
+    key: String,
+}
+
+impl<T> InputValue<T>
+where
+    T: TryFromChannel,
+{
+    // TODO: Provide a variant with default that takes a closure.
+    // This is so we can lazy resolve default values.
+    pub fn with_default(mut self, default_value: T) -> Self {
+        self.default_value = Some(default_value);
+        self
+    }
+
+    pub fn into(self) -> Result<T, Error> {
+        match self.error {
+            None | Some(Error::HostChannelNotFound) => {
+                let default = self.default_value;
+                let key = self.key;
+                self.channel.map_or_else(
+                    || default.ok_or(Error::FailedToFindRequiredInput(key)),
+                    |channel| T::try_from(&channel).map_err(Error::from),
+                )
+            }
+            Some(e) => Err(e),
+        }
+    }
+}
+
+fn get_channel<S>(key: S) -> Result<Channel, Error>
 where
     S: AsRef<str>,
-    T: TryFromChannel,
 {
     let mut size: u64 = 0;
     host_call!(raw::get_input_len(
@@ -265,9 +306,28 @@ where
     unsafe {
         value_buffer.set_len(size as usize);
     }
-    Channel::decode(value_buffer.as_slice())
-        .map_err(|e| e.into())
-        .and_then(|ref c| T::try_from(c).map_err(Error::from))
+    Channel::decode(value_buffer.as_slice()).map_err(|e| e.into())
+}
+
+pub fn get_input<S, T>(key: S) -> InputValue<T>
+where
+    S: AsRef<str>,
+    T: TryFromChannel,
+{
+    match get_channel(key.as_ref()) {
+        Ok(channel) => InputValue {
+            error: None,
+            channel: Some(channel),
+            default_value: None,
+            key: key.as_ref().to_owned(),
+        },
+        Err(e) => InputValue {
+            error: Some(e),
+            channel: None,
+            default_value: None,
+            key: key.as_ref().to_owned(),
+        },
+    }
 }
 
 pub fn set_output<S: AsRef<str>, T: ToChannel>(name: S, value: T) -> Result<(), Error> {
@@ -305,6 +365,34 @@ pub mod executor {
 
     use crate::{get_input, map_attachment_from_descriptor, Error};
 
+    pub struct ChannelValue<'a, T>
+    where
+        T: TryFromChannel,
+    {
+        channel: Option<&'a Channel>,
+        default_value: Option<T>,
+        key: String,
+    }
+
+    impl<T> ChannelValue<'_, T>
+    where
+        T: TryFromChannel,
+    {
+        pub fn with_default(mut self, default_value: T) -> Self {
+            self.default_value = Some(default_value);
+            self
+        }
+
+        pub fn into(self) -> Result<T, Error> {
+            let default = self.default_value;
+            let key = self.key;
+            self.channel.map_or_else(
+                || default.ok_or(Error::FailedToFindRequiredInput(key)),
+                |channel| T::try_from(&channel).map_err(Error::from),
+            )
+        }
+    }
+
     pub trait AttachmentDownload {
         fn download(&self) -> Result<PathBuf, Error>;
     }
@@ -330,14 +418,15 @@ pub mod executor {
         /// Create execution environment args from the wasi host
         pub fn from_wasi_host() -> Result<Self, Error> {
             Ok(Self {
-                code: get_input("_code").and_then(|a: Vec<u8>| {
+                code: get_input("_code").into().and_then(|a: Vec<u8>| {
                     Attachment::decode(a.as_slice()).map_err(|e| e.into())
                 })?,
-                sha256: get_input("_sha256")?,
-                entrypoint: get_input("_entrypoint")?,
+                sha256: get_input("_sha256").into()?,
+                entrypoint: get_input("_entrypoint").into()?,
                 stream: get_input("_arguments")
+                    .into()
                     .and_then(|a: Vec<u8>| Stream::decode(a.as_slice()).map_err(|e| e.into()))?,
-                attachments: get_input("_attachments").and_then(|a: Vec<u8>| {
+                attachments: get_input("_attachments").into().and_then(|a: Vec<u8>| {
                     Attachments::decode(a.as_slice())
                         .map_err(|e| e.into())
                         .map(|a| a.attachments)
@@ -363,21 +452,22 @@ pub mod executor {
         /// Get an argument designated by `key` for the
         /// function that the execution environment is
         /// expected to execute
-        pub fn get_channel_value<S, T>(&self, key: S) -> Result<T, Error>
+        pub fn get_channel_value<S, T>(&self, key: S) -> ChannelValue<T>
         where
             S: AsRef<str>,
             T: TryFromChannel,
         {
-            self.get_channel(key)
-                .and_then(|c| T::try_from(c).map_err(Error::from))
+            ChannelValue {
+                key: key.as_ref().to_owned(),
+                channel: self.get_channel(key),
+                default_value: None,
+            }
         }
 
         /// Get an argument descriptor designated by `key` for the function that
         /// the execution environment is expected to execute
-        pub fn get_channel<S: AsRef<str>>(&self, key: S) -> Result<&Channel, Error> {
-            self.stream
-                .get_channel(key.as_ref())
-                .ok_or_else(|| Error::FailedToFindInput(key.as_ref().to_owned()))
+        pub fn get_channel<S: AsRef<str>>(&self, key: S) -> Option<&Channel> {
+            self.stream.get_channel(key.as_ref())
         }
 
         pub fn get_attachment_descriptor<S: AsRef<str>>(
@@ -575,23 +665,44 @@ mod tests {
         let cloned_channel = channel.clone();
         MockResultRegistry::set_get_input_impl(move |_key| Ok(cloned_channel.clone()));
 
-        let res: Result<String, _> = get_input("kallebulasularula");
+        let res: Result<String, _> = get_input("kallebulasularula").into();
         assert!(res.is_ok());
         assert_eq!(&res.unwrap(), String::try_ref_from(&channel).unwrap());
 
         // Asking for wrong type
-        let res: Result<i64, _> = get_input("cool-grunka");
+        let res: Result<i64, _> = get_input("cool-grunka").into();
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), Error::ConversionError(_)));
 
-        let res: Result<bool, _> = get_input("cool-grunka");
+        let res: Result<bool, _> = get_input("cool-grunka").into();
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), Error::ConversionError(_)));
 
-        // Fail on length (how!?)
+        // Fail on length (how!?)l
         MockResultRegistry::set_get_input_len_impl(move |_key| Err(1));
 
-        let res: Result<String, _> = get_input("ful-grunka");
+        let res: Result<String, _> = get_input("ful-grunka").into();
+        assert!(res.is_err());
+        assert!(matches!(res.unwrap_err(), Error::HostError(_)));
+
+        // Test default
+        MockResultRegistry::set_get_input_len_impl(move |_key| Err(6)); // 6 means that the key was missing. Source from wasi executor error.rs.
+        let res = get_input("SuperSune").with_default(5i64).into();
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), 5);
+
+        // Test with no default
+        MockResultRegistry::set_get_input_len_impl(move |_key| Err(6));
+        let res: Result<bool, _> = get_input("SuperSune").into();
+        assert!(res.is_err());
+        assert!(matches!(
+            res.unwrap_err(),
+            Error::FailedToFindRequiredInput(_)
+        ));
+
+        // Test bad error with default
+        MockResultRegistry::set_get_input_len_impl(move |_key| Err(u32::MAX)); // Very bad error
+        let res = get_input("SuperSune").with_default(5i64).into();
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), Error::HostError(_)));
     }
@@ -783,10 +894,10 @@ mod tests {
         );
         assert_eq!(eargs.entrypoint(), "windows.exe");
 
-        assert_eq!(false, eargs.get_channel_value("sune").unwrap());
+        assert_eq!(false, eargs.get_channel_value("sune").into().unwrap());
         assert_eq!(
             "datta!",
-            eargs.get_channel_value::<_, String>("rune").unwrap()
+            eargs.get_channel_value::<_, String>("rune").into().unwrap()
         );
     }
 
