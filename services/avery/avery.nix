@@ -3,7 +3,6 @@ with pkgs;
 base.languages.rust.mkService {
   name = "avery";
   src = ./.;
-  externalDependenciesHash = "sha256-P8sPV/IuQHp5Jh89e1FtUZUi0+sxj1xsLP0pNJ3S3GU=";
-  nativeBuildInputs = pkgs.stdenv.lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.darwin.apple_sdk.frameworks.Security;
-  buildInputs = [ types.package ];
+  externalDependenciesHash = "sha256-sh8Ea6t1BhxHu1R0XkSbYAWVT0YkJbnR8q/8Riz253k=";
+  buildInputs = [ types.package ] ++ pkgs.stdenv.lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.darwin.apple_sdk.frameworks.Security;
 }

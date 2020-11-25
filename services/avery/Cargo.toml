@@ -5,28 +5,29 @@ authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
 [dependencies]
+async-stream = "0.3"
+config = "0.10"
+flate2 = "1"
+futures = "0.3"
+hex = "0.4"
 prost = "0.6"
 regex = "1"
 semver = "0.10"
 serde = "1"
+sha2 = "0.9"
 slog = "2"
 slog-async = "2"
 slog-term = "2"
 structopt = "0.3"
+tar = "0.4"
 tempfile = "3"
 thiserror = "1"
 tokio = { version = "0.2", features = ["rt-threaded", "time", "stream", "macros", "uds", "signal"] }
 toml = "0.5"
+typetag = "0.1"
 url = "2"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 wasmer-runtime = "0.17"
 wasmer-wasi = "0.17"
-futures = "0.3"
-typetag = "0.1"
-async-stream = "0.3"
-sha2 = "0.9"
-hex = "0.4"
-flate2 = "1"
-tar = "0.4"
 
 firm-types = { version="0.1", registry = "nix" }
