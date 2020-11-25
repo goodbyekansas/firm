@@ -6,8 +6,13 @@ use firm_types::{
     tonic::transport::Server,
 };
 
-use avery::{executor::ExecutionService, registry::RegistryService};
+use avery::{
+    executor::ExecutionService,
+    proxy_registry::{ExternalRegistry, ProxyRegistry},
+    registry::RegistryService,
+};
 use std::path::PathBuf;
+use url::Url;
 
 mod config;
 
@@ -32,6 +37,39 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
     let port = config.port;
     let addr = format!("[::]:{}", port).parse().unwrap();
 
+    let external_registries = config
+        .registries
+        .into_iter()
+        .map(|reg| {
+            Url::parse(&reg.url)
+                .map_err(|e| {
+                    format!(
+                        "Failed to parse url for external registry \"{}\": {}",
+                        reg.name, e
+                    )
+                })
+                .and_then(|url| {
+                    reg.oauth_scope
+                        .map(|scope| {
+                            std::env::var(format!("AVERY_OAUTH_{}", scope)).map_err(|e| {
+                                format!(
+                                    "Could not use environment variable \"{}\": {}",
+                                    format!("AVERY_OAUTH_{}", scope),
+                                    e
+                                )
+                            })
+                        })
+                        .transpose()
+                        .map(|oauth| {
+                            oauth.map_or_else(
+                                || ExternalRegistry::new(url.clone()),
+                                |oauth| ExternalRegistry::new_with_oauth(url.clone(), oauth),
+                            )
+                        })
+                })
+        })
+        .collect::<Result<Vec<ExternalRegistry>, String>>()?;
+
     let internal_registry = RegistryService::new(log.new(o!("service" => "internal-registry")));
 
     let execution_service = ExecutionService::new(
@@ -46,7 +84,10 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
 
     Server::builder()
         .add_service(ExecutionServer::new(execution_service))
-        .add_service(RegistryServer::new(internal_registry))
+        .add_service(RegistryServer::new(ProxyRegistry::new(
+            external_registries,
+            internal_registry,
+        )))
         .serve_with_shutdown(addr, ctrlc())
         .await?;
 
@@ -54,7 +95,6 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-// local server main loop
 #[tokio::main]
 async fn main() -> Result<(), i32> {
     let decorator = slog_term::TermDecorator::new().build();
