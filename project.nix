@@ -26,6 +26,7 @@ let
     inherit protocols;
 
     avery = project.declareComponent ./services/avery/avery.nix {
+      inherit tonicMiddleware;
       types = typesWithServices;
     };
 

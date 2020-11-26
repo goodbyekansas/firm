@@ -49,6 +49,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
                     )
                 })
                 .and_then(|url| {
+                    let reg_name = reg.name.clone();
                     reg.oauth_scope
                         .map(|scope| {
                             std::env::var(format!("AVERY_OAUTH_{}", scope)).map_err(|e| {
@@ -62,8 +63,14 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
                         .transpose()
                         .map(|oauth| {
                             oauth.map_or_else(
-                                || ExternalRegistry::new(url.clone()),
-                                |oauth| ExternalRegistry::new_with_oauth(url.clone(), oauth),
+                                || ExternalRegistry::new(reg_name.clone(), url.clone()),
+                                |oauth| {
+                                    ExternalRegistry::new_with_oauth(
+                                        reg_name.clone(),
+                                        url.clone(),
+                                        oauth,
+                                    )
+                                },
                             )
                         })
                 })
@@ -72,9 +79,16 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
 
     let internal_registry = RegistryService::new(log.new(o!("service" => "internal-registry")));
 
+    let proxy_registry = ProxyRegistry::new(
+        external_registries,
+        internal_registry,
+        log.new(o!("service" => "proxy-registry")),
+    )
+    .await?;
+
     let execution_service = ExecutionService::new(
         log.new(o!("service" => "functions")),
-        Box::new(internal_registry.clone()),
+        Box::new(proxy_registry.clone()),
     );
 
     info!(
@@ -84,10 +98,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
 
     Server::builder()
         .add_service(ExecutionServer::new(execution_service))
-        .add_service(RegistryServer::new(ProxyRegistry::new(
-            external_registries,
-            internal_registry,
-        )))
+        .add_service(RegistryServer::new(proxy_registry))
         .serve_with_shutdown(addr, ctrlc())
         .await?;
 

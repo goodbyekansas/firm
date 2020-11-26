@@ -1,42 +1,118 @@
+use futures::{stream, StreamExt, TryStreamExt};
+use thiserror::Error;
 use url::Url;
 
 use crate::registry::RegistryService;
-use firm_types::{functions::registry_server::Registry, tonic};
+use firm_types::{
+    functions::{registry_client::RegistryClient, registry_server::Registry},
+    tonic,
+};
+use slog::{info, o, Logger};
+use tonic::transport::{ClientTlsConfig, Endpoint};
+use tonic_middleware::HttpStatusInterceptor;
 #[derive(Debug, Clone)]
 pub struct ProxyRegistry {
-    _external_registries: Vec<ExternalRegistry>, // TODO add connection pooling
     internal_registry: RegistryService,
+    channels: Vec<RegistryClient<HttpStatusInterceptor>>,
+    log: Logger,
 }
+
 #[derive(Debug, Clone)]
 pub struct ExternalRegistry {
-    _url: Url,
-    _oauth_token: Option<String>,
+    name: String,
+    url: Url,
+    oauth_token: Option<String>,
+}
+
+#[derive(Error, Debug)]
+pub enum ProxyRegistryError {
+    #[error("Connection Error: {0}")]
+    ConnectionError(#[from] tonic::transport::Error),
+
+    #[error("Invalid URI: {0}")]
+    InvalidUri(String),
+
+    #[error("Invalid Oauth token: {0}")]
+    InvalidOauthToken(String),
+}
+
+async fn create_connection(
+    registry: ExternalRegistry,
+    log: Logger,
+) -> Result<RegistryClient<HttpStatusInterceptor>, ProxyRegistryError> {
+    let mut endpoint = Endpoint::from_shared(registry.url.to_string())
+        .map_err(|e| ProxyRegistryError::InvalidUri(e.to_string()))?;
+
+    if endpoint.uri().scheme_str() == Some("https") {
+        endpoint = endpoint.tls_config(ClientTlsConfig::new())?;
+    }
+
+    // When calling non pure grpc endpoints we may get content that is not application/grpc.
+    // Tonic doesn't handle these cases very well. We have to make a wrapper around
+    // to handle these edge cases. We convert it into normal tonic statuses that tonic can handle.
+    let channel = HttpStatusInterceptor::new(endpoint.connect().await?);
+
+    let bearer = registry
+        .oauth_token
+        .map(|token| {
+            tonic::metadata::MetadataValue::from_str(&format!("Bearer {}", token)).map_err(|e| {
+                ProxyRegistryError::InvalidOauthToken(format!(
+                    "Failed to convert oauth token to metadata value: {}",
+                    e
+                ))
+            })
+        })
+        .transpose()?;
+    Ok(match bearer {
+        Some(bearer) => {
+            info!(log, "Using provided oauth2 credentials 🧸");
+            RegistryClient::with_interceptor(channel, move |mut req: tonic::Request<()>| {
+                req.metadata_mut().insert("authorization", bearer.clone());
+                Ok(req)
+            })
+        }
+
+        None => RegistryClient::new(channel),
+    })
 }
 
 impl ExternalRegistry {
-    pub fn new(url: Url) -> Self {
+    pub fn new(name: String, url: Url) -> Self {
         Self {
-            _url: url,
-            _oauth_token: None,
+            name,
+            url,
+            oauth_token: None,
         }
     }
-    pub fn new_with_oauth(url: Url, oauth_token: String) -> Self {
+    pub fn new_with_oauth(name: String, url: Url, oauth_token: String) -> Self {
         Self {
-            _url: url,
-            _oauth_token: Some(oauth_token),
+            name,
+            url,
+            oauth_token: Some(oauth_token),
         }
     }
 }
 
 impl ProxyRegistry {
-    pub fn new(
+    pub async fn new(
         external_registries: Vec<ExternalRegistry>,
         internal_registry: RegistryService,
-    ) -> Self {
-        Self {
-            _external_registries: external_registries,
+        log: Logger,
+    ) -> Result<Self, ProxyRegistryError> {
+        Ok(Self {
             internal_registry,
-        }
+            channels: stream::iter(external_registries)
+                .then(|er| {
+                    let reg_name = er.name.clone();
+                    create_connection(
+                        er,
+                        log.new(o!("scope" => "connect", "registry" => reg_name)),
+                    )
+                })
+                .try_collect::<Vec<RegistryClient<HttpStatusInterceptor>>>()
+                .await?,
+            log,
+        })
     }
 }
 
@@ -49,7 +125,27 @@ impl Registry for ProxyRegistry {
         firm_types::tonic::Response<firm_types::functions::Functions>,
         firm_types::tonic::Status,
     > {
-        self.internal_registry.list(request).await
+        let payload = request.into_inner();
+        Ok(tonic::Response::new(firm_types::functions::Functions {
+            functions:
+                stream::iter(
+                    self.channels
+                        .iter()
+                        .map(|client| (client.clone(), payload.clone())),
+                )
+                .then(|(mut client, payload)| async move {
+                    client.list(tonic::Request::new(payload)).await
+                })
+                .chain(stream::once(
+                    self.internal_registry
+                        .list(tonic::Request::new(payload.clone())),
+                ))
+                .try_collect::<Vec<tonic::Response<firm_types::functions::Functions>>>()
+                .await?
+                .into_iter()
+                .flat_map(|response| response.into_inner().functions)
+                .collect::<Vec<firm_types::functions::Function>>(),
+        }))
     }
 
     async fn get(
