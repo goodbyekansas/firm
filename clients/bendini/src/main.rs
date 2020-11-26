@@ -88,7 +88,7 @@ async fn main() {
     }
 
     if let Err(e) = run().await {
-        eprintln!("{}", e);
+        eprintln!("🐞 {}", e);
         std::process::exit(e.into())
     }
 }

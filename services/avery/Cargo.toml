@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 async-stream = "0.3"
+bb8 = "0.6"
 config = "0.10"
 flate2 = "1"
 futures = "0.3"
@@ -30,4 +31,5 @@ uuid = { version = "0.8", features = ["serde", "v4"] }
 wasmer-runtime = "0.17"
 wasmer-wasi = "0.17"
 
-firm-types = { version="0.1", registry = "nix" }
+firm-types = { version = "0.1", registry = "nix" }
+tonic-middleware = { version = "0.1", registry = "nix" }
