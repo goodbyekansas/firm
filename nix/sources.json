@@ -2,7 +2,7 @@
     "nedryland": {
         "branch": "main",
         "repo": "git@github.com:goodbyekansas/nedryland",
-        "rev": "9274eb491837a9c04b95733daf578e2e331aed83",
+        "rev": "ccbce2759d20967bdff06f1081b89c460ee2a410",
         "type": "git"
     },
     "niv": {

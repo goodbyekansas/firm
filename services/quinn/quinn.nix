@@ -6,8 +6,6 @@ base.languages.rust.mkService {
   buildInputs = [ types.package pkgs.openssl ]
     ++ pkgs.stdenv.lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.darwin.apple_sdk.frameworks.Security;
 
-  externalDependenciesHash = "sha256-foZ5LA4L7+Oc96mrAtCNT9blUlfeKhxtQRWSBwSlWwk=";
-
   nativeBuildInputs = [ pkgs.postgresql pkgs.coreutils pkgs.pkg-config ];
 
   extraChecks = ''
