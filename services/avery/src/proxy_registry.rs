@@ -179,7 +179,50 @@ impl Registry for ProxyRegistry {
         firm_types::tonic::Response<firm_types::functions::Function>,
         firm_types::tonic::Status,
     > {
-        self.internal_registry.get(request).await
+        let payload = request.into_inner();
+
+        let res = stream::iter(
+            self.channels
+                .iter()
+                .map(|client| (client.clone(), payload.clone())),
+        )
+        .then(|(mut client, payload)| async move { client.get(tonic::Request::new(payload)).await })
+        .chain(stream::once(
+            self.internal_registry
+                .get(tonic::Request::new(payload.clone())),
+        ))
+        .collect::<Vec<Result<tonic::Response<firm_types::functions::Function>, tonic::Status>>>()
+        .await
+        .into_iter()
+        .filter(|v| !matches!(v, Err(e) if e.code() == tonic::Code::NotFound))
+        .collect::<Result<Vec<tonic::Response<firm_types::functions::Function>>, tonic::Status>>()?
+        .into_iter()
+        .map(|response| response.into_inner())
+        .try_fold(HashMap::new(), |mut hashmap, function| {
+            match hashmap.entry(format!("{}:{}", function.name, function.version)) {
+                Entry::Occupied(existing) => match self.conflict_resolution {
+                    ConflictResolutionMethod::Error => Err(
+                        ProxyRegistryError::ConflictingFunctions(existing.key().clone()),
+                    ),
+                    ConflictResolutionMethod::UsePriority => Ok(hashmap),
+                },
+                Entry::Vacant(vacant) => {
+                    vacant.insert(function);
+                    Ok(hashmap)
+                }
+            }
+        })
+        .map_err(|e| tonic::Status::already_exists(e.to_string()))?
+        .into_iter()
+        .map(|(_, v)| v)
+        .next()
+        .ok_or_else(|| {
+            tonic::Status::not_found(format!(
+                "Failed to find function with name: \"{}\" and version \"{}\"",
+                payload.name, payload.version
+            ))
+        })?; // We've already handled the case where we find several. First should be safe to call.
+        Ok(tonic::Response::new(res))
     }
 
     async fn register(

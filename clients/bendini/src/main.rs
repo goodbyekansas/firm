@@ -57,7 +57,7 @@ enum Command {
     /// Executes a function with arguments
     Run {
         /// Specification for function to run. A function named followed by
-        /// a colon and a version specifier (my-function:0.4.1)
+        /// a colon and a version requirement (my-function:0.4)
         function_id: String,
 
         /// Arguments to provide to the function when executing
@@ -65,6 +65,13 @@ enum Command {
         /// expected by the function
         #[structopt(short = "i", parse(try_from_str = parse_key_val))]
         arguments: Vec<(String, String)>,
+    },
+
+    /// Gets information about a single function
+    Get {
+        /// Specification for function to get. A function named followed by
+        /// a colon and a version (my-function:0.4.1)
+        function_id: String,
     },
 }
 
@@ -161,5 +168,6 @@ async fn run() -> Result<(), error::BendiniError> {
             )
             .await
         }
+        Command::Get { function_id } => commands::get::run(client, function_id).await,
     }
 }
