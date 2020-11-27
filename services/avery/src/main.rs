@@ -7,14 +7,13 @@ use firm_types::{
 };
 
 use avery::{
+    config,
     executor::ExecutionService,
     proxy_registry::{ExternalRegistry, ProxyRegistry},
     registry::RegistryService,
 };
 use std::path::PathBuf;
 use url::Url;
-
-mod config;
 
 // clean exit on crtl c
 async fn ctrlc() {
@@ -77,11 +76,15 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect::<Result<Vec<ExternalRegistry>, String>>()?;
 
-    let internal_registry = RegistryService::new(log.new(o!("service" => "internal-registry")));
+    let internal_registry = RegistryService::new(
+        config.internal_registry,
+        log.new(o!("service" => "internal-registry")),
+    );
 
     let proxy_registry = ProxyRegistry::new(
         external_registries,
         internal_registry,
+        config.conflict_resolution,
         log.new(o!("service" => "proxy-registry")),
     )
     .await?;
@@ -109,7 +112,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
 #[tokio::main]
 async fn main() -> Result<(), i32> {
     let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+    let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
     let log = Logger::root(drain, o!());
 

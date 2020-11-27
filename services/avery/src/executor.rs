@@ -499,7 +499,7 @@ mod tests {
 
     use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-    use crate::registry::RegistryService;
+    use crate::{config::InternalRegistryConfig, registry::RegistryService};
     use firm_types::{
         attachment, attachment_file, code_file, function_data,
         functions::{FunctionData, Runtime},
@@ -514,7 +514,7 @@ mod tests {
 
     macro_rules! registry {
         () => {{
-            RegistryService::new(null_logger!())
+            RegistryService::new(InternalRegistryConfig::default(), null_logger!())
         }};
     }
 

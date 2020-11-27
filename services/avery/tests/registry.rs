@@ -14,7 +14,7 @@ use firm_types::{
 
 use firm_types::{attachment_data, filters, function_data, runtime};
 
-use avery::registry::RegistryService as LocalRegistryService;
+use avery::{config::InternalRegistryConfig, registry::RegistryService as LocalRegistryService};
 
 macro_rules! null_logger {
     () => {{
@@ -24,7 +24,7 @@ macro_rules! null_logger {
 
 macro_rules! registry {
     () => {{
-        LocalRegistryService::new(null_logger!())
+        LocalRegistryService::new(InternalRegistryConfig::default(), null_logger!())
     }};
 }
 

@@ -14,6 +14,7 @@ use slog::{info, warn, Logger};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
+use crate::config::InternalRegistryConfig;
 use firm_types::{
     functions::{
         registry_server::Registry, Attachment, AttachmentData, AttachmentHandle, AttachmentId,
@@ -28,6 +29,7 @@ use firm_types::{
 pub struct RegistryService {
     functions: Arc<RwLock<Vec<Function>>>,
     function_attachments: Arc<RwLock<HashMap<Uuid, (Attachment, PathBuf)>>>,
+    config: InternalRegistryConfig,
     logger: Logger,
 }
 
@@ -82,10 +84,11 @@ impl Drop for RegistryService {
 }
 
 impl RegistryService {
-    pub fn new(logger: Logger) -> Self {
+    pub fn new(config: InternalRegistryConfig, logger: Logger) -> Self {
         Self {
             functions: Arc::new(RwLock::new(Vec::new())),
             function_attachments: Arc::new(RwLock::new(HashMap::new())),
+            config,
             logger,
         }
     }
@@ -411,9 +414,11 @@ impl Registry for RegistryService {
         })?;
 
         // this is the local case, always add dev to any function version
-        version
-            .pre
-            .push(semver::Identifier::AlphaNumeric("dev".to_owned()));
+        if !self.config.version_suffix.is_empty() {
+            version.pre.push(semver::Identifier::AlphaNumeric(
+                self.config.version_suffix.clone(),
+            ));
+        }
 
         let mut functions = self.functions.write().map_err(|e| {
             tonic::Status::new(
@@ -422,7 +427,7 @@ impl Registry for RegistryService {
             )
         })?;
 
-        // remove function if name and version matches (after the -dev has been appended)
+        // remove function if name and version matches (after the suffix has been appended)
         // TODO: Remove corresponding attachments
         functions.retain(|v| v.name != payload.name || v.version != version);
 
