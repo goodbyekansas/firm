@@ -14,6 +14,42 @@ pub struct Config {
 
     #[serde(default)]
     pub registries: Vec<Registry>,
+
+    #[serde(default)]
+    pub conflict_resolution: ConflictResolutionMethod,
+
+    #[serde(default)]
+    pub internal_registry: InternalRegistryConfig,
+}
+
+fn default_version_suffix() -> String {
+    String::from("dev")
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct InternalRegistryConfig {
+    #[serde(default = "default_version_suffix")]
+    pub version_suffix: String,
+}
+
+impl Default for InternalRegistryConfig {
+    fn default() -> Self {
+        Self {
+            version_suffix: default_version_suffix(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub enum ConflictResolutionMethod {
+    Error,
+    UsePriority,
+}
+
+impl Default for ConflictResolutionMethod {
+    fn default() -> Self {
+        ConflictResolutionMethod::UsePriority
+    }
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq)]

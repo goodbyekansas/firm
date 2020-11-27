@@ -1,6 +1,8 @@
 use slog::o;
 
-use avery::{executor::ExecutionService, registry::RegistryService};
+use avery::{
+    config::InternalRegistryConfig, executor::ExecutionService, registry::RegistryService,
+};
 
 use firm_types::{
     functions::{
@@ -56,7 +58,7 @@ macro_rules! first_function {
 
 macro_rules! registry_service {
     () => {{
-        RegistryService::new(null_logger!())
+        RegistryService::new(InternalRegistryConfig::default(), null_logger!())
     }};
 }
 

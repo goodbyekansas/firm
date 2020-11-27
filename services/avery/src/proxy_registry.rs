@@ -2,18 +2,20 @@ use futures::{stream, StreamExt, TryStreamExt};
 use thiserror::Error;
 use url::Url;
 
-use crate::registry::RegistryService;
+use crate::{config::ConflictResolutionMethod, registry::RegistryService};
 use firm_types::{
     functions::{registry_client::RegistryClient, registry_server::Registry},
     tonic,
 };
 use slog::{info, o, Logger};
+use std::collections::{hash_map::Entry, HashMap};
 use tonic::transport::{ClientTlsConfig, Endpoint};
 use tonic_middleware::HttpStatusInterceptor;
 #[derive(Debug, Clone)]
 pub struct ProxyRegistry {
     internal_registry: RegistryService,
     channels: Vec<RegistryClient<HttpStatusInterceptor>>,
+    conflict_resolution: ConflictResolutionMethod,
     log: Logger,
 }
 
@@ -34,6 +36,9 @@ pub enum ProxyRegistryError {
 
     #[error("Invalid Oauth token: {0}")]
     InvalidOauthToken(String),
+
+    #[error("Conflicting version name pair: {0}")] //TODO send info on registry names
+    ConflictingFunctions(String),
 }
 
 async fn create_connection(
@@ -97,6 +102,7 @@ impl ProxyRegistry {
     pub async fn new(
         external_registries: Vec<ExternalRegistry>,
         internal_registry: RegistryService,
+        conflict_resolution: ConflictResolutionMethod,
         log: Logger,
     ) -> Result<Self, ProxyRegistryError> {
         Ok(Self {
@@ -111,6 +117,7 @@ impl ProxyRegistry {
                 })
                 .try_collect::<Vec<RegistryClient<HttpStatusInterceptor>>>()
                 .await?,
+            conflict_resolution,
             log,
         })
     }
@@ -144,6 +151,23 @@ impl Registry for ProxyRegistry {
                 .await?
                 .into_iter()
                 .flat_map(|response| response.into_inner().functions)
+                .try_fold(HashMap::new(), |mut hashmap, function| {
+                    match hashmap.entry(format!("{}:{}", function.name, function.version)) {
+                        Entry::Occupied(existing) => match self.conflict_resolution {
+                            ConflictResolutionMethod::Error => Err(
+                                ProxyRegistryError::ConflictingFunctions(existing.key().clone()),
+                            ),
+                            ConflictResolutionMethod::UsePriority => Ok(hashmap),
+                        },
+                        Entry::Vacant(vacant) => {
+                            vacant.insert(function);
+                            Ok(hashmap)
+                        }
+                    }
+                })
+                .map_err(|e| tonic::Status::already_exists(e.to_string()))?
+                .into_iter()
+                .map(|(_, v)| v)
                 .collect::<Vec<firm_types::functions::Function>>(),
         }))
     }
