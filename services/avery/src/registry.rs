@@ -10,7 +10,7 @@ use futures::{Stream, StreamExt};
 use regex::Regex;
 use semver::{Version, VersionReq};
 use sha2::{Digest, Sha256};
-use slog::{info, warn, Logger};
+use slog::{debug, info, warn, Logger};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
@@ -307,7 +307,7 @@ impl Registry for RegistryService {
         let version_req = payload
             .version_requirement
             .map(|vr| {
-                VersionReq::parse(&vr.expression).map_err(|e| {
+                VersionReq::parse_compat(&vr.expression, semver::Compat::Npm).map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::InvalidArgument,
                         format!("Supplied version requirement is invalid: {}", e),
@@ -321,16 +321,20 @@ impl Registry for RegistryService {
                 (match name_filter.exact_match {
                     true => func.name == name_filter.pattern,
                     false => func.name.contains(&name_filter.pattern),
-                }) && version_req
-                    .as_ref()
-                    .map_or(true, |ver_req| ver_req.matches(&func.version))
-                    && required_metadata.as_ref().map_or(true, |filters| {
-                        filters.iter().all(|filter| {
-                            func.metadata.iter().any(|(k, v)| {
-                                filter.0 == k && (filter.1.is_empty() || filter.1 == v)
-                            })
-                        })
+                }) && version_req.as_ref().map_or(true, |ver_req| {
+                    let res = ver_req.matches(&func.version);
+                    debug!(
+                        self.logger,
+                        "Matching \"{}\" with \"{}\": {}", &ver_req, &func.version, res,
+                    );
+                    res
+                }) && required_metadata.as_ref().map_or(true, |filters| {
+                    filters.iter().all(|filter| {
+                        func.metadata
+                            .iter()
+                            .any(|(k, v)| filter.0 == k && (filter.1.is_empty() || filter.1 == v))
                     })
+                })
             })
             .collect::<Vec<&Function>>();
         filtered_functions.sort_unstable_by(|a, b| match OrderingKey::from_i32(order.key) {
