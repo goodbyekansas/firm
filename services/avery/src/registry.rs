@@ -337,11 +337,19 @@ impl Registry for RegistryService {
                 })
             })
             .collect::<Vec<&Function>>();
+
+        if OrderingKey::from_i32(order.key).is_none() {
+            warn!(
+                self.logger,
+                "Ordering key was out of range ({}). Out of date protobuf definitions?", order.key
+            );
+        }
+
         filtered_functions.sort_unstable_by(|a, b| match OrderingKey::from_i32(order.key) {
             Some(OrderingKey::NameVersion) | None => match a.name.cmp(&b.name) {
                 std::cmp::Ordering::Equal => b.version.cmp(&a.version),
                 o => o,
-            }, // TODO handle None separately, at least log a warning.
+            },
         });
 
         Ok(tonic::Response::new(Functions {

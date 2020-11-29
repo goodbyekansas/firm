@@ -1,11 +1,14 @@
 use std::collections::{hash_map::Entry, HashMap};
 
 use firm_types::{
-    functions::{registry_client::RegistryClient, registry_server::Registry},
+    functions::{
+        registry_client::RegistryClient, registry_server::Registry, Functions, Ordering,
+        OrderingKey,
+    },
     tonic,
 };
 use futures::{stream, StreamExt, TryStreamExt};
-use slog::{info, o, Logger};
+use slog::{info, o, warn, Logger};
 use thiserror::Error;
 use tonic::transport::{ClientTlsConfig, Endpoint};
 use tonic_middleware::HttpStatusInterceptor;
@@ -19,6 +22,10 @@ struct RegistryConnection {
     client: RegistryClient<HttpStatusInterceptor>,
 }
 
+/// A forwarding proxy registry
+///
+/// The registry supports forwarding `list` and `get` calls to a list of external registries and
+/// then combining it with the built-in internal registry
 #[derive(Debug, Clone)]
 pub struct ProxyRegistry {
     internal_registry: RegistryService,
@@ -27,6 +34,7 @@ pub struct ProxyRegistry {
     log: Logger,
 }
 
+/// Representation of an external registry
 #[derive(Debug, Clone)]
 pub struct ExternalRegistry {
     name: String,
@@ -90,6 +98,11 @@ async fn create_connection(
 }
 
 impl ExternalRegistry {
+    /// Create a new external registry descriptor
+    ///
+    /// # Parameters
+    /// `name`: A semantic name for the registry (used to identify this registry in list results)
+    /// `url`: A url pointing to the external registry
     pub fn new(name: String, url: Url) -> Self {
         Self {
             name,
@@ -97,6 +110,14 @@ impl ExternalRegistry {
             oauth_token: None,
         }
     }
+
+    /// Create a new external registry descriptor for a registry using OAuth
+    ///
+    /// # Parameters
+    /// `name`: A semantic name for the registry (used to identify this registry in list results)
+    /// `url`: A url pointing to the external registry
+    /// `oauth_token`: An OAuth2 token as a String that will be used as a bearer token when
+    /// contacting the registry
     pub fn new_with_oauth(name: String, url: Url, oauth_token: String) -> Self {
         Self {
             name,
@@ -107,6 +128,15 @@ impl ExternalRegistry {
 }
 
 impl ProxyRegistry {
+    /// Create a new proxy registry
+    ///
+    /// # Parameters
+    /// `external_registries`: A list of external registry descriptors. The order in the list will
+    /// be used as the priority order when handling conflicting versions of functions.
+    /// `internal_registry`: An implementation of the internal registry. This is called directly,
+    /// requiring no network access.
+    /// `conflict_resolution`: The conflict resolution method to use when functions with the same
+    /// name and version are found in different registries.
     pub async fn new(
         external_registries: Vec<ExternalRegistry>,
         internal_registry: RegistryService,
@@ -136,6 +166,10 @@ impl ProxyRegistry {
     }
 }
 
+/// Implementation of Registry as a proxy
+///
+/// This basically forwards all calls to an internal registry except
+/// `list` and `get` where external registries and internal is combined
 #[tonic::async_trait]
 impl Registry for ProxyRegistry {
     async fn list(
@@ -146,62 +180,122 @@ impl Registry for ProxyRegistry {
         firm_types::tonic::Status,
     > {
         let payload = request.into_inner();
-        Ok(tonic::Response::new(firm_types::functions::Functions {
-            functions: stream::iter(
-                self.connections
-                    .iter()
-                    .map(|connection| (connection.clone(), payload.clone())),
+        let mut functions = stream::iter(
+            self.connections
+                .iter()
+                .map(|connection| (connection.clone(), payload.clone())),
+        )
+        .then(|(mut connection, payload)| async move {
+            connection
+                .client
+                .list(tonic::Request::new(payload))
+                .await
+                .map(|functions| (connection.name.clone(), functions))
+        })
+        .chain(
+            stream::once(
+                self.internal_registry
+                    .list(tonic::Request::new(payload.clone())),
             )
-            .then(|(mut connection, payload)| async move {
-                connection
-                    .client
-                    .list(tonic::Request::new(payload))
-                    .await
-                    .map(|functions| (connection.name.clone(), functions))
-            })
-            .chain(
-                stream::once(
-                    self.internal_registry
-                        .list(tonic::Request::new(payload.clone())),
-                )
-                .map(|f| f.map(|functions| (String::from("internal"), functions))),
-            )
-            .try_collect::<Vec<(String, tonic::Response<firm_types::functions::Functions>)>>()
-            .await?
-            .into_iter()
-            .map(|(name, mut functions)| {
-                // insert metadata
-                functions
-                    .get_mut()
-                    .functions
-                    .iter_mut()
-                    .for_each(|function| {
-                        function
-                            .metadata
-                            .insert("registry".to_owned(), name.clone());
-                    });
+            .map(|f| f.map(|functions| (String::from("internal"), functions))),
+        )
+        .try_collect::<Vec<(String, tonic::Response<firm_types::functions::Functions>)>>()
+        .await?
+        .into_iter()
+        .map(|(name, mut functions)| {
+            // insert metadata
+            functions
+                .get_mut()
+                .functions
+                .iter_mut()
+                .for_each(|function| {
+                    function
+                        .metadata
+                        .insert("registry".to_owned(), name.clone());
+                });
 
-                functions
-            })
-            .flat_map(|functions| functions.into_inner().functions)
-            .try_fold(HashMap::new(), |mut hashmap, function| {
-                match hashmap.entry(format!("{}:{}", function.name, function.version)) {
-                    Entry::Occupied(existing) => match self.conflict_resolution {
-                        ConflictResolutionMethod::Error => Err(
-                            ProxyRegistryError::ConflictingFunctions(existing.key().clone()),
-                        ),
-                        ConflictResolutionMethod::UsePriority => Ok(hashmap),
-                    },
-                    Entry::Vacant(vacant) => {
-                        vacant.insert(function);
-                        Ok(hashmap)
+            functions
+        })
+        .flat_map(|functions| functions.into_inner().functions)
+        .try_fold(HashMap::new(), |mut hashmap, function| {
+            match hashmap.entry(format!("{}:{}", function.name, function.version)) {
+                Entry::Occupied(existing) => match self.conflict_resolution {
+                    ConflictResolutionMethod::Error => Err(
+                        ProxyRegistryError::ConflictingFunctions(existing.key().clone()),
+                    ),
+                    ConflictResolutionMethod::UsePriority => Ok(hashmap),
+                },
+                Entry::Vacant(vacant) => {
+                    vacant.insert(function);
+                    Ok(hashmap)
+                }
+            }
+        })
+        .map_err(|e| tonic::Status::already_exists(e.to_string()))?
+        .into_iter()
+        .map(|(_, function)| {
+            (
+                // The version is only used for sorting so if something is wrong with it,
+                // jus sort it last. This error is also very unlikely since the version is parsed
+                // and validated when the function is registered
+                semver::Version::parse(&function.version).unwrap_or_else(|_| {
+                    let mut v = semver::Version::new(0, 0, 1);
+                    v.pre
+                        .push(semver::Identifier::AlphaNumeric(String::from("invalid")));
+                    v
+                }),
+                function,
+            )
+        })
+        .collect::<Vec<(semver::Version, firm_types::functions::Function)>>();
+
+        // redo sorting, offset and limit since we do not know
+        // anything about the relational ordering between different
+        // registries
+        let order = payload.order.unwrap_or_else(|| Ordering {
+            key: OrderingKey::NameVersion as i32,
+            reverse: false,
+            offset: 0,
+            limit: 100,
+        });
+        let offset: usize = order.offset as usize;
+        let limit: usize = order.limit as usize;
+
+        if OrderingKey::from_i32(order.key).is_none() {
+            warn!(
+                self.log,
+                "Ordering key was out of range ({}). Out of date protobuf definitions?", order.key
+            );
+        }
+
+        functions.sort_unstable_by(|(a_semver, a_function), (b_semver, b_function)| {
+            match OrderingKey::from_i32(order.key) {
+                Some(OrderingKey::NameVersion) | None => {
+                    match a_function.name.cmp(&b_function.name) {
+                        std::cmp::Ordering::Equal => b_semver.cmp(&a_semver),
+                        o => o,
                     }
                 }
-            })
-            .map_err(|e| tonic::Status::already_exists(e.to_string()))?
-            .into_iter()
-            .map(|(_, v)| v)
-            .collect::<Vec<firm_types::functions::Function>>(),
+            }
+        });
+
+        Ok(tonic::Response::new(Functions {
+            functions: if order.reverse {
+                functions
+                    .into_iter()
+                    .map(|(_version, function)| function)
+                    .rev()
+                    .skip(offset)
+                    .take(limit)
+                    .collect::<Vec<_>>()
+            } else {
+                functions
+                    .into_iter()
+                    .map(|(_version, function)| function)
+                    .skip(offset)
+                    .take(limit)
+                    .collect::<Vec<_>>()
+            },
         }))
     }
 
