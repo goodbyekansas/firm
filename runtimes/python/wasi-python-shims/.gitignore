@@ -1,0 +1,15 @@
+/target
+**/*.rs.bk
+
+# all libraries in here
+/Cargo.lock
+
+# generated stuff from Nedryland goes here
+/.cargo
+
+# cbindgen header
+/wasi_python_shims.h
+
+# Ignore object and test files
+*.o
+/test
