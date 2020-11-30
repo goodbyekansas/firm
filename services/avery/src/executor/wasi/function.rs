@@ -86,7 +86,7 @@ pub fn get_attachment_path_len(
     let attachment_data = attachments
         .iter()
         .find(|a| a.name == attachment_key)
-        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key))?;
+        .ok_or(WasiError::FailedToFindAttachment(attachment_key))?;
     path_len.set(
         wasi_attachment_path_from_descriptor(&attachment_data)
             .as_bytes()
@@ -109,7 +109,7 @@ pub fn map_attachment(
     let attachment_data = attachments
         .iter()
         .find(|a| a.name == attachment_key)
-        .ok_or_else(|| WasiError::FailedToFindAttachment(attachment_key))?;
+        .ok_or(WasiError::FailedToFindAttachment(attachment_key))?;
 
     download_and_map_at(
         &attachment_data,
@@ -164,7 +164,7 @@ pub fn get_input_len(key: WasmString, len: WasmItemPtr<u32>, arguments: &Stream)
 
     arguments
         .get_channel(&key)
-        .ok_or_else(|| WasiError::FailedToFindKey(key))
+        .ok_or(WasiError::FailedToFindKey(key))
         .and_then(|a| len.set(a.encoded_len() as u32))
 }
 
@@ -175,7 +175,7 @@ pub fn get_input(key: WasmString, value: &mut WasmBuffer, arguments: &Stream) ->
 
     arguments
         .get_channel(&key)
-        .ok_or_else(|| WasiError::FailedToFindKey(key))
+        .ok_or(WasiError::FailedToFindKey(key))
         .and_then(|a| {
             a.encode(&mut value.buffer_mut())
                 .map_err(WasiError::FailedToEncodeProtobuf)

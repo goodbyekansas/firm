@@ -2,7 +2,7 @@
     "nedryland": {
         "branch": "main",
         "repo": "git@github.com:goodbyekansas/nedryland",
-        "rev": "ccbce2759d20967bdff06f1081b89c460ee2a410",
+        "rev": "1188c1c2a381a44f15e309e1600c7593f8ed22e8",
         "type": "git"
     },
     "niv": {
@@ -15,6 +15,18 @@
         "sha256": "1kpsvc53x821cmjg1khvp1nz7906gczq8mp83664cr15h94sh8i4",
         "type": "tarball",
         "url": "https://github.com/nmattia/niv/archive/ba57d5a29b4e0f2085917010380ef3ddc3cf380f.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
+    },
+    "python": {
+        "branch": "wasi-3.8",
+        "description": "The Python programming language",
+        "homepage": "https://www.python.org/",
+        "owner": "goodbyekansas",
+        "repo": "cpython",
+        "rev": "c9b3693232cb7d0b0047b8a7b19de087e4856400",
+        "sha256": "0wmlw3v80hncx59qxkl7s0x56mihy8izcyl8cj29x374wd201s1d",
+        "type": "tarball",
+        "url": "https://github.com/goodbyekansas/cpython/archive/c9b3693232cb7d0b0047b8a7b19de087e4856400.tar.gz",
         "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
     }
 }

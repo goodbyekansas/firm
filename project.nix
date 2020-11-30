@@ -25,6 +25,15 @@ let
   components = rec {
     inherit protocols;
 
+    wasiPythonShims = project.declareComponent ./runtimes/python/wasi-python-shims/wasi-python-shims.nix { };
+    wasiPython = project.declareComponent ./runtimes/python/wasiPython.nix {
+      inherit wasiPythonShims;
+      pythonSource = sources.python;
+    };
+    runtimes = {
+      python = project.declareComponent ./runtimes/python/python.nix { inherit wasiPython; };
+    };
+
     avery = project.declareComponent ./services/avery/avery.nix {
       inherit tonicMiddleware;
       types = typesWithServices;
