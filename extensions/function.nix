@@ -1,19 +1,17 @@
 { base, pkgs }:
 let
   deployFunction = { package }:
-    # TODO credentials must be removed. Need to have a local auth service for that.
-    { bendini, endpoint, port, credentials, local ? false }: pkgs.stdenv.mkDerivation ({
+    { bendini, endpoint, port }: base.deployment.mkDeployment {
       name = "deploy-${package.name}";
-      inputPackage = package;
-      inherit bendini;
-      preferLocalBuild = local;
-      SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
-      builder = builtins.toFile "builder.sh" ''
-        source $stdenv/setup
-        mkdir -p $out
-        $bendini/bin/bendini --address ${endpoint} --port ${builtins.toString port} register $inputPackage/manifest.toml 2>&1 | tee $out/command-output
+      preDeploy = "";
+      postDeploy = "";
+      deployPhase = ''
+        SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ${bendini}/bin/bendini \
+        --address ${endpoint} \
+        --port ${builtins.toString port} \
+        register ${package}/manifest.toml
       '';
-    } // (if credentials != "" then { OAUTH_TOKEN = credentials; } else { }));
+    };
 
   mkFunction = attrs@{ name, package, manifest, code, deploy ? true, ... }:
     let

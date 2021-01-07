@@ -73,28 +73,31 @@ let
   };
 
   capturedBendiniPackage = components.bendini.package;
-
-  # TODO credentials must be removed. Need to have a local auth service for that.
-  setupFunctionDeployment = { components, endpoint ? "tcp://[::1]", port ? 1939, credentials ? "" }: (builtins.mapAttrs
+  setupFunctionDeployment = { components, endpoint ? "tcp://[::1]", port ? 1939, }: (builtins.mapAttrs
     (
       name:
       comp:
       if comp.isNedrylandComponent or false then
         (comp // (
-          if (builtins.hasAttr "deployment" comp) && (builtins.hasAttr "function" comp.deployment) then {
+          if (builtins.hasAttr "deployment" comp) && (builtins.hasAttr "function" comp.deployment) then rec {
             deployment = comp.deployment // {
               function = comp.deployment.function {
-                inherit endpoint port credentials;
+                inherit endpoint port;
                 bendini = capturedBendiniPackage;
-                local = endpoint == "tcp://[::1]";
               };
             };
+            # TODO: need to re-evaluate the combined "deploy" target here since we changed
+            # deployment above
+            # we could figure out a way where these shenanigans with injecting the bendini
+            # component into the deployment is not necessary (maybe callPackage pattern for
+            # components?)
+            deploy = project.mkCombinedDeployment "${comp.package.name}-deploy" deployment;
           } else { }
         )) else
         (
           if builtins.isAttrs comp then
             (
-              setupFunctionDeployment { components = comp; inherit endpoint port credentials; }
+              setupFunctionDeployment { components = comp; inherit endpoint port; }
             ) else comp
         )
     )
@@ -104,7 +107,6 @@ in
 # create the build grid (accessed with nix-build, exposed through default.nix)
 project.mkGrid {
   inherit components;
-  deploy = { };
 
   # create the project shells (accessed with nix-shell, exposed through shell.nix)
   extraShells = { };
