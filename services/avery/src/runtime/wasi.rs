@@ -20,9 +20,8 @@ use wasmer_runtime::{
 };
 use wasmer_wasi::{generate_import_object_from_state, get_wasi_version, state::WasiState};
 
-use crate::executor::{
-    AttachmentDownload, ExecutorError, ExecutorParameters, FunctionExecutor, StreamExt,
-};
+use super::{Runtime, RuntimeParameters, StreamExt};
+use crate::executor::{AttachmentDownload, RuntimeError};
 use error::{ToErrorCode, WasiError};
 use firm_types::functions::{Attachment, Stream};
 use process::StdIOConfig;
@@ -453,24 +452,24 @@ impl WasiExecutor {
     }
 }
 
-impl FunctionExecutor for WasiExecutor {
+impl Runtime for WasiExecutor {
     fn execute(
         &self,
-        executor_context: ExecutorParameters,
+        runtime_parameters: RuntimeParameters,
         arguments: Stream,
         attachments: Vec<Attachment>,
-    ) -> Result<Result<Stream, String>, ExecutorError> {
-        let code = executor_context
+    ) -> Result<Result<Stream, String>, RuntimeError> {
+        let code = runtime_parameters
             .code
-            .ok_or_else(|| ExecutorError::MissingCode("wasi".to_owned()))?;
+            .ok_or_else(|| RuntimeError::MissingCode("wasi".to_owned()))?;
         let downloaded_code = code.download()?;
 
         // TODO: separate host and guest errors
         Ok(execute_function(
             self.logger
-                .new(o!("function" => executor_context.function_name.to_owned())),
-            &executor_context.function_name,
-            &executor_context.entrypoint,
+                .new(o!("function" => runtime_parameters.function_name.to_owned())),
+            &runtime_parameters.function_name,
+            &runtime_parameters.entrypoint,
             &downloaded_code,
             arguments,
             attachments,
@@ -493,7 +492,7 @@ mod tests {
     fn test_execution() {
         let executor = WasiExecutor::new(null_logger!());
         let res = executor.execute(
-            ExecutorParameters {
+            RuntimeParameters {
                 function_name: "hello-world".to_owned(),
                 entrypoint: "could-be-anything".to_owned(),
                 code: Some(code_file!(include_bytes!("hello.wasm"))),
