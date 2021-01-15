@@ -128,8 +128,7 @@ impl Display for Displayer<'_, Function> {
                 self.metadata
                     .clone()
                     .iter()
-                    .map(|(x, y)| writeln!(f, "{}{}:{}", INDENT.repeat(2), x, y))
-                    .collect()
+                    .try_for_each(|(x, y)| writeln!(f, "{}{}:{}", INDENT.repeat(2), x, y))
             }
         } else {
             Ok(())
@@ -143,22 +142,20 @@ impl Display for Displayer<'_, HashMap<String, ChannelSpec>> {
             writeln!(f, " n/a")
         } else {
             writeln!(f)?;
-            self.iter()
-                .map(|(name, channel_spec)| {
-                    writeln!(
-                        f,
-                        "{tab}{name}:{type}{description}",
-                        tab = INDENT.repeat(2),
-                        r#type = channel_spec.r#type.display(),
-                        name = name,
-                        description = if channel_spec.description.is_empty() {
-                            String::new()
-                        } else {
-                            format!(":{}", channel_spec.description)
-                        }
-                    )
-                })
-                .collect::<fmt::Result>()
+            self.iter().try_for_each(|(name, channel_spec)| {
+                writeln!(
+                    f,
+                    "{tab}{name}:{type}{description}",
+                    tab = INDENT.repeat(2),
+                    r#type = channel_spec.r#type.display(),
+                    name = name,
+                    description = if channel_spec.description.is_empty() {
+                        String::new()
+                    } else {
+                        format!(":{}", channel_spec.description)
+                    }
+                )
+            })
         }
     }
 }

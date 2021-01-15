@@ -4,14 +4,20 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::error::{WasiError, WasiResult};
 use flate2::read::GzDecoder;
 use prost::Message;
 use tar::Archive;
 
-use super::{sandbox::Sandbox, WasmBuffer, WasmItemPtr, WasmString};
-use crate::executor::{AttachmentDownload, StreamExt};
-use firm_types::functions::{Attachment, Channel, Stream};
+use super::{
+    error::{WasiError, WasiResult},
+    sandbox::Sandbox,
+    WasmBuffer, WasmItemPtr, WasmString,
+};
+use crate::executor::AttachmentDownload;
+use firm_types::{
+    functions::{Attachment, Channel, Stream},
+    stream::StreamExt,
+};
 
 use slog::{info, Logger};
 
@@ -210,12 +216,10 @@ mod tests {
 
     use std::convert::TryFrom;
 
-    use firm_types::{attachment, stream};
+    use firm_types::{attachment, stream, stream::ToChannel};
     use tempfile::Builder;
     use wasmer_runtime::{memory::Memory, WasmPtr};
     use wasmer_runtime::{types::MemoryDescriptor, units::Pages};
-
-    use crate::executor::ToChannel;
 
     macro_rules! create_mem {
         () => {{

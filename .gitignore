@@ -5,3 +5,5 @@ result*
 .vscode
 
 nix-deps/
+
+.direnv
