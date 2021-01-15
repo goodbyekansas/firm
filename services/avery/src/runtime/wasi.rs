@@ -57,6 +57,10 @@ impl WasmBuffer {
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     /// Get a view of the underlying data in this buffer
     pub fn buffer(&self) -> &[u8] {
         if self.ptr.offset() + self.len > self.memory.size().bytes().0 as u32 {
@@ -442,17 +446,17 @@ fn execute_function(
 }
 
 #[derive(Debug)]
-pub struct WasiExecutor {
+pub struct WasiRuntime {
     logger: Logger,
 }
 
-impl WasiExecutor {
+impl WasiRuntime {
     pub fn new(logger: Logger) -> Self {
         Self { logger }
     }
 }
 
-impl Runtime for WasiExecutor {
+impl Runtime for WasiRuntime {
     fn execute(
         &self,
         runtime_parameters: RuntimeParameters,
@@ -490,7 +494,7 @@ mod tests {
 
     #[test]
     fn test_execution() {
-        let executor = WasiExecutor::new(null_logger!());
+        let executor = WasiRuntime::new(null_logger!());
         let res = executor.execute(
             RuntimeParameters {
                 function_name: "hello-world".to_owned(),

@@ -11,6 +11,7 @@ use avery::{
     executor::ExecutionService,
     proxy_registry::{ExternalRegistry, ProxyRegistry},
     registry::RegistryService,
+    runtime,
 };
 use std::path::PathBuf;
 use url::Url;
@@ -90,8 +91,9 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     let execution_service = ExecutionService::new(
-        log.new(o!("service" => "functions")),
+        log.new(o!("service" => "execution")),
         Box::new(proxy_registry.clone()),
+        vec![Box::new(runtime::InternalRuntimeSource::new(log.new(o!())))],
     );
 
     info!(

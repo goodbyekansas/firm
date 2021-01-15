@@ -11,7 +11,7 @@ use firm_types::{
     wasi::Attachments,
 };
 use prost::Message;
-use slog::Logger;
+use slog::{o, Logger};
 
 use crate::executor::RuntimeError;
 
@@ -30,6 +30,32 @@ pub trait Runtime: Debug {
         arguments: ValueStream,
         attachments: Vec<Attachment>,
     ) -> Result<Result<ValueStream, String>, RuntimeError>;
+}
+
+pub trait RuntimeSource: Send + Sync {
+    fn get(&self, name: &str) -> Option<Box<dyn Runtime>>;
+}
+
+#[derive(Debug)]
+pub struct InternalRuntimeSource {
+    logger: Logger,
+}
+
+impl InternalRuntimeSource {
+    pub fn new(logger: Logger) -> Self {
+        Self { logger }
+    }
+}
+
+impl RuntimeSource for InternalRuntimeSource {
+    fn get(&self, name: &str) -> Option<Box<dyn Runtime>> {
+        match name {
+            "wasi" => Some(Box::new(wasi::WasiRuntime::new(
+                self.logger.new(o!("runtime" => "wasi")),
+            ))),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]
