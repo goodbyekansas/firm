@@ -90,10 +90,36 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
+    let mut runtime_directories = config.runtime_directories.clone();
+    #[cfg(windows)]
+    runtime_directories.push(PathBuf::from("%PROGRAMDATA%/Avery/runtimes"));
+    #[cfg(unix)]
+    runtime_directories.push(PathBuf::from("/usr/share/avery/runtimes"));
+    let directory_sources = runtime_directories
+        .into_iter()
+        .filter_map(|d| {
+            if d.exists() {
+                Some(
+                    runtime::filesystem_source::FileSystemSource::new(
+                        &d,
+                        log.new(o!("source" => "fs")),
+                    )
+                    .map(|fss| Box::new(fss) as Box<dyn runtime::RuntimeSource>),
+                )
+            } else {
+                None
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut runtime_sources: Vec<Box<dyn runtime::RuntimeSource>> = vec![Box::new(
+        runtime::InternalRuntimeSource::new(log.new(o!("source" => "internal"))),
+    )];
+    runtime_sources.extend(directory_sources.into_iter());
     let execution_service = ExecutionService::new(
         log.new(o!("service" => "execution")),
         Box::new(proxy_registry.clone()),
-        vec![Box::new(runtime::InternalRuntimeSource::new(log.new(o!())))],
+        runtime_sources,
     );
 
     info!(
