@@ -137,7 +137,7 @@ impl ExecutionServiceTrait for ExecutionService {
                 let res = executor.execute(
                     RuntimeParameters {
                         function_name: function_name.clone(),
-                        entrypoint: runtime.entrypoint,
+                        entrypoint: Some(runtime.entrypoint),
                         code: function.code.clone(),
                         arguments: runtime.arguments,
                     },

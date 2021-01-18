@@ -191,12 +191,12 @@ impl Write for WasmBuffer {
 fn execute_function(
     logger: Logger,
     function_name: &str,
-    _entrypoint: &str,
+    entrypoint: Option<String>,
     code: &[u8],
     arguments: Stream,
     attachments: Vec<Attachment>,
 ) -> Result<Stream, String> {
-    const ENTRY: &str = "_start";
+    let entrypoint = entrypoint.unwrap_or_else(|| String::from("_start"));
     let module = compile(code).map_err(|e| format!("failed to compile wasm: {}", e))?;
 
     let wasi_version = get_wasi_version(&module, true).unwrap_or(wasmer_wasi::WasiVersion::Latest);
@@ -432,12 +432,12 @@ fn execute_function(
 
     let entry_function: Func<(), ()> = instance
         .exports
-        .get(ENTRY)
-        .map_err(|e| format!("Failed to resolve entrypoint {}: {}", ENTRY, e))?;
+        .get(&entrypoint)
+        .map_err(|e| format!("Failed to resolve entrypoint {}: {}", &entrypoint, e))?;
 
     entry_function
         .call()
-        .map_err(|e| format!("Failed to call entrypoint function {}: {}", ENTRY, e))?;
+        .map_err(|e| format!("Failed to call entrypoint function {}: {}", &entrypoint, e))?;
 
     results
         .read()
@@ -473,7 +473,7 @@ impl Runtime for WasiRuntime {
             self.logger
                 .new(o!("function" => runtime_parameters.function_name.to_owned())),
             &runtime_parameters.function_name,
-            &runtime_parameters.entrypoint,
+            runtime_parameters.entrypoint,
             &downloaded_code,
             arguments,
             attachments,
@@ -498,7 +498,7 @@ mod tests {
         let res = executor.execute(
             RuntimeParameters {
                 function_name: "hello-world".to_owned(),
-                entrypoint: "could-be-anything".to_owned(),
+                entrypoint: None, // use default entrypoint _start
                 code: Some(code_file!(include_bytes!("hello.wasm"))),
                 arguments: std::collections::HashMap::new(),
             },

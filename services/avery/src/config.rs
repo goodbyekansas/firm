@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use config::{ConfigError, Environment, File, FileFormat};
 use serde::Deserialize;
@@ -20,6 +20,9 @@ pub struct Config {
 
     #[serde(default)]
     pub internal_registry: InternalRegistryConfig,
+
+    #[serde(default)]
+    pub runtime_directories: Vec<PathBuf>,
 }
 
 fn default_version_suffix() -> String {
