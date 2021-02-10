@@ -70,13 +70,13 @@ fi
 echo "
 [\"$runtime\"]
 sha256=\"$(sha256sum $runtime_dir/$runtime | cut -d ' ' -f 1)\"
-executable_sha256=\"$(sha256sum $executable | cut -d ' ' -f 1)\"" > "$runtime_dir/.checksums.toml"
+executable_sha256=\"$(sha256sum $executable | cut -d ' ' -f 1)\"" >"$runtime_dir/.checksums.toml"
 
 # checksum file for the avery filesystem source
 echo "
 runtime_directories=[\"$runtime_dir\"]
 [internal_registry]
-version_suffix=\"\"" > "$avery_dir/avery.toml"
+version_suffix=\"\"" >"$avery_dir/avery.toml"
 
 avery --config "$avery_dir/avery.toml" &
 trap_command+="; kill -s SIGTERM %1 && wait %1"
@@ -84,4 +84,5 @@ trap_command+="; kill -s SIGTERM %1 && wait %1"
 echo "🏒 Running example ${example} at ${!example}"
 ${!example}/bin/deploy
 
-command bendini run "$example:*" -f "$@"
+namevar="${example}_name"
+command bendini run "${!namevar}:*" --follow "$@"

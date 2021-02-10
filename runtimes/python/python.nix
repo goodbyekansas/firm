@@ -2,15 +2,23 @@
 let
   examples = {
     hello = declareComponent ./examples/hello/hello.nix { };
+    firmApi = declareComponent ./examples/firm-api/firm-api.nix { };
+    firmApiError = declareComponent ./examples/firm-api/firm-api-error.nix { };
   };
 
-  env = (builtins.mapAttrs (n: v: (v.deployment.function { bendini = bendini.package; })) examples);
+  env = (builtins.mapAttrs
+    (n: v: {
+      function = (v.deployment.function { bendini = bendini.package; });
+      name = v.package.name;
+    })
+    examples);
   envVars = pkgs.writeTextFile {
     name = "runtime-runner-env";
     text = builtins.foldl'
       (acc: curr: ''
         ${acc}
-        declare -x ${curr}="${builtins.replaceStrings [ "$" "\"" ] [ "\\$" "\\\"" ] (builtins.toString (builtins.getAttr curr env))}"
+        declare -x ${curr}="${builtins.replaceStrings [ "$" "\"" ] [ "\\$" "\\\"" ] (builtins.toString (builtins.getAttr curr env).function)}"
+        declare -x ${curr}_name="${(builtins.getAttr curr env).name}"
       '')
       ""
       (builtins.attrNames env);
@@ -56,6 +64,25 @@ base.mkComponent {
 
     buildInputs = [ firmRust.package firmTypes.package wasiPythonShims.package ];
     shellInputs = [ pkgs.coreutils bendini.package avery.package pkgs.wabt ];
+    shellHook = ''
+      runApiExample()
+      {
+        echo "Running firmApi example"
+        command cargo run firmApi \
+        -i str_input="hej" \
+        -i int_input=5 \
+        -i float_input=3.15 \
+        -i bool_input=false \
+        -i bytes_input=32 \
+        -i str_list_input="[heffaklump 🐙]" \
+        -i int_list_input="[1 -14 4444]" \
+        -i bool_list_input="[true false true false]" \
+        -i float_list_input="[0.1 0.2 123123123.2]" | sed "s/^/  [firmApi] /"
+
+        echo "Running firmApiError example"
+        command cargo run firmApiError | sed "s/^/  [firmApiError] /"
+      }
+    '';
     RUSTFLAGS = "-Ctarget-feature=-crt-static -Clinker-flavor=gcc -Clink-args=-lwasi-emulated-signal";
     CARGO_TARGET_WASM32_WASI_RUNNER = runner {
       name = "python";

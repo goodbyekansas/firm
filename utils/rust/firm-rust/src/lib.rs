@@ -305,7 +305,7 @@ where
     }
 }
 
-fn get_channel<S>(key: S) -> Result<Channel, Error>
+fn _get_channel<S>(key: S) -> Result<Channel, Error>
 where
     S: AsRef<str>,
 {
@@ -329,13 +329,21 @@ where
     Channel::decode(value_buffer.as_slice()).map_err(|e| e.into())
 }
 
+#[cfg(feature = "runtime")]
+pub fn get_channel<S>(key: S) -> Result<Channel, Error>
+where
+    S: AsRef<str>,
+{
+    _get_channel(key)
+}
+
 /// get an input for the function designated by `key`
 pub fn get_input<S, T>(key: S) -> InputValue<T>
 where
     S: AsRef<str>,
     T: TryFromChannel,
 {
-    match get_channel(key.as_ref()) {
+    match _get_channel(key.as_ref()) {
         Ok(channel) => InputValue {
             error: None,
             channel: Some(channel),
