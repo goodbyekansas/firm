@@ -30,7 +30,7 @@ pkgs.stdenv.mkDerivation {
   # we need the fixupPhase to exist even though
   # we do not define one but otherwise the `setupHook`
   # below does not get written out (it happens during stdenv's
-  # fixupPhase
+  # fixupPhase)
   phases = [ "installPhase" "fixupPhase" ];
 
   installPhase = ''

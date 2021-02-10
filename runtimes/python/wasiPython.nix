@@ -5,8 +5,9 @@ base.mkComponent {
     name = "wasi-python38";
     src = pythonSource;
     buildInputs = [ wasiPythonShims.package ];
-    nativeBuildInputs = [ pkgs.wasmtime pkgs.autoreconfHook pkgs.pkg-config pkgs.python38 ];
-    shellInputs = [ pkgs.bear pkgs.lldb_11 pkgs.gdb ]; # gdb is needed for JIT debugging, I think?
+    nativeBuildInputs = [ pkgs.autoreconfHook pkgs.pkg-config pkgs.python38 ];
+    # gdb is needed for JIT debugging with lldb. I know, it's a weird relationship they have together.
+    shellInputs = [ pkgs.bear pkgs.lldb_11 pkgs.gdb pkgs.wasmtime ];
     configureFlags = [
       "--disable-ipv6"
       "--with-suffix=.wasm"
@@ -38,7 +39,11 @@ base.mkComponent {
       # We run bear make to create files useful by LSP
       bearMake() {
         command make clean
-        command bear make "$@"
+        bear bash -c build
+      }
+
+      pythonTests() {
+        command wasmtime run python.wasm --dir . -- -m test
       }
 
       configure() {
@@ -49,20 +54,32 @@ base.mkComponent {
         buildPhase
       }
 
-      debug() {
-        debugger=''${1:-lldb}
+      rebuild() {
+        make clean
+        build
+      }
+
+      debug_program() {
+        application="$1"
+        debugger=''${2:-lldb}
+        shift 2
+
         if [ $debugger ==  "lldb" ]; then
           command lldb \
             -O 'settings set plugin.jit-loader.gdb.enable on' \
             -O "command regex pp 's/(.+)/p __vmctx->set(),%1/'" \
             -- wasmtime  run \
-              -g --opt-level 0 --dir=. python.wasm
+              -g --opt-level 0 --dir=. "$application" -- "$@"
         elif [ $debugger == "gdb" ]; then
-          command gdb -x ${./wasiprint.gdb} -ex "set breakpoint pending on" --args wasmtime run -g --opt-level 0 --dir=. python.wasm
+          command gdb -x ${./wasiprint.gdb} -ex "set breakpoint pending on" --args wasmtime run -g --opt-level 0 --dir=. "$application" -- "$@"
         else
           echo "Unsupported debugger 🧂🦨"
           return 1
         fi
+      }
+
+      debug() {
+        debug_program "python.wasm" "$@"
       }
 
       run() {

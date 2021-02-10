@@ -1,14 +1,16 @@
-use std::env;
+use std::{env, path::PathBuf};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let crate_dir = env::var("CARGO_MANIFEST_DIR")?;
+    if env::var("WASI_PYTHON_SHIMS_SKIP_C_BINDGEN").is_ok() {
+        return Ok(());
+    }
 
     println!("cargo:rerun-if-changed=cbindgen.toml");
-    println!("cargo:rerun-if-changed=wasi_python_shims.h");
+    println!("cargo:rerun-if-changed=src");
 
-    cbindgen::generate(crate_dir)
+    cbindgen::generate(PathBuf::from(env::var("CARGO_MANIFEST_DIR")?))
         .expect("Unable to generate C header")
-        .write_to_file("wasi_python_shims.h");
+        .write_to_file(PathBuf::from(env::var("OUT_DIR")?).join("wasi_python_shims.h"));
 
     Ok(())
 }

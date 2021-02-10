@@ -6,7 +6,10 @@ mod output;
 mod process;
 mod sandbox;
 
-use std::{fs::OpenOptions, io::LineWriter, path::Path, sync::Arc, sync::Mutex};
+use std::{
+    collections::HashMap, fs::OpenOptions, io::LineWriter, path::Path, path::PathBuf, sync::Arc,
+    sync::Mutex,
+};
 
 use output::{NamedFunctionOutputSink, Output};
 use slog::{info, o, Logger};
@@ -21,14 +24,27 @@ use error::WasiError;
 use firm_types::functions::{Attachment, Stream};
 use sandbox::Sandbox;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WasiRuntime {
     logger: Logger,
+    host_dirs: HashMap<String, PathBuf>,
 }
 
 impl WasiRuntime {
     pub fn new(logger: Logger) -> Self {
-        Self { logger }
+        Self {
+            logger,
+            host_dirs: HashMap::new(),
+        }
+    }
+
+    pub fn with_host_dir<P>(mut self, wasi_name: &str, host_path: P) -> Self
+    where
+        P: AsRef<Path>,
+    {
+        self.host_dirs
+            .insert(wasi_name.to_owned(), host_path.as_ref().to_owned());
+        self
     }
 }
 
@@ -140,6 +156,19 @@ impl Runtime for WasiRuntime {
                         .write(false)
                         .create(false)
                 })
+            })
+            .and_then(|state| {
+                self.host_dirs
+                    .iter()
+                    .try_fold(state, |current_state, (alias, host_path)| {
+                        current_state.preopen(|p| {
+                            p.directory(host_path)
+                                .alias(alias)
+                                .read(true)
+                                .write(false)
+                                .create(false)
+                        })
+                    })
             })
             .and_then(|state| state.finalize())
             .map_err(|e| format!("Failed to create wasi state: {:?}", e))?;

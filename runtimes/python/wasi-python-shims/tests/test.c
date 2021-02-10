@@ -4,11 +4,11 @@
 #include <stdio.h>
 #include <string.h>
 
-#define run_test(fn) \
-        printf("\n🧜 running \033[1;36m" #fn "\033[0m... "); \
-        fflush(stdout); \
-        fn(); \
-        printf("\033[32mok!\033[0m\n");
+#define run_test(fn)                                                           \
+  printf("\n🧜 running \033[1;36m" #fn "\033[0m... ");                       \
+  fflush(stdout);                                                              \
+  fn();                                                                        \
+  printf("\033[32mok!\033[0m\n");
 
 void free_pw(passwd *pw) {
   free(pw->pw_name);
@@ -93,6 +93,50 @@ void test_getgid() { assert(1 == getgid()); }
 
 void test_getuid() { assert(1 == getuid()); }
 
+void test_init_thread() { wt_init_thread(); }
+
+void thread_main() {}
+
+void test_start_new_thread() {
+  assert(0 == wt_start_new_thread(thread_main, NULL));
+}
+
+void test_get_thread_ident() { assert(1 == wt_get_thread_ident()); }
+
+void test_exit_thread() { wt_exit_thread(); }
+
+void test_allocate_lock() {
+  WasiThreadLock *tl = wt_allocate_lock();
+  assert(tl != NULL);
+  assert(!tl->locked);
+}
+
+void test_free_lock() {
+  WasiThreadLock *tl = wt_allocate_lock();
+  wt_free_lock(tl);
+}
+
+void test_lock_lock() {
+  WasiThreadLock *tl = wt_allocate_lock();
+  assert(wt_acquire_lock(tl));
+  assert(tl->locked);
+  assert(!wt_acquire_lock(tl));
+  wt_release_lock(tl);
+  assert(!tl->locked);
+  assert(wt_acquire_lock(tl));
+  wt_release_lock(tl);
+  wt_free_lock(tl);
+}
+
+void test_thread_local_storage() {
+  uint64_t key = 14;
+  uint32_t value = 17;
+  assert(wt_tss_create(key));
+  assert(wt_tss_set(key, &value));
+  assert(*(uint32_t *)wt_tss_get(key) == 17);
+  assert(wt_tss_delete(key));
+  assert(wt_tss_get(key) == NULL);
+}
 
 int main() {
   run_test(test_chmod);
@@ -107,8 +151,13 @@ int main() {
   run_test(test_geteuid);
   run_test(test_getgid);
   run_test(test_getuid);
+  run_test(test_start_new_thread);
+  run_test(test_get_thread_ident);
+  run_test(test_exit_thread);
+  run_test(test_free_lock);
+  run_test(test_lock_lock);
+  run_test(test_thread_local_storage);
 
   printf("\n💂 \033[1;32mall tests succeeded!\033[0m\n");
   return 0;
 }
-

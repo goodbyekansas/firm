@@ -249,6 +249,7 @@ pub fn run_host_process<S1: AsRef<str>, S2: AsRef<str>>(
     .map(|_| exit_code)
 }
 
+#[derive(Debug)]
 pub struct InputValue<T>
 where
     T: TryFromChannel,
@@ -352,6 +353,8 @@ pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
     ))
 }
 
+// TODO: None of this should exist, this is
+// a misdesign
 pub mod executor {
     use std::path::PathBuf;
 
@@ -363,7 +366,9 @@ pub mod executor {
     };
     use prost::Message;
 
-    use crate::{get_input, map_attachment_from_descriptor, Error};
+    use crate::{
+        get_input, map_attachment_from_descriptor, map_attachment_from_descriptor_and_unpack, Error,
+    };
 
     pub struct ChannelValue<'a, T>
     where
@@ -395,11 +400,16 @@ pub mod executor {
 
     pub trait AttachmentDownload {
         fn download(&self) -> Result<PathBuf, Error>;
+        fn download_unpacked(&self) -> Result<PathBuf, Error>;
     }
 
     impl AttachmentDownload for Attachment {
         fn download(&self) -> Result<PathBuf, Error> {
             map_attachment_from_descriptor(self)
+        }
+
+        fn download_unpacked(&self) -> Result<PathBuf, Error> {
+            map_attachment_from_descriptor_and_unpack(self)
         }
     }
 
@@ -409,7 +419,7 @@ pub mod executor {
     pub struct ExecutorArgs {
         code: Attachment,
         sha256: String,
-        entrypoint: String,
+        entrypoint: Option<String>,
         stream: Stream,
         attachments: Vec<Attachment>,
     }
@@ -423,6 +433,10 @@ pub mod executor {
                 })?,
                 sha256: get_input("_sha256").into()?,
                 entrypoint: get_input("_entrypoint").into()?,
+
+                // TODO: arguments should for sure not live here
+                // since we copy everything, and in the future it will be
+                // async as well
                 stream: get_input("_arguments")
                     .into()
                     .and_then(|a: Vec<u8>| Stream::decode(a.as_slice()).map_err(|e| e.into()))?,
@@ -445,8 +459,8 @@ pub mod executor {
         }
 
         /// Get the entrypoint that the execution environment is expected to use
-        pub fn entrypoint(&self) -> &str {
-            &self.entrypoint
+        pub fn entrypoint(&self) -> Option<&str> {
+            self.entrypoint.as_deref()
         }
 
         /// Get an argument designated by `key` for the
@@ -892,7 +906,7 @@ mod tests {
             eargs.sha256(),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
-        assert_eq!(eargs.entrypoint(), "windows.exe");
+        assert_eq!(eargs.entrypoint().unwrap(), "windows.exe");
 
         assert_eq!(false, eargs.get_channel_value("sune").into().unwrap());
         assert_eq!(
