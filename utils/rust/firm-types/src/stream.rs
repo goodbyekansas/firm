@@ -177,6 +177,15 @@ impl<T: ToChannel> ToChannel for Option<T> {
     }
 }
 
+impl<T: TryFromChannel> TryFromChannel for Option<T> {
+    fn try_from(channel: &Channel) -> Result<Self, ChannelConversionError> {
+        match channel.value {
+            Some(_) => T::try_from(&channel).map(Some),
+            None => Ok(None),
+        }
+    }
+}
+
 // bytes
 as_ref_try_from_impl!(u8, ValueType::Bytes, "byte");
 

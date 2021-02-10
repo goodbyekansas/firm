@@ -1,7 +1,7 @@
 { base, pkgs }:
 let
   deployFunction = { package }:
-    { bendini, endpoint, port }: base.deployment.mkDeployment {
+    { bendini, endpoint ? "tcp://[::1]", port ? 1939 }: base.deployment.mkDeployment {
       name = "deploy-${package.name}";
       preDeploy = "";
       postDeploy = "";
@@ -25,6 +25,8 @@ let
       };
 
       packageWithManifest = package.overrideAttrs (oldAttrs: {
+        # make sure we have the manifest generation phase (last)
+        phases = oldAttrs.phases or [ ] ++ [ "generateManifestPhase" ];
         nativeBuildInputs = oldAttrs.nativeBuildInputs or [ ] ++ [ manifestGenerator ];
       });
     in
@@ -62,9 +64,16 @@ base.extend.mkExtension {
         , testFeatures ? [ ]
         , packageAttrs ? { }
         , componentAttrs ? { }
+        , fullCrossCompile ? false
         }:
         let
-          package = base.languages.rust.mkPackage (packageAttrs // {
+          mkPackage = (
+            if fullCrossCompile then
+              base.languages.rust.mkPackage.override { stdenv = pkgs.pkgsCross.wasi32.clang11Stdenv; }
+            else
+              base.languages.rust.mkPackage
+          );
+          package = mkPackage (packageAttrs // {
             inherit src name useNightly extraChecks buildFeatures testFeatures;
             targets = targets ++ [ "wasm32-wasi" ];
             defaultTarget = "wasm32-wasi";
@@ -86,6 +95,36 @@ base.extend.mkExtension {
           code = "bin/${newPackage.name}.wasm";
         });
     };
-    python = { };
+    python = {
+      mkFunction =
+        { name
+        , src
+        , version
+        , packageAttrs ? { }
+        , componentAttrs ? { }
+        , entrypoint ? "main:main"
+        }:
+        let
+          package = pkgs.stdenv.mkDerivation {
+            inherit name version;
+
+            src = if pkgs.lib.isStorePath src then src else (builtins.path { path = src; inherit name; });
+
+            phases = [ "unpackPhase" "installPhase" ];
+            nativeBuildInputs = [ pkgs.python38.pkgs.setuptools ];
+
+            installPhase = ''
+              mkdir $out
+              ${pkgs.python38}/bin/python setup.py sdist --dist-dir dist --formats=gztar
+              cp dist/*.tar.gz $out/code.tar.gz
+            '';
+          };
+          manifest = {
+            inherit name version;
+            runtime = { type = "python"; inherit entrypoint; };
+          };
+        in
+        mkFunction (componentAttrs // { inherit name package manifest version; code = "code.tar.gz"; });
+    };
   };
 }

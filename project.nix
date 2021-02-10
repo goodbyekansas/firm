@@ -30,8 +30,13 @@ let
       inherit wasiPythonShims;
       pythonSource = sources.python;
     };
+
     runtimes = {
-      python = project.declareComponent ./runtimes/python/python.nix { inherit wasiPython; };
+      python = project.declareComponent ./runtimes/python/python.nix {
+        inherit wasiPython firmRust avery bendini wasiPythonShims;
+        declareComponent = project.declareComponent;
+        firmTypes = firmTypes.rust;
+      };
     };
 
     avery = project.declareComponent ./services/avery/avery.nix {

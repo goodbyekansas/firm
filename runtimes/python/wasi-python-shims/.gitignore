@@ -13,3 +13,6 @@
 # Ignore object and test files
 *.o
 /test
+
+/compile_commands.json
+/.cache

@@ -93,11 +93,15 @@ github_post_build_hook() {
     esac
 
     echo "Posting build result ($conclusion) for $package_name"
+
     # log output can contain any random chars and needs to be escaped
     # here, we generate a jq expression to use later, hence the `\$log_output`
     log_output="\`\`\`
 $log_output
 \`\`\`"
+
+    # save to file since it can be big
+    echo "$log_output" > log.txt
 
     payload="{
       \"status\": \"completed\",
@@ -110,7 +114,7 @@ $log_output
     }"
 
     if [[ ! -z $GITHUB_TOKEN ]]; then
-      jq --null-input --arg log_output "$log_output" --compact-output "$payload" | curl -s -X PATCH \
+      jq --null-input --rawfile log_output log.txt --compact-output "$payload" | curl -s -X PATCH \
         https://api.github.com/repos/$repo/check-runs/$check_id \
         -H "Accept: application/vnd.github.antiope-preview+json" \
         -H 'Content-Type: text/json; charset=utf-8' \

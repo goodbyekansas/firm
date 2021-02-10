@@ -13,12 +13,27 @@ use avery::{
     registry::RegistryService,
     runtime,
 };
+use futures::future::FutureExt;
 use std::path::PathBuf;
+use tokio::signal::unix::{signal, SignalKind};
 use url::Url;
 
-// clean exit on crtl c
-async fn ctrlc() {
+async fn ctrl_c() {
     let _ = tokio::signal::ctrl_c().await;
+}
+
+async fn sig_term() {
+    match signal(SignalKind::terminate()) {
+        Ok(mut stream) => stream.recv().await,
+        Err(_) => futures::future::pending::<Option<()>>().await,
+    };
+}
+
+async fn shutdown_signal(log: Logger) {
+    futures::select! {
+        () = ctrl_c().fuse() => { info!(log, "Recieved Ctrl-C"); },
+        () = sig_term().fuse() => { info!(log, "Recieved SIGTERM"); }
+    }
 }
 
 #[derive(StructOpt, Debug)]
@@ -130,7 +145,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
     Server::builder()
         .add_service(ExecutionServer::new(execution_service))
         .add_service(RegistryServer::new(proxy_registry))
-        .serve_with_shutdown(addr, ctrlc())
+        .serve_with_shutdown(addr, shutdown_signal(log.new(o!("scope" => "shutdown"))))
         .await?;
 
     info!(log, "👋 see you soon - no one leaves the Firm");

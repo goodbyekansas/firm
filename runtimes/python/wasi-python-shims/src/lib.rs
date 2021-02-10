@@ -1,3 +1,5 @@
+pub mod thread;
+
 use std::{
     ffi::CString,
     os::raw::{c_char, c_int},
@@ -18,11 +20,8 @@ type gid_t = u32;
 type size_t = u32;
 
 /// Change permissions on `pathname` to `mode`
-///
-/// # Safety
-/// This is safe except for the debug print
 #[no_mangle]
-pub unsafe extern "C" fn chmod(_pathname: *const c_char, _mode: mode_t) -> c_int {
+pub extern "C" fn chmod(_pathname: *const c_char, _mode: mode_t) -> c_int {
     -1
 }
 

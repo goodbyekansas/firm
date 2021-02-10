@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
-    ffi::OsString,
+    error::Error,
+    fs::File,
     path::{Path, PathBuf},
 };
 
@@ -13,16 +14,19 @@ use firm_types::{
     stream::{StreamExt, ToChannel},
     wasi::Attachments,
 };
+use flate2::read::GzDecoder;
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use slog::{info, o, Logger};
+use slog::{debug, info, o, warn, Logger};
+use tar::Archive;
 use thiserror::Error;
 
 use super::{wasi, Runtime, RuntimeError, RuntimeParameters, RuntimeSource};
 
-type RuntimeWrapper = Box<dyn Fn() -> Box<dyn Runtime> + Send + Sync>;
+type RuntimeWrapper = Box<dyn Fn(&Path) -> Option<Box<dyn Runtime>> + Send + Sync>;
 pub struct FileSystemSource {
-    runtimes: HashMap<OsString, RuntimeWrapper>,
+    runtimes: HashMap<String, RuntimeWrapper>,
+    cache_dir: tempfile::TempDir,
 }
 
 #[derive(Debug)]
@@ -44,16 +48,24 @@ impl NestedWasiRuntime {
             logger,
         }
     }
+
+    fn with_filesystem<P>(mut self, host_path: P) -> Self
+    where
+        P: AsRef<Path>,
+    {
+        self.wasi_runtime = self.wasi_runtime.with_host_dir("runtime-fs", host_path);
+        self
+    }
 }
 
 impl Runtime for NestedWasiRuntime {
     fn execute(
         &self,
         runtime_parameters: RuntimeParameters,
-        arguments: ValueStream,
-        attachments: Vec<Attachment>,
+        function_arguments: ValueStream,
+        function_attachments: Vec<Attachment>,
     ) -> Result<Result<ValueStream, String>, RuntimeError> {
-        let mut executor_function_arguments = ValueStream {
+        let mut runtime_arguments = ValueStream {
             channels: runtime_parameters
                 .arguments
                 .into_iter()
@@ -74,24 +86,25 @@ impl Runtime for NestedWasiRuntime {
             let mut code_buf = Vec::with_capacity(code.encoded_len());
             code.encode(&mut code_buf)?;
 
-            executor_function_arguments.set_channel("_code", code_buf.to_channel());
+            runtime_arguments.set_channel("_code", code_buf.to_channel());
 
             let checksums = code.checksums.ok_or(RuntimeError::MissingChecksums)?;
-            executor_function_arguments.set_channel("_sha256", checksums.sha256.to_channel());
+            runtime_arguments.set_channel("_sha256", checksums.sha256.to_channel());
         }
 
-        executor_function_arguments
-            .set_channel("_entrypoint", runtime_parameters.entrypoint.to_channel());
+        runtime_arguments.set_channel("_entrypoint", runtime_parameters.entrypoint.to_channel());
 
         // nest arguments and attachments
-        let mut arguments_buf: Vec<u8> = Vec::with_capacity(arguments.encoded_len());
-        arguments.encode(&mut arguments_buf)?;
-        executor_function_arguments.set_channel("_arguments", arguments_buf.to_channel());
+        let mut arguments_buf: Vec<u8> = Vec::with_capacity(function_arguments.encoded_len());
+        function_arguments.encode(&mut arguments_buf)?;
+        runtime_arguments.set_channel("_arguments", arguments_buf.to_channel());
 
-        let proto_attachments = Attachments { attachments };
+        let proto_attachments = Attachments {
+            attachments: function_attachments,
+        };
         let mut attachments_buf: Vec<u8> = Vec::with_capacity(proto_attachments.encoded_len());
         proto_attachments.encode(&mut attachments_buf)?;
-        executor_function_arguments.set_channel("_attachments", attachments_buf.to_channel());
+        runtime_arguments.set_channel("_attachments", attachments_buf.to_channel());
 
         self.wasi_runtime.execute(
             RuntimeParameters {
@@ -120,7 +133,7 @@ impl Runtime for NestedWasiRuntime {
                 }),
                 arguments: HashMap::new(), // files on disk can not have arguments
             },
-            executor_function_arguments,
+            runtime_arguments,
             vec![], // files on disk can not have attachments
         )
     }
@@ -141,19 +154,102 @@ pub enum FileSystemSourceError {
 #[derive(Deserialize, Serialize)]
 struct TOMLChecksums {
     pub sha256: String,
+
+    #[serde(default)]
+    pub executable_sha256: Option<String>,
 }
 
 impl From<&TOMLChecksums> for Checksums {
     fn from(toml_checksums: &TOMLChecksums) -> Self {
         Self {
-            sha256: toml_checksums.sha256.to_owned(),
+            sha256: toml_checksums
+                .executable_sha256
+                .as_deref()
+                .unwrap_or_else(|| toml_checksums.sha256.as_str())
+                .to_owned(),
         }
     }
+}
+
+fn create_nested_wasi_runtime(
+    name: &str,
+    ext: &str,
+    path: PathBuf,
+    directory_checksums: &HashMap<String, TOMLChecksums>,
+    logger: &Logger,
+) -> (String, RuntimeWrapper) {
+    let checksums = directory_checksums
+        .get(&format!("{}.{}", name, ext))
+        .map(|c| c.into());
+
+    let log = logger.new(o!(
+        "runtime" => name.to_owned(),
+        "parent runtime" => "wasi"
+    ));
+
+    let name = name.to_owned();
+    (
+        name.clone(),
+        if ext == "wasm" {
+            Box::new(move |_cache_dir: &Path| -> Option<Box<dyn Runtime>> {
+                Some(Box::new(NestedWasiRuntime::new(
+                    &name,
+                    &path,
+                    checksums.clone(),
+                    log.clone(),
+                )))
+            }) as RuntimeWrapper
+        } else {
+            Box::new(move |cache_dir: &Path| -> Option<Box<dyn Runtime>> {
+                // unpack tar.gz to a cached location
+                let destination = cache_dir.join(format!(
+                    "{}-{}",
+                    &name,
+                    checksums
+                        .as_ref()
+                        .map(|cs| &cs.sha256[..16])
+                        .unwrap_or("unknown")
+                ));
+
+                if !destination.exists() {
+                    if let Err(e) = File::open(&path).and_then(|archive_file| {
+                        Archive::new(GzDecoder::new(archive_file)).unpack(&destination)
+                    }) {
+                        warn!(
+                            log,
+                            "failed to unpack runtime archive at \"{}\": {}, caused by: {}",
+                            path.display(),
+                            e,
+                            e.source()
+                                .map(|err| err.to_string())
+                                .unwrap_or_else(|| String::from("unknown"))
+                        );
+                        return None;
+                    }
+                }
+
+                let mut nested_runtime = NestedWasiRuntime::new(
+                    &name,
+                    &destination.join(format!("{}.wasm", &name)),
+                    checksums.clone(),
+                    log.clone(),
+                );
+
+                // instruct nestedwasiruntime to map "fs"
+                if destination.join("fs").exists() {
+                    nested_runtime = nested_runtime.with_filesystem(destination.join("fs"));
+                }
+
+                Some(Box::new(nested_runtime))
+            }) as RuntimeWrapper
+        },
+    )
 }
 
 impl FileSystemSource {
     pub fn new(root: &Path, logger: Logger) -> Result<Self, FileSystemSourceError> {
         info!(logger, "Scanning runtimes in directory {}", root.display());
+        let fs_source_logger = logger.new(o!("runtime-dir" => root.display().to_string()));
         let checksum_file = root.join(".checksums.toml");
 
         if !checksum_file.exists() {
@@ -180,50 +276,51 @@ impl FileSystemSource {
                         })
                         .and_then(|direntry| {
                             let p = direntry.path();
-                            p.file_stem().and_then(|filename| {
-                                p.extension().and_then(
-                                    |ext|
-                                    match ext.to_string_lossy().as_ref() {
-                                        "wasm" => {
-                                            let checksums = directory_checksums.get(
-                                                &format!("{}.{}",filename.to_string_lossy(), ext.to_string_lossy())
-                                            ).map(|c| c.into());
+                            p.file_name().and_then(|filename| {
+                                let filename = filename.to_string_lossy();
+                                let filename = filename.as_ref();
+                                let (stem, extension) = {
+                                    let mut parts = filename.splitn(2, '.');
+                                    (parts.next().unwrap_or("no-filename"), parts.next())
+                                };
 
-                                            let log = logger.new(o!(
-                                                "runtime" => filename.to_string_lossy().into_owned(),
-                                                "parent runtime" => "wasi"
-                                            ));
-
-                                            let name = filename.to_string_lossy().into_owned();
-                                            let p = p.clone();
-
-                                            Some((
-                                                filename.to_owned(),
-                                                Box::new(move || -> Box<dyn Runtime> {
-                                                    Box::new(NestedWasiRuntime::new(&name, &p, checksums.clone(), log.clone()))
-                                                }) as RuntimeWrapper
-                                            ))
-                                        },
-                                        _ => None,
-                                    },
-                                )
+                                extension.and_then(|ext| match ext {
+                                    e @ "tar.gz" | e @ "wasm" => {
+                                        debug!(
+                                            fs_source_logger,
+                                            "found runtime {} from file {}", stem, filename
+                                        );
+                                        Some(create_nested_wasi_runtime(
+                                            stem,
+                                            e,
+                                            p.clone(),
+                                            &directory_checksums,
+                                            &logger,
+                                        ))
+                                    }
+                                    _ => None,
+                                })
                             })
                         })
                 })
-                .collect::<HashMap<OsString, RuntimeWrapper>>(),
+                .collect::<HashMap<String, RuntimeWrapper>>(),
+            cache_dir: tempfile::TempDir::new()?,
         })
     }
 }
 
 impl RuntimeSource for FileSystemSource {
     fn get(&self, name: &str) -> Option<Box<dyn Runtime>> {
-        self.runtimes.get(&OsString::from(name)).map(|rtfm| rtfm())
+        self.runtimes
+            .get(name)
+            .and_then(|rtfm| rtfm(self.cache_dir.path()))
     }
 }
 
 #[cfg(test)]
 mod tests {
 
+    use flate2::{write::GzEncoder, Compression};
     use sha2::Digest;
     use tempfile::TempDir;
 
@@ -238,17 +335,39 @@ mod tests {
     macro_rules! with_runtime_dir {
         ($fss:ident, $body:block) => {{
             let td = TempDir::new().unwrap();
+            let td_fs = TempDir::new().unwrap();
+            std::fs::create_dir_all(td_fs.path().join("fönster/puts")).unwrap();
+            std::fs::create_dir_all(td_fs.path().join("fönster/hasp")).unwrap();
             let hello_bytes = include_bytes!("hello.wasm");
 
             std::fs::write(&td.path().join("bad.wasm"), hello_bytes).unwrap();
             std::fs::write(&td.path().join("missing.wasm"), hello_bytes).unwrap();
             std::fs::write(&td.path().join("good.wasm"), hello_bytes).unwrap();
+            let mut archive_bad = tar::Builder::new(GzEncoder::new(
+                File::create(&td.path().join("bad_archived.tar.gz")).unwrap(),
+                Compression::default(),
+            ));
+            archive_bad
+                .append_path_with_name(&td.path().join("good.wasm"), "wrong_name.wasm")
+                .unwrap();
+            archive_bad.into_inner().unwrap();
+
+            let mut archive_good = tar::Builder::new(GzEncoder::new(
+                File::create(&td.path().join("good_archived.tar.gz")).unwrap(),
+                Compression::default(),
+            ));
+            archive_good
+                .append_path_with_name(&td.path().join("good.wasm"), "good_archived.wasm")
+                .unwrap();
+            archive_good.append_dir_all("fs", td_fs).unwrap();
+            archive_good.into_inner().unwrap();
 
             let mut checksums = HashMap::new();
             checksums.insert(
                 String::from("bad.wasm"),
                 TOMLChecksums {
                     sha256: hex::encode(sha2::Sha256::digest(&[])),
+                    executable_sha256: None,
                 },
             );
 
@@ -256,6 +375,27 @@ mod tests {
                 String::from("good.wasm"),
                 TOMLChecksums {
                     sha256: hex::encode(sha2::Sha256::digest(hello_bytes)),
+                    executable_sha256: None,
+                },
+            );
+
+            checksums.insert(
+                String::from("bad_archived.tar.gz"),
+                TOMLChecksums {
+                    sha256: hex::encode(sha2::Sha256::digest(
+                        &std::fs::read(&td.path().join("bad_archived.tar.gz")).unwrap(),
+                    )),
+                    executable_sha256: Some(hex::encode(sha2::Sha256::digest(hello_bytes))),
+                },
+            );
+
+            checksums.insert(
+                String::from("good_archived.tar.gz"),
+                TOMLChecksums {
+                    sha256: hex::encode(sha2::Sha256::digest(
+                        &std::fs::read(&td.path().join("bad_archived.tar.gz")).unwrap(),
+                    )),
+                    executable_sha256: Some(hex::encode(sha2::Sha256::digest(hello_bytes))),
                 },
             );
 
@@ -347,5 +487,37 @@ mod tests {
                 "Missing checksums error is expected."
             );
         });
+    }
+
+    #[test]
+    fn test_archived_runtimes() {
+        with_runtime_dir!(fss, {
+            let bad = fss.get("bad_archived");
+            assert!(
+                bad.is_some(),
+                "A tar.gz archive where the exe has the wrong name should still result in an discoverable runtime"
+            );
+            assert!(
+                bad.unwrap()
+                    .execute(RuntimeParameters::new("bad"), ValueStream::new(), vec![])
+                    .is_err(),
+                "An invalid runtime archive should generate an error when executing"
+            );
+
+            let good = fss.get("good_archived");
+            assert!(
+                good.is_some(),
+                "A valid tar.gz should result in a discoverable runtime"
+            );
+            assert!(
+                dbg!(good.unwrap().execute(
+                    RuntimeParameters::new("good"),
+                    ValueStream::new(),
+                    vec![]
+                ))
+                .is_ok(),
+                "A valid runtime should be executable"
+            );
+        })
     }
 }

@@ -1,43 +1,54 @@
-{ base, pkgs }:
+{ base, pkgs }: # TODO: Make one deriv for the C output and another for rust
 let
   name = "wasi-python-shims";
   stdenv = pkgs.pkgsCross.wasi32.clang11Stdenv;
-  overriddenPackage = (base.languages.rust.mkPackage.override { inherit stdenv; });
+  overriddenMkPackage = (base.languages.rust.mkPackage.override { inherit stdenv; });
 
-  package = overriddenPackage {
+  package = overriddenMkPackage {
     inherit name;
     src = ./.;
     defaultTarget = "wasm32-wasi";
     targets = [ "wasm32-wasi" ];
 
     doCrossCheck = true;
+    useNightly = "2021-01-27";
 
     # llvm is needed for dsymutil which something uses
-    # when running cargo test
-    checkInputs = [ pkgs.llvmPackages_11.llvm pkgs.wasmtime ];
+    # when building in debug
+    nativeBuildInputs = pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.llvmPackages_11.llvm;
+
+    checkInputs = [ pkgs.wasmtime ];
+    shellInputs = [ pkgs.bear ];
   };
 
-  newPackage = package.overrideAttrs (
+  utilityPackage = base.languages.rust.toUtility package;
+
+  newPackage = utilityPackage.overrideAttrs (
     oldAttrs: {
+      RUSTFLAGS = "${oldAttrs.RUSTFLAGS or ""} -Clinker-flavor=gcc";
       installPhase = ''
         ${oldAttrs.installPhase}
         mkdir -p $out/lib $out/include
         cp target/wasm32-wasi/release/libwasi_python_shims.a $out/lib
-        cp wasi_python_shims.h $out/include
+        cp $(cargo run --release header) $out/include
       '';
 
       # need the -crt-static to only be used when the library is intended
       # to be used from other C libraries, not for tests etc.
       buildPhase = ''
         (
-          export RUSTFLAGS="${oldAttrs.RUSTFLAGS or ""} -C target-feature=-crt-static"
+          export RUSTFLAGS="$RUSTFLAGS -C target-feature=-crt-static"
           ${oldAttrs.buildPhase}
+          cargo build --release
         )
       '';
 
+      # TODO: remove the "clean" target when
+      # https://github.com/goodbyekansas/nedryland/issues/143
+      # is done. Then the test exe will be ignored by gitignore
       checkPhase = ''
         ${oldAttrs.checkPhase}
-        make check
+        make clean check
       '';
     }
   );

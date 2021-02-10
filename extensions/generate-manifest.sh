@@ -1,6 +1,6 @@
-preDistPhases+=" generateManifestPhase"
+generateManifestPhase="generateManifest"
 
-generateManifestPhase() {
+generateManifest() {
 
   echo "  📜 [manifest] Creating output manifest..."
 
