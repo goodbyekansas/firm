@@ -5,14 +5,11 @@ use std::{
 };
 
 use serde::{de, Deserialize, Serialize};
-use wasmer_wasi::{
-    state::{WasiFile, WasiFs, WasiFsError, VIRTUAL_ROOT_FD},
-    types,
-};
+use wasmer_wasi::{types, WasiFile, WasiFs, WasiFsError, VIRTUAL_ROOT_FD};
 
 use super::{
+    api::{WasmItemPtr, WasmString},
     error::{WasiError, WasiResult},
-    WasmItemPtr, WasmString,
 };
 
 #[derive(Debug, Serialize)]

@@ -49,12 +49,12 @@ impl NestedWasiRuntime {
 impl Runtime for NestedWasiRuntime {
     fn execute(
         &self,
-        executor_context: RuntimeParameters,
+        runtime_parameters: RuntimeParameters,
         arguments: ValueStream,
         attachments: Vec<Attachment>,
     ) -> Result<Result<ValueStream, String>, RuntimeError> {
         let mut executor_function_arguments = ValueStream {
-            channels: executor_context
+            channels: runtime_parameters
                 .arguments
                 .into_iter()
                 .map(|(k, v)| {
@@ -70,7 +70,7 @@ impl Runtime for NestedWasiRuntime {
 
         // not having any code for the function is a valid case used for example to execute
         // external functions (gcp, aws lambdas, etc)
-        if let Some(code) = executor_context.code {
+        if let Some(code) = runtime_parameters.code {
             let mut code_buf = Vec::with_capacity(code.encoded_len());
             code.encode(&mut code_buf)?;
 
@@ -81,7 +81,7 @@ impl Runtime for NestedWasiRuntime {
         }
 
         executor_function_arguments
-            .set_channel("_entrypoint", executor_context.entrypoint.to_channel());
+            .set_channel("_entrypoint", runtime_parameters.entrypoint.to_channel());
 
         // nest arguments and attachments
         let mut arguments_buf: Vec<u8> = Vec::with_capacity(arguments.encoded_len());
@@ -95,7 +95,8 @@ impl Runtime for NestedWasiRuntime {
 
         self.wasi_runtime.execute(
             RuntimeParameters {
-                function_name: self.runtime_name.clone(),
+                function_name: runtime_parameters.function_name.to_owned(),
+                output_sink: runtime_parameters.output_sink,
                 entrypoint: None,
                 code: Some(Attachment {
                     name: format!("{}-code", self.runtime_name),

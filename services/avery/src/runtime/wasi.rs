@@ -1,449 +1,25 @@
+mod api;
 mod error;
 mod function;
 mod net;
+mod output;
 mod process;
 mod sandbox;
 
-use std::{
-    convert::TryFrom,
-    io::{self, Read, Write},
-    path::Path,
-    str,
-    str::Utf8Error,
-    sync::{Arc, RwLock},
-};
+use std::{fs::OpenOptions, io::LineWriter, path::Path, sync::Arc, sync::Mutex};
 
+use output::{NamedFunctionOutputSink, Output};
 use slog::{info, o, Logger};
 
-use wasmer_runtime::{
-    compile, func, imports, types::ValueType, Array, Ctx, Func, Item, Memory, WasmPtr,
-};
-use wasmer_wasi::{generate_import_object_from_state, get_wasi_version, state::WasiState};
+use wasmer::{imports, ChainableNamedResolver, Function, ImportObject, Instance, Module, Store};
+use wasmer_wasi::WasiState;
 
 use super::{Runtime, RuntimeParameters, StreamExt};
 use crate::executor::{AttachmentDownload, RuntimeError};
-use error::{ToErrorCode, WasiError};
+use api::ApiState;
+use error::WasiError;
 use firm_types::functions::{Attachment, Stream};
-use process::StdIOConfig;
 use sandbox::Sandbox;
-
-/// Wrapper type that represents a buffer in WASI memory
-///
-/// Note that this actually does not allocate anything, it is
-/// merely a view on memory
-#[derive(Debug, Clone)]
-pub struct WasmBuffer {
-    memory: Memory,
-    ptr: WasmPtr<u8, Array>,
-    len: u32,
-}
-
-impl WasmBuffer {
-    /// Create a new WASM Buffer
-    ///
-    /// `memory` is the WASI linear memory where the buffer resides
-    /// `ptr` is the WasmPtr that points to the start of the buffer
-    /// `len` is the size of the buffer in bytes
-    pub fn new(memory: &Memory, ptr: WasmPtr<u8, Array>, len: u32) -> Self {
-        Self {
-            memory: memory.clone(),
-            ptr,
-            len,
-        }
-    }
-
-    /// Get the length in bytes for this buffer
-    pub fn len(&self) -> u32 {
-        self.len
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// Get a view of the underlying data in this buffer
-    pub fn buffer(&self) -> &[u8] {
-        if self.ptr.offset() + self.len > self.memory.size().bytes().0 as u32 {
-            panic!(
-                "WASM buffer (offset: {}, size: {}) goes beyond the memory capacity ({})",
-                self.ptr.offset(),
-                self.len,
-                self.memory.size().bytes().0
-            );
-        }
-
-        let src_buf = unsafe {
-            self.memory
-                .view::<u8>()
-                .as_ptr()
-                .add(self.ptr.offset() as usize) as *const u8
-        };
-        let slice: &[u8] = unsafe { std::slice::from_raw_parts(src_buf, self.len as usize) };
-        slice
-    }
-
-    /// Get a mutable view of the underlying data in this buffer
-    pub fn buffer_mut(&mut self) -> &mut [u8] {
-        if self.ptr.offset() + self.len > self.memory.size().bytes().0 as u32 {
-            panic!(
-                "WASM buffer (offset: {}, size: {}) goes beyond the memory capacity ({})",
-                self.ptr.offset(),
-                self.len,
-                self.memory.size().bytes().0
-            );
-        }
-
-        let tgt_buf = unsafe {
-            self.memory
-                .view::<u8>()
-                .as_ptr()
-                .add(self.ptr.offset() as usize) as *mut u8
-        };
-        let slice: &mut [u8] =
-            unsafe { std::slice::from_raw_parts_mut(tgt_buf, self.len as usize) };
-        slice
-    }
-}
-
-/// Wrapper type around a `WasmBuffer` to
-/// treat it as a String
-#[derive(Debug, Clone)]
-pub struct WasmString {
-    buffer: WasmBuffer,
-}
-
-impl WasmString {
-    /// Create a new WasmString from a `buffer`
-    pub fn new(buffer: WasmBuffer) -> Self {
-        Self { buffer }
-    }
-
-    /// Get the length of the string in bytes
-    /// i.e. the size of the underlying buffer
-    pub fn buffer_len(&self) -> u32 {
-        self.buffer.len()
-    }
-}
-
-impl TryFrom<WasmString> for String {
-    type Error = Utf8Error;
-    fn try_from(s: WasmString) -> Result<Self, Self::Error> {
-        Ok(str::from_utf8(s.buffer.buffer())?.to_owned())
-    }
-}
-
-/// Pointer to a single value in WASI/WASM memory
-/// of type T (a Copy-type)
-#[derive(Debug, Clone)]
-pub struct WasmItemPtr<T: Copy + ValueType> {
-    memory: Memory,
-    ptr: WasmPtr<T, Item>,
-}
-
-impl<T: Copy + ValueType> WasmItemPtr<T> {
-    /// Create a new ite pointer
-    ///
-    /// `memory` is the WASI linear memory where the value resides
-    /// `ptr` is the WasmPtr that points to the value
-    pub fn new(memory: &Memory, ptr: WasmPtr<T, Item>) -> Self {
-        Self {
-            memory: memory.clone(),
-            ptr,
-        }
-    }
-
-    #[cfg(test)] // only used in tests for now...
-    pub fn get(&self) -> Option<T> {
-        self.ptr.deref(&self.memory).map(|v| v.get())
-    }
-
-    /// Set the value at the memory pointed to by this
-    /// pointer.
-    ///
-    /// Note: This will return a `WasiError` for
-    /// invalid pointers.
-    pub fn set(&self, val: T) -> Result<(), WasiError> {
-        self.ptr
-            .deref(&self.memory)
-            .ok_or_else(WasiError::FailedToDerefPointer)
-            .map(|v| v.set(val))
-    }
-}
-
-impl Read for WasmBuffer {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        buf.clone_from_slice(self.buffer());
-        Ok(self.len() as usize)
-    }
-}
-
-impl Write for WasmBuffer {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.buffer_mut().clone_from_slice(buf);
-        Ok(self.len() as usize)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-fn execute_function(
-    logger: Logger,
-    function_name: &str,
-    entrypoint: Option<String>,
-    code: &[u8],
-    arguments: Stream,
-    attachments: Vec<Attachment>,
-) -> Result<Stream, String> {
-    let entrypoint = entrypoint.unwrap_or_else(|| String::from("_start"));
-    let module = compile(code).map_err(|e| format!("failed to compile wasm: {}", e))?;
-
-    let wasi_version = get_wasi_version(&module, true).unwrap_or(wasmer_wasi::WasiVersion::Latest);
-
-    let sandbox = Sandbox::new(Path::new("sandbox")).map_err(|e| e.to_string())?;
-    let attachment_sandbox = Sandbox::new(Path::new("attachments")).map_err(|e| e.to_string())?;
-
-    info!(
-        logger,
-        "using sandbox directory: {}",
-        sandbox.path().display()
-    );
-    info!(
-        logger,
-        "using sandbox attachments directory: {}",
-        attachment_sandbox.path().display()
-    );
-
-    // create stdout and stderr
-    let stdiofiles = sandbox
-        .setup_stdio()
-        .map_err(|e| format!("Failed to setup std IO files: {}", e))?;
-    let std0 = stdiofiles
-        .try_clone()
-        .map_err(|e| format!("Failed to clone stdio files: {}", e))?;
-    let std1 = stdiofiles
-        .try_clone()
-        .map_err(|e| format!("Failed to clone stdio files: {}", e))?;
-
-    let wasi_state = WasiState::new(&format!("wasi-{}", function_name))
-        .stdout(Box::new(stdiofiles.stdout))
-        .stderr(Box::new(stdiofiles.stderr))
-        .preopen(|p| {
-            p.directory(sandbox.path())
-                .alias("sandbox")
-                .read(true)
-                .write(true)
-                .create(true)
-        })
-        .and_then(|state| {
-            state.preopen(|p| {
-                p.directory(attachment_sandbox.path())
-                    .alias("attachments")
-                    .read(true)
-                    .write(false)
-                    .create(false)
-            })
-        })
-        .and_then(|state| state.build())
-        .map_err(|e| format!("Failed to create wasi state: {:?}", e))?;
-
-    let sandboxes = [sandbox, attachment_sandbox.clone()];
-    let sandboxes2 = sandboxes.clone();
-
-    // inject firm specific functions in the wasm state
-    let v: Result<Stream, String> = Ok(Stream::new());
-    let results = Arc::new(RwLock::new(v));
-    let res = Arc::clone(&results);
-    let res2 = Arc::clone(&results);
-    let attachment_sandbox = Arc::new(attachment_sandbox);
-    let attachment_sandbox2 = Arc::clone(&attachment_sandbox);
-
-    let attachments0 = Arc::new(attachments);
-    let attachments1 = Arc::clone(&attachments0);
-
-    let arguments0 = Arc::new(arguments);
-    let arguments1 = Arc::clone(&arguments0);
-
-    let start_process_logger = logger.new(o!("scope" => "start_process"));
-    let run_process_logger = logger.new(o!("scope" => "run_process"));
-    let map_attachment_logger = logger.new(o!("scope" => "map_attachment"));
-    let map_attachment_descriptor_logger = logger.new(o!("scope" => "map_attachment_descriptor"));
-
-    let host_file_exists_closure =
-        move |ctx: &mut Ctx, path: WasmPtr<u8, Array>, path_len: u32, exists: WasmPtr<u8, Item>| {
-            String::try_from(WasmString::new(WasmBuffer::new(
-                ctx.memory(0),
-                path,
-                path_len,
-            )))
-            .map_err(|e| WasiError::FailedToReadStringPointer("path".to_owned(), e))
-            .and_then(|p| {
-                let exists = WasmItemPtr::new(ctx.memory(0), exists);
-                exists.set(Path::new(&p).exists() as u8)
-            })
-            .to_error_code()
-        };
-
-    let get_host_os =
-        |ctx: &mut Ctx, os_name: WasmPtr<u8, Array>, len_written: WasmPtr<u32, Item>| {
-            let len = std::env::consts::OS.len();
-            WasmItemPtr::new(ctx.memory(0), len_written)
-                .set(len as u32)
-                .and_then(|_| {
-                    // TODO: Proper error for OS names longer than 128 when we have
-                    // better error marshalling.
-                    let len = std::cmp::min(128, len);
-                    WasmBuffer::new(ctx.memory(0), os_name, len as u32)
-                        .write_all(&std::env::consts::OS.as_bytes()[..len])
-                        .map_err(WasiError::FailedToWriteBuffer)
-                })
-                .to_error_code()
-        };
-
-    let firm_imports = imports! {
-        "firm" => {
-            "get_attachment_path_len" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, path_len: WasmPtr<u32, Item>| {
-                function::get_attachment_path_len(&attachments0,
-                                                  WasmString::new(WasmBuffer::new(
-                                                      ctx.memory(0),
-                                                      attachment_name,
-                                                      attachment_name_len)),
-                                                  WasmItemPtr::new(ctx.memory(0), path_len)).to_error_code()
-            }),
-            "map_attachment" => func!(move |ctx: &mut Ctx, attachment_name: WasmPtr<u8, Array>, attachment_name_len: u32, unpack: u8, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
-                function::map_attachment(&attachments1,
-                                         &attachment_sandbox,
-                                         WasmString::new(
-                                             WasmBuffer::new(
-                                                 ctx.memory(0),
-                                                 attachment_name,
-                                                 attachment_name_len
-                                             ),
-                                         ),
-                                         unpack!=0,
-                                         &mut WasmBuffer::new(
-                                             ctx.memory(0),
-                                             path_ptr,
-                                             path_buffer_len
-                                         ),
-                                         &map_attachment_logger).to_error_code()
-            }),
-            "get_attachment_path_len_from_descriptor" => func!(move |ctx: &mut Ctx, attachment_descriptor_ptr: WasmPtr<u8, Array>, attachment_descriptor_len: u32, path_len: WasmPtr<u32, Item>| {
-                function::get_attachment_path_len_from_descriptor(
-                    WasmBuffer::new(
-                        ctx.memory(0),
-                        attachment_descriptor_ptr,
-                        attachment_descriptor_len),
-                        WasmItemPtr::new(ctx.memory(0), path_len)).to_error_code()
-            }),
-            "map_attachment_from_descriptor" => func!(move |ctx: &mut Ctx, attachment_descriptor_ptr: WasmPtr<u8, Array>, attachment_descriptor_len: u32, unpack: u8, path_ptr: WasmPtr<u8, Array>, path_buffer_len: u32| {
-                function::map_attachment_from_descriptor(
-                    &attachment_sandbox2,
-                    WasmBuffer::new(
-                        ctx.memory(0),
-                        attachment_descriptor_ptr,
-                        attachment_descriptor_len,
-                    ),
-                    unpack!=0,
-                    &mut WasmBuffer::new(
-                        ctx.memory(0),
-                        path_ptr,
-                        path_buffer_len
-                    ),
-                    &map_attachment_descriptor_logger).to_error_code()
-            }),
-            "host_path_exists" => func!(host_file_exists_closure),
-            "get_host_os" => func!(get_host_os),
-            "start_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, pid_out: WasmPtr<u64, Item>| {
-                StdIOConfig::new(&std0.stdout.inner, &std0.stderr.inner)
-                .map_or_else(
-                    |e| WasiError::FailedToSetupStdIO(e).into(),
-                    |stdioconfig| process::start_process(
-                        &start_process_logger,
-                        &sandboxes,
-                        stdioconfig,
-                        WasmBuffer::new(ctx.memory(0), s, len),
-                        WasmItemPtr::new(ctx.memory(0), pid_out),
-                    ).to_error_code()
-                )
-            }),
-
-            "run_host_process" => func!(move |ctx: &mut Ctx, s: WasmPtr<u8, Array>, len: u32, exit_code_out: WasmPtr<i32, Item>| {
-                StdIOConfig::new(&std1.stdout.inner, &std1.stderr.inner)
-                .map_or_else(
-                    |e| WasiError::FailedToSetupStdIO(e).into(),
-                    |stdioconfig| process::run_process(
-                        &run_process_logger,
-                        &sandboxes2,
-                        stdioconfig,
-                        WasmBuffer::new(ctx.memory(0), s, len),
-                        WasmItemPtr::new(ctx.memory(0), exit_code_out),
-                    ).to_error_code()
-                )
-            }),
-
-            "get_input_len" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u32, Item>| {
-                function::get_input_len(
-                    WasmString::new(WasmBuffer::new(ctx.memory(0), key, keylen)),
-                    WasmItemPtr::new(ctx.memory(0), value), &arguments0).to_error_code()
-            }),
-
-            "get_input" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, value: WasmPtr<u8, Array>, valuelen: u32| {
-                function::get_input(
-                    WasmString::new(WasmBuffer::new(ctx.memory(0), key, keylen)),
-                    &mut WasmBuffer::new(ctx.memory(0), value, valuelen),
-                    &arguments1).to_error_code()
-            }),
-
-            "set_output" => func!(move |ctx: &mut Ctx, key: WasmPtr<u8, Array>, keylen: u32, val: WasmPtr<u8, Array>, vallen: u32| {
-                function::set_output(WasmString::new(WasmBuffer::new(ctx.memory(0), key, keylen)),
-                WasmBuffer::new(ctx.memory(0), val, vallen)).and_then(|v| {
-                    res.write().map(|mut current_stream_or_error| {
-                        if let Ok(current_stream) = current_stream_or_error.as_mut() {
-                            current_stream.merge(v);
-                        }
-                    }).map_err(|e| {WasiError::Unknown(format!("{}", e))})
-                }).to_error_code()
-            }),
-
-            "set_error" => func!(move |ctx: &mut Ctx, msg: WasmPtr<u8, Array>, msglen: u32| {
-                function::set_error(WasmString::new(WasmBuffer::new(ctx.memory(0), msg, msglen))).and_then(|v| {
-                    res2.write().map(|mut current_stream_or_error| {
-                        *current_stream_or_error = Err(v);
-                    }).map_err(|e| {WasiError::Unknown(format!("{}", e))})
-                }).to_error_code()
-            }),
-
-            "connect" => func!(move |ctx: &mut Ctx, addr: WasmPtr<u8, Array>, addr_len: u32, fd_out: WasmPtr<u32, Item>| {
-                let mem = ctx.memory(0).clone();
-                let state = unsafe { wasmer_wasi::state::get_wasi_state(ctx) };
-                net::connect(&mut state.fs, WasmString::new(WasmBuffer::new(&mem, addr, addr_len)), WasmItemPtr::new(&mem, fd_out)).to_error_code()
-            }),
-        },
-    };
-
-    let mut import_object = generate_import_object_from_state(wasi_state, wasi_version);
-    import_object.extend(firm_imports);
-
-    let instance = module
-        .instantiate(&import_object)
-        .map_err(|e| format!("failed to instantiate WASI module: {}", e))?;
-
-    let entry_function: Func<(), ()> = instance
-        .exports
-        .get(&entrypoint)
-        .map_err(|e| format!("Failed to resolve entrypoint {}: {}", &entrypoint, e))?;
-
-    entry_function
-        .call()
-        .map_err(|e| format!("Failed to call entrypoint function {}: {}", &entrypoint, e))?;
-
-    results
-        .read()
-        .map_err(|e| format!("Failed to read function results: {}", e))
-        .and_then(|results| results.clone()) // TODO: Smart clone for stream
-}
 
 #[derive(Debug)]
 pub struct WasiRuntime {
@@ -456,6 +32,40 @@ impl WasiRuntime {
     }
 }
 
+impl From<String> for RuntimeError {
+    fn from(message: String) -> Self {
+        Self::RuntimeError {
+            name: "wasi-wasmer".to_owned(),
+            message,
+        }
+    }
+}
+
+fn setup_api_imports(store: &Store, api_state: ApiState) -> ImportObject {
+    imports! {
+        "firm" => {
+            // Host queries
+            "host_path_exists" => Function::new_native_with_env(&store, api_state.clone(), api::host::path_exists),
+            "get_host_os" => Function::new_native_with_env(&store, api_state.clone(), api::host::get_os),
+            "start_host_process" => Function::new_native_with_env(&store, api_state.clone(), api::host::start_process),
+            "run_host_process" => Function::new_native_with_env(&store, api_state.clone(), api::host::run_process),
+            "connect" => Function::new_native_with_env(&store, api_state.clone(), api::host::socket_connect),
+
+            // Attachments
+            "get_attachment_path_len" => Function::new_native_with_env(&store, api_state.clone(), api::attachments::get_path_len),
+            "map_attachment" => Function::new_native_with_env(&store, api_state.clone(), api::attachments::map),
+            "get_attachment_path_len_from_descriptor" => Function::new_native_with_env(&store, api_state.clone(), api::attachments::get_path_len_from_descriptor),
+            "map_attachment_from_descriptor" => Function::new_native_with_env(&store, api_state.clone(), api::attachments::map_from_descriptor),
+
+            // Connections
+            "get_input_len" => Function::new_native_with_env(&store, api_state.clone(), api::connections::get_input_len),
+            "get_input" => Function::new_native_with_env(&store, api_state.clone(), api::connections::get_input),
+            "set_output" => Function::new_native_with_env(&store, api_state.clone(), api::connections::set_output),
+            "set_error" => Function::new_native_with_env(&store, api_state, api::connections::set_error),
+        }
+    }
+}
+
 impl Runtime for WasiRuntime {
     fn execute(
         &self,
@@ -463,26 +73,153 @@ impl Runtime for WasiRuntime {
         arguments: Stream,
         attachments: Vec<Attachment>,
     ) -> Result<Result<Stream, String>, RuntimeError> {
-        let code = runtime_parameters
-            .code
-            .ok_or_else(|| RuntimeError::MissingCode("wasi".to_owned()))?;
-        let downloaded_code = code.download()?;
+        let function_logger = self
+            .logger
+            .new(o!("function" => runtime_parameters.function_name.to_owned()));
 
-        // TODO: separate host and guest errors
-        Ok(execute_function(
-            self.logger
-                .new(o!("function" => runtime_parameters.function_name.to_owned())),
-            &runtime_parameters.function_name,
-            runtime_parameters.entrypoint,
-            &downloaded_code,
-            arguments,
-            attachments,
-        ))
+        let sandbox = Sandbox::new(Path::new("sandbox")).map_err(|e| e.to_string())?;
+        let attachment_sandbox =
+            Sandbox::new(Path::new("attachments")).map_err(|e| e.to_string())?;
+
+        info!(
+            function_logger,
+            "using sandbox directory: {}",
+            sandbox.path().display()
+        );
+        info!(
+            function_logger,
+            "using sandbox attachments directory: {}",
+            attachment_sandbox.path().display()
+        );
+
+        let stdout = Output::new(vec![
+            Box::new(
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(sandbox.path().join("stdout"))
+                    .map_err(|e| format!("Failed to create stdout sandbox file: {}", e))?,
+            ),
+            Box::new(LineWriter::new(NamedFunctionOutputSink::new(
+                "stdout",
+                runtime_parameters.output_sink.clone(),
+                function_logger.new(o!("output-sink" => "stdout")),
+            ))),
+        ]);
+
+        let stderr = Output::new(vec![
+            Box::new(
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(sandbox.path().join("stderr"))
+                    .map_err(|e| format!("Failed to create stderr sandbox file: {}", e))?,
+            ),
+            Box::new(LineWriter::new(NamedFunctionOutputSink::new(
+                "stderr",
+                runtime_parameters.output_sink,
+                function_logger.new(o!("output-sink" => "stderr")),
+            ))),
+        ]);
+
+        let mut wasi_env = WasiState::new(&format!("wasi-{}", runtime_parameters.function_name))
+            .stdout(Box::new(stdout.clone()))
+            .stderr(Box::new(stderr.clone()))
+            .preopen(|p| {
+                p.directory(sandbox.path())
+                    .alias("sandbox")
+                    .read(true)
+                    .write(true)
+                    .create(true)
+            })
+            .and_then(|state| {
+                state.preopen(|p| {
+                    p.directory(attachment_sandbox.path())
+                        .alias("attachments")
+                        .read(true)
+                        .write(false)
+                        .create(false)
+                })
+            })
+            .and_then(|state| state.finalize())
+            .map_err(|e| format!("Failed to create wasi state: {:?}", e))?;
+
+        let results = Arc::new(Mutex::new(Stream::new()));
+        let errors = Arc::new(Mutex::new(Vec::new()));
+
+        let api_state = ApiState {
+            arguments: Arc::new(arguments),
+            attachments: Arc::new(attachments),
+            sandbox,
+            attachment_sandbox,
+            logger: function_logger.new(o!("scope" => "api")),
+            stdout,
+            stderr,
+            results: results.clone(),
+            errors: errors.clone(),
+            wasi_env: wasi_env.clone(),
+        };
+
+        let entrypoint = runtime_parameters
+            .entrypoint
+            .unwrap_or_else(|| String::from("_start"));
+
+        let store = Store::default();
+        let module = Module::new(
+            &store,
+            runtime_parameters
+                .code
+                .ok_or_else(|| RuntimeError::MissingCode("wasi".to_owned()))?
+                .download()?,
+        )
+        .map_err(|e| format!("failed to compile wasm: {}", e))?;
+
+        Instance::new(
+            &module,
+            &wasi_env
+                .import_object(&module)
+                .map_err(|e| format!("Failed to generate import object: {}", e))?
+                .chain_back(setup_api_imports(&store, api_state)),
+        )
+        .map_err(|e| format!("failed to instantiate WASI module: {}", e))?
+        .exports
+        .get_function(&entrypoint)
+        .map_err(|e| format!("Failed to resolve entrypoint {}: {}", &entrypoint, e))?
+        .call(&[])
+        .map_err(|e| format!("Failed to call entrypoint function {}: {}", &entrypoint, e))?;
+
+        let results = Arc::try_unwrap(results)
+            .map_err(|e| {
+                format!(
+            "Failed to get function results. There are still {} references to the results stream.",
+            Arc::strong_count(&e)
+        )
+            })?
+            .into_inner()
+            .map_err(|e| format!("Failed to acquire lock for results: {}", e))?;
+
+        let errors = Arc::try_unwrap(errors)
+            .map_err(|e| {
+                format!(
+            "Failed to get function errors. There are still {} references to the errors vector.",
+            Arc::strong_count(&e)
+        )
+            })?
+            .into_inner()
+            .map_err(|e| format!("Failed to acquire lock for errors: {}", e))?;
+
+        Ok(if errors.is_empty() {
+            Ok(results)
+        } else {
+            Err(errors.join("\n"))
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::executor::FunctionOutputSink;
+
     use super::*;
     use firm_types::{code_file, stream};
 
@@ -501,6 +238,7 @@ mod tests {
                 entrypoint: None, // use default entrypoint _start
                 code: Some(code_file!(include_bytes!("hello.wasm"))),
                 arguments: std::collections::HashMap::new(),
+                output_sink: FunctionOutputSink::null(),
             },
             stream!(),
             vec![],

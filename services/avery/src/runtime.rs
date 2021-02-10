@@ -9,14 +9,15 @@ use firm_types::{
 };
 use slog::{o, Logger};
 
-use crate::executor::RuntimeError;
+use crate::executor::{FunctionOutputSink, RuntimeError};
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct RuntimeParameters {
     pub function_name: String,
     pub entrypoint: Option<String>,
     pub code: Option<Attachment>,
     pub arguments: HashMap<String, String>,
+    pub output_sink: FunctionOutputSink,
 }
 
 impl RuntimeParameters {
@@ -26,6 +27,7 @@ impl RuntimeParameters {
             entrypoint: None,
             code: None,
             arguments: HashMap::new(),
+            output_sink: FunctionOutputSink::null(),
         }
     }
 
@@ -43,9 +45,14 @@ impl RuntimeParameters {
         self.arguments = arguments;
         self
     }
+
+    pub fn output_sink(mut self, output_sink: FunctionOutputSink) -> Self {
+        self.output_sink = output_sink;
+        self
+    }
 }
 
-pub trait Runtime: Debug {
+pub trait Runtime: Debug + Send {
     fn execute(
         &self,
         runtime_parameters: RuntimeParameters,
