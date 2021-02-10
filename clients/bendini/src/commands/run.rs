@@ -9,6 +9,7 @@ use firm_types::{
     stream::ToChannel,
     tonic::{self, transport::Channel},
 };
+use futures::{join, FutureExt, StreamExt, TryFutureExt};
 use tonic_middleware::HttpStatusInterceptor;
 
 use crate::error;
@@ -75,6 +76,7 @@ pub async fn run(
     mut execution_client: ExecutionClient<Channel>,
     function_id: String,
     arguments: Vec<(String, String)>,
+    follow_output: bool,
 ) -> Result<(), BendiniError> {
     let (function_name, function_version): (&str, &str) =
         match &function_id.splitn(2, ':').collect::<Vec<&str>>()[..] {
@@ -121,13 +123,83 @@ pub async fn run(
         &function_name, &function_version
     );
 
-    execution_client
-        .execute_function(tonic::Request::new(ExecutionParameters {
+    let execution_id = execution_client
+        .queue_function(tonic::Request::new(ExecutionParameters {
             name: function_name.to_owned(),
             version_requirement: function_version.to_owned(),
             arguments: Some(input_values),
         }))
         .await
-        .map_err(|e| e.into())
-        .map(|r| println!("{:#?}", r.into_inner()))
+        .map_err(BendiniError::from)?
+        .into_inner();
+
+    let mut outputs: HashMap<String, BufferedChannelPrinter> = HashMap::new();
+
+    let follow_future = if follow_output {
+        execution_client
+            .function_output(execution_id.clone())
+            .await
+            .map_err(BendiniError::from)?
+            .into_inner()
+            .for_each(|chunk| {
+                if let Ok(c) = chunk {
+                    outputs
+                        .entry(c.channel.clone())
+                        .or_insert_with(|| BufferedChannelPrinter {
+                            buffer: String::new(),
+                            channel: c.channel.clone(),
+                        })
+                        .push(&c.output);
+                };
+                futures::future::ready(())
+            })
+            .boxed()
+    } else {
+        futures::future::ready(()).boxed()
+    };
+
+    let (_, res) = join!(
+        follow_future,
+        execution_client
+            .run_function(execution_id)
+            .map_err(BendiniError::from),
+    );
+
+    // Explicit memory drop to ensure that output gets flushed before printing the result.
+    std::mem::drop(outputs);
+    res.map(|r| println!("{:#?}", r.into_inner())) // TODO: Add formatter since the debug format is ugly.
+}
+
+struct BufferedChannelPrinter {
+    buffer: String,
+    channel: String,
+}
+
+impl BufferedChannelPrinter {
+    pub fn push(&mut self, content: &str) {
+        self.buffer.push_str(content);
+        let split = self.buffer.rsplitn(2, '\n').collect::<Vec<&str>>();
+
+        if split.len() > 1 {
+            println!(
+                "[{}] {}",
+                ansi_term::Colour::White.bold().paint(&self.channel),
+                split[1]
+            );
+        }
+
+        self.buffer = split[0].to_owned();
+    }
+}
+
+impl Drop for BufferedChannelPrinter {
+    fn drop(&mut self) {
+        if !self.buffer.is_empty() {
+            println!(
+                "[{}] {}",
+                ansi_term::Colour::White.bold().paint(&self.channel),
+                self.buffer
+            );
+        }
+    }
 }

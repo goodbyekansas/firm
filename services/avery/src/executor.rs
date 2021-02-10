@@ -2,8 +2,11 @@ use std::{
     collections::HashMap,
     fmt::{self, Debug, Display},
     fs, str,
+    sync::Arc,
+    sync::Mutex,
 };
 
+use futures::{channel::mpsc::Receiver, channel::mpsc::Sender};
 use sha2::{Digest, Sha256};
 use slog::{debug, Logger};
 use thiserror::Error;
@@ -11,11 +14,13 @@ use url::Url;
 
 use crate::runtime::{Runtime, RuntimeParameters, RuntimeSource};
 use firm_types::{
+    functions::Function,
+    functions::FunctionOutputChunk,
     functions::{
         execution_result::Result as ProtoResult,
         execution_server::Execution as ExecutionServiceTrait, registry_server::Registry,
         Attachment, AuthMethod, ExecutionError, ExecutionId, ExecutionParameters, ExecutionResult,
-        Filters, NameFilter, Ordering, OrderingKey, VersionRequirement,
+        Filters, NameFilter, Ordering, OrderingKey, Stream as ValueStream, VersionRequirement,
     },
     stream::StreamExt,
     tonic,
@@ -23,10 +28,54 @@ use firm_types::{
 use uuid::Uuid;
 use RuntimeError::AttachmentReadError;
 
+#[derive(Debug, Clone)]
+pub struct FunctionOutputSink {
+    inner: Option<Sender<Result<FunctionOutputChunk, tonic::Status>>>,
+}
+
+impl FunctionOutputSink {
+    pub fn null() -> Self {
+        Self { inner: None }
+    }
+
+    pub fn close(&mut self) {
+        if let Some(sender) = self.inner.as_mut() {
+            sender.close_channel()
+        }
+    }
+
+    pub fn send(&mut self, channel: String, content: String) {
+        self.inner.as_mut().map(|sender| {
+            sender.try_send(Ok(FunctionOutputChunk {
+                channel,
+                output: content,
+            }))
+        });
+    }
+}
+
+impl From<Sender<Result<FunctionOutputChunk, tonic::Status>>> for FunctionOutputSink {
+    fn from(sender: Sender<Result<FunctionOutputChunk, tonic::Status>>) -> Self {
+        Self {
+            inner: Some(sender),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct QueuedFunction {
+    function: Function,
+    arguments: ValueStream,
+    output_receiver: Option<Receiver<Result<FunctionOutputChunk, tonic::Status>>>,
+    output_sender: Sender<Result<FunctionOutputChunk, tonic::Status>>,
+}
+
+#[derive(Clone)]
 pub struct ExecutionService {
     logger: Logger,
-    registry: Box<dyn Registry>,
-    runtime_sources: Vec<Box<dyn RuntimeSource>>,
+    registry: Arc<Box<dyn Registry>>,
+    runtime_sources: Arc<Vec<Box<dyn RuntimeSource>>>,
+    execution_queue: Arc<Mutex<HashMap<Uuid, QueuedFunction>>>, // Death row hehurr
 }
 
 impl ExecutionService {
@@ -37,8 +86,9 @@ impl ExecutionService {
     ) -> Self {
         Self {
             logger: log,
-            registry,
-            runtime_sources,
+            registry: Arc::new(registry),
+            runtime_sources: Arc::new(runtime_sources),
+            execution_queue: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -59,14 +109,12 @@ impl ExecutionService {
 
 #[tonic::async_trait]
 impl ExecutionServiceTrait for ExecutionService {
-    async fn execute_function(
+    async fn queue_function(
         &self,
         request: tonic::Request<ExecutionParameters>,
-    ) -> Result<tonic::Response<ExecutionResult>, tonic::Status> {
-        // TODO: We do not have a cookie for this yet. Should be a cookie for looking up logs of the execution etc.
-        let execution_id = ExecutionId {
-            uuid: Uuid::new_v4().to_string(),
-        };
+    ) -> Result<tonic::Response<ExecutionId>, tonic::Status> {
+        let execution_id = Uuid::new_v4();
+
         // lookup function
         let payload = request.into_inner();
         let function = self
@@ -99,6 +147,13 @@ impl ExecutionServiceTrait for ExecutionService {
                 ))
             })?;
 
+        // TODO: args should be sent to run function instead.
+        // Problem is that it's nice to get args validated as early as possible.
+        // Another problem is that we do not want to save the state of the arguments
+        // in memory since it could potentially be a lot of memory.
+        // There are two solutions.
+        // 1. Only send keys to queue_function and validate the keys (user could change this in run function later which is bad)
+        // 2. Only send to run_function and validate there. Bad part is getting late validation of args.
         // validate args
         let args = payload.arguments.unwrap_or_default();
         args.validate(&function.required_inputs, Some(&function.optional_inputs))
@@ -115,69 +170,154 @@ impl ExecutionServiceTrait for ExecutionService {
                 )
             })?;
 
-        let runtime = function.runtime.clone().ok_or_else(|| {
-            tonic::Status::new(
-                tonic::Code::Internal,
+        // allocate an output message queue
+        let (sender, receiver) = futures::channel::mpsc::channel(1024);
+
+        self.execution_queue
+            .lock()
+            .map_err(|_| tonic::Status::internal("Failed to lock execution queue."))?
+            .insert(
+                execution_id,
+                QueuedFunction {
+                    function,
+                    arguments: args,
+                    output_receiver: Some(receiver),
+                    output_sender: sender,
+                },
+            );
+
+        Ok(tonic::Response::new(ExecutionId {
+            uuid: execution_id.to_string(),
+        }))
+    }
+
+    async fn run_function(
+        &self,
+        request: tonic::Request<ExecutionId>,
+    ) -> Result<tonic::Response<ExecutionResult>, tonic::Status> {
+        let id = request.into_inner();
+        let uuid = Uuid::parse_str(&id.uuid).map_err(|e| {
+            tonic::Status::invalid_argument(format!("Failed to parse execution id as uuid: {}.", e))
+        })?;
+
+        let queued_function = self
+            .execution_queue
+            .lock()
+            .map_err(|_| tonic::Status::internal("Failed to lock execution queue."))?
+            .remove(&uuid)
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "Failed to find queued execution with id \"{}\"",
+                    uuid.to_string()
+                ))
+            })?;
+
+        let runtime_spec = queued_function.function.runtime.clone().ok_or_else(|| {
+            tonic::Status::internal(
                 "Function descriptor did not contain any runtime specification.",
             )
         })?;
 
-        let function_name = function.name.clone();
+        // TODO: Can combine this with runtime.execute as a long chain once
+        // runtime.execute is async.
+        let runtime = self.lookup_runtime(&runtime_spec.name).await.map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("Failed to lookup function runtime: {}", e),
+            )
+        })?;
 
-        // lookup executor and run
-        self.lookup_runtime(&runtime.name)
-            .await
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::Internal,
-                    format!("Failed to lookup function runtime: {}", e),
-                )
-            })
-            .and_then(|executor| {
-                let res = executor.execute(
-                    RuntimeParameters {
-                        function_name: function_name.clone(),
-                        entrypoint: Some(runtime.entrypoint),
-                        code: function.code.clone(),
-                        arguments: runtime.arguments,
+        // TODO: Make the runtime.execute method async. This means we can remove the spawn blocking function.
+        // Right now the spawn_blocking is very neccesary in order to tell tokio it can run other things at the
+        // same time. If not it will block avery completely making it wait for the function to complete.
+        let output_spec = queued_function.function.outputs.clone();
+        let function_name = queued_function.function.name.clone();
+        let function_name2 = function_name.clone();
+        let execution_res = tokio::task::spawn_blocking(move || {
+            runtime.execute(
+                RuntimeParameters {
+                    function_name: function_name2,
+                    entrypoint: if runtime_spec.entrypoint.is_empty() {
+                        None
+                    } else {
+                        Some(runtime_spec.entrypoint)
                     },
-                    args,
-                    function.attachments.clone(),
-                );
-                match res {
-                    Ok(Ok(r)) => r
-                        .validate(&function.outputs, None)
-                        .map(|_| {
-                            tonic::Response::new(ExecutionResult {
-                                execution_id: Some(execution_id),
-                                result: Some(ProtoResult::Ok(r)),
-                            })
-                        })
-                        .map_err(|e| {
-                            tonic::Status::new(
-                                tonic::Code::InvalidArgument,
-                                format!(
-                                    "Function \"{}\" generated invalid result: {}",
-                                    &function_name,
-                                    e.iter()
-                                        .map(|ae| format!("{}", ae))
-                                        .collect::<Vec<String>>()
-                                        .join(", ")
-                                ),
-                            )
-                        }),
-                    Ok(Err(e)) => Ok(tonic::Response::new(ExecutionResult {
-                        execution_id: Some(execution_id),
-                        result: Some(ProtoResult::Error(ExecutionError { msg: e })),
-                    })),
+                    code: queued_function.function.code.clone(),
+                    arguments: runtime_spec.arguments,
+                    output_sink: queued_function.output_sender.into(),
+                },
+                queued_function.arguments,
+                queued_function.function.attachments.clone(),
+            )
+        })
+        .await
+        .map_err(|e| tonic::Status::internal(format!("Failed to wait for execution: {}", e)))?;
 
-                    Err(e) => Err(tonic::Status::new(
-                        tonic::Code::Internal,
-                        format!("Failed to execute function {}: {}", &function_name, e),
-                    )),
-                }
-            })
+        match execution_res {
+            Ok(Ok(r)) => r
+                .validate(&output_spec, None)
+                .map(|_| {
+                    tonic::Response::new(ExecutionResult {
+                        execution_id: Some(id),
+                        result: Some(ProtoResult::Ok(r)),
+                    })
+                })
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::InvalidArgument,
+                        format!(
+                            "Function \"{}\" generated invalid result: {}",
+                            &function_name,
+                            e.iter()
+                                .map(|ae| format!("{}", ae))
+                                .collect::<Vec<String>>()
+                                .join(", ")
+                        ),
+                    )
+                }),
+            Ok(Err(e)) => Ok(tonic::Response::new(ExecutionResult {
+                execution_id: Some(id),
+                result: Some(ProtoResult::Error(ExecutionError { msg: e })),
+            })),
+
+            Err(e) => Err(tonic::Status::new(
+                tonic::Code::Internal,
+                format!("Failed to execute function {}: {}", &function_name, e),
+            )),
+        }
     }
+
+    async fn function_output(
+        &self,
+        request: tonic::Request<ExecutionId>,
+    ) -> Result<tonic::Response<Self::FunctionOutputStream>, tonic::Status> {
+        let id = request.into_inner();
+        let uuid = Uuid::parse_str(&id.uuid).map_err(|e| {
+            tonic::Status::invalid_argument(format!("Failed to parse execution id as uuid: {}.", e))
+        })?;
+
+        self.execution_queue
+            .lock()
+            .map_err(|_| tonic::Status::internal("Failed to lock execution queue."))?
+            .get_mut(&uuid)
+            .ok_or_else(|| {
+                tonic::Status::not_found(format!(
+                    "Failed to find queued execution with id \"{}\"",
+                    uuid.to_string()
+                ))
+            })?
+            .output_receiver
+            .take()
+            .ok_or_else(|| {
+                tonic::Status::internal(format!(
+                    "No output channel set (or it has already been used) for execution id \"{}\"",
+                    id.uuid
+                ))
+            })
+            .map(tonic::Response::new)
+    }
+
+    type FunctionOutputStream = Receiver<Result<FunctionOutputChunk, tonic::Status>>;
 }
 
 pub trait AttachmentDownload {
@@ -279,7 +419,7 @@ pub enum RuntimeError {
     #[error("Failed to encode proto data: {0}")]
     EncodeError(#[from] prost::EncodeError),
 
-    #[error("Code is missing even though it is required for the \"{0}\" executor.")]
+    #[error("Code is missing even though it is required for the \"{0}\" runtime.")]
     MissingCode(String),
 
     #[error(
@@ -293,15 +433,20 @@ pub enum RuntimeError {
 
     #[error("Failed to decode checksum to bytes: {0}")]
     FailedToDecodeChecksum(#[from] hex::FromHexError),
+
+    // TODO Maybe not the best place to have this error since it will pop up for executors
+    #[error("Failed to queue output chunk: {0}")]
+    FailedToQueueOutputChunk(String),
+
+    #[error("Runtime {name} error: {message}")]
+    RuntimeError { name: String, message: String },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use std::{cell::RefCell, rc::Rc};
-
-    use firm_types::{attachment, attachment_file, functions::Stream as ValueStream, stream};
+    use firm_types::{attachment, attachment_file};
 
     use crate::{config::InternalRegistryConfig, registry::RegistryService, runtime};
 
@@ -349,33 +494,6 @@ mod tests {
         let r = attachment.download();
         assert!(r.is_ok());
         assert_eq!(s.as_bytes(), r.unwrap().as_slice());
-    }
-
-    #[derive(Default, Debug)]
-    pub struct FakeExecutor {
-        executor_context: RefCell<RuntimeParameters>,
-        arguments: RefCell<ValueStream>,
-        attachments: RefCell<Vec<Attachment>>,
-        downloaded_code: RefCell<Vec<u8>>,
-    }
-
-    impl Runtime for Rc<FakeExecutor> {
-        fn execute(
-            &self,
-            executor_context: RuntimeParameters,
-            arguments: ValueStream,
-            attachments: Vec<Attachment>,
-        ) -> Result<Result<ValueStream, String>, RuntimeError> {
-            *self.downloaded_code.borrow_mut() = executor_context
-                .code
-                .as_ref()
-                .map(|c| c.download().unwrap())
-                .unwrap_or_default();
-            *self.executor_context.borrow_mut() = executor_context;
-            *self.arguments.borrow_mut() = arguments;
-            *self.attachments.borrow_mut() = attachments;
-            Ok(Ok(stream!()))
-        }
     }
 
     #[test]

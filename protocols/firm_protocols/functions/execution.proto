@@ -4,9 +4,15 @@ package firm_protocols.functions;
 
 
 service Execution {
-  rpc ExecuteFunction (ExecutionParameters) returns (ExecutionResult);
+  rpc QueueFunction (ExecutionParameters) returns (ExecutionId);
+  rpc RunFunction (ExecutionId) returns (ExecutionResult);
+  rpc FunctionOutput (ExecutionId) returns (stream FunctionOutputChunk);
 }
 
+message FunctionOutputChunk {
+  string channel = 1;
+  string output = 2;
+}
 
 message ExecutionParameters {
   string name = 1;

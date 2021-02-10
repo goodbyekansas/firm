@@ -1,40 +1,9 @@
-use std::{
-    fs::OpenOptions,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use regex::Regex;
 use tempfile::TempDir;
-use wasmer_wasi::state::HostFile;
 
 use super::error::WasiError;
-
-pub struct StdIOFiles {
-    pub stdout: HostFile,
-    pub stderr: HostFile,
-}
-
-impl StdIOFiles {
-    pub fn try_clone(&self) -> std::io::Result<Self> {
-        Ok(StdIOFiles {
-            stdout: HostFile::new(
-                self.stdout.inner.try_clone()?,
-                self.stdout.host_path.clone(),
-                true,
-                true,
-                true,
-            ),
-            stderr: HostFile::new(
-                self.stderr.inner.try_clone()?,
-                self.stderr.host_path.clone(),
-                true,
-                true,
-                true,
-            ),
-        })
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct Sandbox {
     path: PathBuf,
@@ -65,28 +34,6 @@ impl Sandbox {
                 format!("{}{}{}", &caps[1], &self.path.to_string_lossy(), &caps[2])
             })
             .into_owned()
-    }
-
-    pub fn setup_stdio(&self) -> Result<StdIOFiles, WasiError> {
-        let stdout_path = self.path().join("stdout");
-        let stdout = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&stdout_path)
-            .map_err(WasiError::FailedToSetupStdIO)?;
-
-        let stderr_path = self.path().join("stderr");
-        let stderr = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&stderr_path)
-            .map_err(WasiError::FailedToSetupStdIO)?;
-        Ok(StdIOFiles {
-            stdout: HostFile::new(stdout, stdout_path, true, true, true),
-            stderr: HostFile::new(stderr, stderr_path, true, true, true),
-        })
     }
 }
 

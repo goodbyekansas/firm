@@ -65,6 +65,10 @@ enum Command {
         /// expected by the function
         #[structopt(short = "i", parse(try_from_str = parse_key_val))]
         arguments: Vec<(String, String)>,
+
+        /// Print output from the function while it is running
+        #[structopt(short = "f", long = "follow")]
+        follow_output: bool,
     },
 
     /// Gets information about a single function
@@ -155,6 +159,7 @@ async fn run() -> Result<(), error::BendiniError> {
         Command::Run {
             function_id,
             arguments,
+            follow_output,
         } => {
             commands::run::run(
                 client,
@@ -165,6 +170,7 @@ async fn run() -> Result<(), error::BendiniError> {
                     })?,
                 function_id,
                 arguments,
+                follow_output,
             )
             .await
         }

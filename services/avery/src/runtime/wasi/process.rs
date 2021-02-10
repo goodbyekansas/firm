@@ -1,32 +1,22 @@
 use std::{
     collections::HashMap,
-    fs::File,
+    io::BufRead,
+    io::Read,
+    io::Write,
+    process::Child,
     process::{Command, Stdio},
 };
 
 use prost::Message;
-use slog::{info, warn, Logger};
+use slog::{info, o, warn, Logger};
 
 use super::{
+    api::{WasmBuffer, WasmItemPtr},
     error::{WasiError, WasiResult},
+    output::Output,
     sandbox::Sandbox,
-    WasmBuffer, WasmItemPtr,
 };
 use firm_types::wasi::StartProcessRequest;
-
-pub struct StdIOConfig {
-    pub stdout: Stdio,
-    pub stderr: Stdio,
-}
-
-impl StdIOConfig {
-    pub fn new(stdout: &File, stderr: &File) -> std::io::Result<Self> {
-        Ok(StdIOConfig {
-            stdout: Stdio::from(stdout.try_clone()?),
-            stderr: Stdio::from(stderr.try_clone()?),
-        })
-    }
-}
 
 pub fn get_args_and_envs(
     request: &StartProcessRequest,
@@ -55,10 +45,44 @@ pub fn get_args_and_envs(
     )
 }
 
+async fn read_output<T>(mut output: Output, source: Option<T>, logger: Logger)
+where
+    T: Read,
+{
+    if let Some(src) = source {
+        let mut reader = std::io::BufReader::new(src);
+        let mut s = String::with_capacity(128);
+        while let Ok(nb) = reader.read_line(&mut s) {
+            if nb == 0 {
+                break;
+            }
+            output.write(s.as_bytes()).map_or_else(
+                |_| warn!(logger, "Failed to write \"{}\" to output.", s),
+                |_| (),
+            );
+        }
+    }
+}
+
+fn setup_readers(c: &mut Child, out: Output, err: Output, logger: &Logger) {
+    let (stdout, stderr) = (c.stdout.take(), c.stderr.take());
+    tokio::spawn(read_output(
+        out,
+        stdout,
+        logger.new(o!("reader" => "stdout")),
+    ));
+    tokio::spawn(read_output(
+        err,
+        stderr,
+        logger.new(o!("reader" => "stderr")),
+    ));
+}
+
 pub fn start_process(
     logger: &Logger,
     sandboxes: &[Sandbox],
-    stdio: StdIOConfig,
+    stdout: &Output,
+    stderr: &Output,
     request: WasmBuffer,
     pid_out: WasmItemPtr<u64>,
 ) -> WasiResult<()> {
@@ -71,23 +95,32 @@ pub fn start_process(
         "Launching host process {}, args: {:#?}", request.command, &args
     );
 
-    Command::new(request.command)
+    Command::new(request.command.clone())
         .args(args)
         .envs(&env)
-        .stdout(stdio.stdout)
-        .stderr(stdio.stderr)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| {
             warn!(logger, "Failed to launch host process: {}", e);
             WasiError::FailedToStartProcess(e)
         })
-        .and_then(|c| pid_out.set(c.id() as u64))
+        .and_then(|mut c| {
+            setup_readers(
+                &mut c,
+                stdout.clone(),
+                stderr.clone(),
+                &logger.new(o!("start_process" => request.command)),
+            );
+            pid_out.set(c.id() as u64)
+        })
 }
 
 pub fn run_process(
     logger: &Logger,
     sandboxes: &[Sandbox],
-    stdio: StdIOConfig,
+    stdout: &Output,
+    stderr: &Output,
     request: WasmBuffer,
     exit_code_out: WasmItemPtr<i32>,
 ) -> WasiResult<()> {
@@ -103,12 +136,22 @@ pub fn run_process(
     Command::new(request.command)
         .args(args)
         .envs(&env)
-        .stdout(stdio.stdout)
-        .stderr(stdio.stderr)
-        .status()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| {
             warn!(logger, "Failed to run host process: {}", e);
             WasiError::FailedToStartProcess(e)
+        })
+        .and_then(|mut c| {
+            setup_readers(&mut c, stdout.clone(), stderr.clone(), logger);
+            c.wait().map_err(|e| {
+                warn!(
+                    logger,
+                    "Failed to run host process (Failed to wait for it to exit): {}", e
+                );
+                WasiError::FailedToStartProcess(e)
+            })
         })
         .and_then(|c| exit_code_out.set(c.code().unwrap_or(-1)))
 }

@@ -23,13 +23,13 @@ structopt = "0.3"
 tar = "0.4"
 tempfile = "3"
 thiserror = "1"
-tokio = { version = "0.2", features = ["rt-threaded", "time", "stream", "macros", "uds", "signal"] }
+tokio = { version = "0.2", features = ["rt-threaded", "time", "stream", "macros", "uds", "signal"] } # TODO: Upgrade
 toml = "0.5"
 typetag = "0.1"
 url = "2"
 uuid = { version = "0.8", features = ["serde", "v4"] }
-wasmer-runtime = "0.17"
-wasmer-wasi = "0.17"
+wasmer-wasi = "1"
+wasmer = "1"
 
 firm-types = { version = "0.1", registry = "nix" }
 tonic-middleware = { version = "0.1", registry = "nix" }

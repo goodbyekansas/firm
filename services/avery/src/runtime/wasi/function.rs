@@ -9,9 +9,9 @@ use prost::Message;
 use tar::Archive;
 
 use super::{
+    api::{WasmBuffer, WasmItemPtr, WasmString},
     error::{WasiError, WasiResult},
     sandbox::Sandbox,
-    WasmBuffer, WasmItemPtr, WasmString,
 };
 use crate::executor::AttachmentDownload;
 use firm_types::{
@@ -218,12 +218,12 @@ mod tests {
 
     use firm_types::{attachment, stream, stream::ToChannel};
     use tempfile::Builder;
-    use wasmer_runtime::{memory::Memory, WasmPtr};
-    use wasmer_runtime::{types::MemoryDescriptor, units::Pages};
+    use wasmer::{Memory, MemoryType, Store, WasmPtr};
 
     macro_rules! create_mem {
         () => {{
-            Memory::new(MemoryDescriptor::new(Pages(1), None, false).unwrap()).unwrap()
+            let store = Store::default();
+            Memory::new(&store, MemoryType::new(1, None, false)).unwrap()
         }};
     }
 
