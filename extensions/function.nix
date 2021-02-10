@@ -103,6 +103,10 @@ base.extend.mkExtension {
         , packageAttrs ? { }
         , componentAttrs ? { }
         , entrypoint ? "main:main"
+        , inputs ? { }
+        , outputs ? { }
+        , metadata ? { }
+        , attachments ? { }
         }:
         let
           package = pkgs.stdenv.mkDerivation {
@@ -120,7 +124,7 @@ base.extend.mkExtension {
             '';
           };
           manifest = {
-            inherit name version;
+            inherit name version inputs outputs metadata attachments;
             runtime = { type = "python"; inherit entrypoint; };
           };
         in

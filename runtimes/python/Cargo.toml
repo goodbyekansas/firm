@@ -6,11 +6,12 @@ edition = "2018"
 
 [dependencies]
 firm = { version = "0.1", registry="nix", features=["net", "runtime"] }
+firm-types = {version="0.1", registry="nix"}
 
 wasi-python-shims = { version = "0.1", registry="nix" }
 
 # https://github.com/rust-lang/libc/issues/2045
-pyo3 = { git = "https://github.com/goodbyekansas/pyo3", branch = "temp-wchar-workarounds", default-features=false }
+pyo3 = { git = "https://github.com/goodbyekansas/pyo3", branch = "temp-wchar-workarounds", default-features=false, features=["macros"] }
 
 [features]
 mock = ["firm/mock"]
