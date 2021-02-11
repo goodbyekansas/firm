@@ -5,8 +5,7 @@ authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
 [dependencies]
-firm = { version = "0.1", registry="nix", features=["net"] }
-firm-types = { version = "0.1", registry="nix" }
+firm = { version = "0.1", registry="nix", features=["net", "runtime"] }
 
 wasi-python-shims = { version = "0.1", registry="nix" }
 

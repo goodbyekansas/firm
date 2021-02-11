@@ -162,6 +162,23 @@ pub fn map_attachment_from_descriptor_and_unpack(
     _map_attachment_from_descriptor(attachment_descriptor, true)
 }
 
+/// Download trait for making it easier to
+/// map from an attachment descriptor
+pub trait AttachmentDownload {
+    fn download(&self) -> Result<PathBuf, Error>;
+    fn download_unpacked(&self) -> Result<PathBuf, Error>;
+}
+
+impl AttachmentDownload for Attachment {
+    fn download(&self) -> Result<PathBuf, Error> {
+        map_attachment_from_descriptor(self)
+    }
+
+    fn download_unpacked(&self) -> Result<PathBuf, Error> {
+        map_attachment_from_descriptor_and_unpack(self)
+    }
+}
+
 /// Checks if a path on the hosts file system exists (outside the wasi file system)
 pub fn host_path_exists<S: AsRef<str>>(path: S) -> Result<bool, Error> {
     let mut exists: u8 = 0;
@@ -249,6 +266,8 @@ pub fn run_host_process<S1: AsRef<str>, S2: AsRef<str>>(
     .map(|_| exit_code)
 }
 
+/// Representation of an input value
+/// returned from get_input
 #[derive(Debug)]
 pub struct InputValue<T>
 where
@@ -310,6 +329,7 @@ where
     Channel::decode(value_buffer.as_slice()).map_err(|e| e.into())
 }
 
+/// get an input for the function designated by `key`
 pub fn get_input<S, T>(key: S) -> InputValue<T>
 where
     S: AsRef<str>,
@@ -331,10 +351,14 @@ where
     }
 }
 
+/// Set an output with the provided `name` for the function
+///
+/// The value can be of any type implementing `ToChannel`
 pub fn set_output<S: AsRef<str>, T: ToChannel>(name: S, value: T) -> Result<(), Error> {
     set_output_channel(name, &value.to_channel())
 }
 
+/// Set a channel in the output stream
 pub fn set_output_channel<S: AsRef<str>>(name: S, channel: &Channel) -> Result<(), Error> {
     let mut value = Vec::with_capacity(channel.encoded_len());
     channel.encode(&mut value)?;
@@ -346,6 +370,7 @@ pub fn set_output_channel<S: AsRef<str>>(name: S, channel: &Channel) -> Result<(
     ))
 }
 
+/// Set an error message `msg` for this function
 pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
     host_call!(raw::set_error(
         msg.as_ref().as_ptr(),
@@ -353,145 +378,87 @@ pub fn set_error<S: AsRef<str>>(msg: S) -> Result<(), Error> {
     ))
 }
 
-// TODO: None of this should exist, this is
-// a misdesign
-pub mod executor {
-    use std::path::PathBuf;
+#[cfg(feature = "runtime")]
+pub mod runtime_context {
+    use super::Error;
 
-    use firm_types::{
-        functions::{Attachment, Channel, Stream},
-        stream::StreamExt,
-        stream::TryFromChannel,
-        wasi::Attachments,
-    };
+    use std::path::{Path, PathBuf};
+
+    pub use firm_types::wasi::RuntimeContext;
     use prost::Message;
 
-    use crate::{
-        get_input, map_attachment_from_descriptor, map_attachment_from_descriptor_and_unpack, Error,
-    };
+    const DEFAULT_FILE_PATH: &str = "/runtime-context/context";
 
-    pub struct ChannelValue<'a, T>
-    where
-        T: TryFromChannel,
-    {
-        channel: Option<&'a Channel>,
-        default_value: Option<T>,
-        key: String,
+    #[derive(Error, Debug)]
+    pub enum RuntimeContextError {
+        #[error("Context file at {path} could not be opened: {source}")]
+        ContextFileIOError {
+            path: PathBuf,
+            source: std::io::Error,
+        },
+
+        #[error("Failed to decode context file at {path}: {source}")]
+        FailedToDecodeContextFile {
+            path: PathBuf,
+            source: prost::DecodeError,
+        },
     }
 
-    impl<T> ChannelValue<'_, T>
-    where
-        T: TryFromChannel,
-    {
-        pub fn with_default(mut self, default_value: T) -> Self {
-            self.default_value = Some(default_value);
-            self
-        }
-
-        pub fn into(self) -> Result<T, Error> {
-            let default = self.default_value;
-            let key = self.key;
-            self.channel.map_or_else(
-                || default.ok_or(Error::FailedToFindRequiredInput(key)),
-                |channel| T::try_from(&channel).map_err(Error::from),
-            )
-        }
+    pub trait RuntimeContextExt: Sized {
+        fn from_default() -> Result<Self, RuntimeContextError>;
+        fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, RuntimeContextError>;
     }
 
-    pub trait AttachmentDownload {
-        fn download(&self) -> Result<PathBuf, Error>;
-        fn download_unpacked(&self) -> Result<PathBuf, Error>;
-    }
-
-    impl AttachmentDownload for Attachment {
-        fn download(&self) -> Result<PathBuf, Error> {
-            map_attachment_from_descriptor(self)
+    impl RuntimeContextExt for RuntimeContext {
+        fn from_default() -> Result<Self, RuntimeContextError> {
+            Self::from_file(DEFAULT_FILE_PATH)
         }
 
-        fn download_unpacked(&self) -> Result<PathBuf, Error> {
-            map_attachment_from_descriptor_and_unpack(self)
+        fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, RuntimeContextError> {
+            std::fs::read(path.as_ref())
+                .map_err(|e| RuntimeContextError::ContextFileIOError {
+                    path: path.as_ref().to_owned(),
+                    source: e,
+                })
+                .and_then(|bytes| {
+                    RuntimeContext::decode(bytes.as_slice()).map_err(|e| {
+                        RuntimeContextError::FailedToDecodeContextFile {
+                            path: path.as_ref().to_owned(),
+                            source: e,
+                        }
+                    })
+                })
         }
     }
 
-    /// Special function inputs for
-    /// functions that are executors
-    #[derive(Debug)]
-    pub struct ExecutorArgs {
-        code: Attachment,
-        sha256: String,
-        entrypoint: Option<String>,
-        stream: Stream,
-        attachments: Vec<Attachment>,
-    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
 
-    impl ExecutorArgs {
-        /// Create execution environment args from the wasi host
-        pub fn from_wasi_host() -> Result<Self, Error> {
-            Ok(Self {
-                code: get_input("_code").into().and_then(|a: Vec<u8>| {
-                    Attachment::decode(a.as_slice()).map_err(|e| e.into())
-                })?,
-                sha256: get_input("_sha256").into()?,
-                entrypoint: get_input("_entrypoint").into()?,
-
-                // TODO: arguments should for sure not live here
-                // since we copy everything, and in the future it will be
-                // async as well
-                stream: get_input("_arguments")
-                    .into()
-                    .and_then(|a: Vec<u8>| Stream::decode(a.as_slice()).map_err(|e| e.into()))?,
-                attachments: get_input("_attachments").into().and_then(|a: Vec<u8>| {
-                    Attachments::decode(a.as_slice())
-                        .map_err(|e| e.into())
-                        .map(|a| a.attachments)
-                })?,
-            })
+        macro_rules! write_context {
+            ($filename:expr, $ctx:expr) => {{
+                let mut buf: Vec<u8> = Vec::with_capacity($ctx.encoded_len());
+                $ctx.encode(&mut buf).unwrap();
+                ::std::fs::write($filename, buf).unwrap();
+            }};
         }
 
-        /// Get the code that the execution environment is expected to execute
-        pub fn code(&self) -> &Attachment {
-            &self.code
-        }
+        #[test]
+        fn context_decode() {
+            let written_ctx = RuntimeContext {
+                arguments: ::std::collections::HashMap::new(),
+                code: None,
+                entrypoint: "in-here".to_owned(),
+            };
+            write_context!("super-context", written_ctx);
+            let r = RuntimeContext::from_file("super-context");
+            assert!(r.is_ok());
+            let ctx = r.unwrap();
 
-        /// Get the sha256 for the code that the execution environment is expected to execute
-        pub fn sha256(&self) -> &str {
-            &self.sha256
-        }
-
-        /// Get the entrypoint that the execution environment is expected to use
-        pub fn entrypoint(&self) -> Option<&str> {
-            self.entrypoint.as_deref()
-        }
-
-        /// Get an argument designated by `key` for the
-        /// function that the execution environment is
-        /// expected to execute
-        pub fn get_channel_value<S, T>(&self, key: S) -> ChannelValue<T>
-        where
-            S: AsRef<str>,
-            T: TryFromChannel,
-        {
-            ChannelValue {
-                key: key.as_ref().to_owned(),
-                channel: self.get_channel(key),
-                default_value: None,
-            }
-        }
-
-        /// Get an argument descriptor designated by `key` for the function that
-        /// the execution environment is expected to execute
-        pub fn get_channel<S: AsRef<str>>(&self, key: S) -> Option<&Channel> {
-            self.stream.get_channel(key.as_ref())
-        }
-
-        pub fn get_attachment_descriptor<S: AsRef<str>>(
-            &self,
-            name: S,
-        ) -> Result<&Attachment, Error> {
-            self.attachments
-                .iter()
-                .find(|a| a.name == name.as_ref())
-                .ok_or_else(|| Error::FailedToFindAttachment(name.as_ref().to_owned()))
+            assert_eq!(
+                ctx, written_ctx,
+                "expect runtime context to match after being read back from disk"
+            );
         }
     }
 }
@@ -540,19 +507,59 @@ pub mod net {
             file: unsafe { File::from_raw_fd(file_descriptor) },
         })
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::*;
+
+        use std::{io::Write, os::wasi::io::IntoRawFd};
+
+        use mock::MockResultRegistry;
+
+        #[test]
+        fn test_connect() {
+            let address = "fabrikam.com:123";
+
+            MockResultRegistry::set_connect_impl(move |in_addr| {
+                assert_eq!(in_addr, address);
+                Ok(std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .open("sune.txt")
+                    .unwrap()
+                    .into_raw_fd())
+            });
+
+            let tcp_message = "Cool \"network connection\" bro";
+            {
+                let tcp_connection = net::connect(address);
+                assert!(tcp_connection.is_ok());
+                tcp_connection
+                    .unwrap()
+                    .write_all(tcp_message.as_bytes())
+                    .unwrap();
+            }
+            assert_eq!(std::fs::read_to_string("sune.txt").unwrap(), tcp_message);
+
+            // error connection
+            MockResultRegistry::set_connect_impl(move |_in_addr| Err(1));
+
+            let tcp_connection = net::connect(address);
+            assert!(tcp_connection.is_err());
+            assert!(matches!(tcp_connection.unwrap_err(), Error::HostError(_)));
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use executor::AttachmentDownload;
     use firm_types::{
         functions::{channel::Value as ValueType, Attachment, AttachmentUrl, AuthMethod},
         stream::TryRefFromChannel,
     };
     use mock::MockResultRegistry;
-
-    use firm_types::stream;
 
     #[test]
     fn test_map_attachment() {
@@ -815,104 +822,6 @@ mod tests {
         let res = set_error(message);
         assert!(res.is_err());
         assert!(matches!(res.unwrap_err(), Error::HostError(_)));
-    }
-
-    #[cfg(feature = "net")]
-    mod net_tests {
-        use super::*;
-
-        use std::{io::Write, os::wasi::io::IntoRawFd};
-
-        #[test]
-        fn test_connect() {
-            let address = "fabrikam.com:123";
-
-            MockResultRegistry::set_connect_impl(move |in_addr| {
-                assert_eq!(in_addr, address);
-                Ok(std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .open("sune.txt")
-                    .unwrap()
-                    .into_raw_fd())
-            });
-
-            let tcp_message = "Cool \"network connection\" bro";
-            {
-                let tcp_connection = net::connect(address);
-                assert!(tcp_connection.is_ok());
-                tcp_connection
-                    .unwrap()
-                    .write_all(tcp_message.as_bytes())
-                    .unwrap();
-            }
-            assert_eq!(std::fs::read_to_string("sune.txt").unwrap(), tcp_message);
-
-            // error connection
-            MockResultRegistry::set_connect_impl(move |_in_addr| Err(1));
-
-            let tcp_connection = net::connect(address);
-            assert!(tcp_connection.is_err());
-            assert!(matches!(tcp_connection.unwrap_err(), Error::HostError(_)));
-        }
-    }
-
-    #[test]
-    fn test_exec_env() {
-        // fake code attachment
-        std::fs::write("sune.txt", "code lol").unwrap();
-        MockResultRegistry::set_get_attachment_path_len_from_descriptor_impl(|_| Ok(8));
-        MockResultRegistry::set_map_attachment_from_descriptor_impl(|_, _| {
-            Ok("sune.txt".to_owned())
-        });
-
-        let stream = stream!({"sune" => false, "rune" => "datta!"});
-
-        let mut buff = Vec::with_capacity(stream.encoded_len());
-        stream.encode(&mut buff).unwrap();
-
-        let code_attachment = Attachment {
-            checksums: None,
-            metadata: HashMap::new(),
-            name: "code".to_owned(),
-            url: Some(AttachmentUrl {
-                url: "fake:///".to_owned(),
-                auth_method: AuthMethod::None as i32,
-            }),
-            created_at: 0,
-        };
-
-        let mut code_buff = Vec::with_capacity(code_attachment.encoded_len());
-        code_attachment.encode(&mut code_buff).unwrap();
-
-        MockResultRegistry::set_input_stream(stream!({
-            "_code" => code_buff,
-            "_sha256" => "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "_entrypoint" => "windows.exe",
-            "_arguments" => buff,
-            "_attachments" => vec![] as Vec<u8>
-        }));
-
-        let eargs = executor::ExecutorArgs::from_wasi_host();
-        assert!(eargs.is_ok());
-
-        let eargs = eargs.unwrap();
-        assert_eq!(
-            std::fs::read(eargs.code().download().unwrap()).unwrap(),
-            "code lol".as_bytes()
-        );
-        assert_eq!(
-            eargs.sha256(),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-        assert_eq!(eargs.entrypoint().unwrap(), "windows.exe");
-
-        assert_eq!(false, eargs.get_channel_value("sune").into().unwrap());
-        assert_eq!(
-            "datta!",
-            eargs.get_channel_value::<_, String>("rune").into().unwrap()
-        );
     }
 
     #[test]
