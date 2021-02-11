@@ -13,7 +13,8 @@ message StartProcessRequest {
   map<string, string> environment_variables = 3;
 }
 
-message Attachments {
-  repeated firm_protocols.functions.Attachment attachments = 1;
+message RuntimeContext {
+  firm_protocols.functions.Attachment code = 1;
+  string entrypoint = 2;
+  map<string, string> arguments = 3;
 }
-

@@ -4,8 +4,8 @@ base.languages.rust.mkUtility {
   src = ./.;
   defaultTarget = "wasm32-wasi";
   targets = [ "wasm32-wasi" ];
-  useNightly = "2020-10-25";
+  useNightly = "2021-01-27";
   propagatedBuildInputs = [ types.package ];
   testFeatures = [ "net" "mock" ];
-  buildFeatures = [ "net" ];
+  buildFeatures = [ "net" "runtime" ];
 }

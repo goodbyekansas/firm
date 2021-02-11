@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     error::Error,
     fs::File,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -9,10 +10,8 @@ use firm_types::{
     functions::AttachmentUrl,
     functions::AuthMethod,
     functions::Checksums,
-    functions::Strings,
-    functions::{channel::Value as ValueType, Attachment, Channel, Stream as ValueStream},
-    stream::{StreamExt, ToChannel},
-    wasi::Attachments,
+    functions::{Attachment, Stream as ValueStream},
+    wasi::RuntimeContext,
 };
 use flate2::read::GzDecoder;
 use prost::Message;
@@ -36,24 +35,35 @@ struct NestedWasiRuntime {
     runtime_executable: PathBuf,
     runtime_checksums: Option<Checksums>,
     logger: Logger,
+    runtime_context_folder: PathBuf,
 }
 
 impl NestedWasiRuntime {
-    fn new(name: &str, executable: &Path, checksums: Option<Checksums>, logger: Logger) -> Self {
+    fn new(
+        name: &str,
+        executable: &Path,
+        runtime_context_folder: &Path,
+        checksums: Option<Checksums>,
+        logger: Logger,
+    ) -> Self {
         Self {
             wasi_runtime: wasi::WasiRuntime::new(logger.new(o!("runtime" => "wasi"))),
             runtime_executable: executable.to_owned(),
             runtime_name: name.to_owned(),
             runtime_checksums: checksums,
             logger,
+            runtime_context_folder: runtime_context_folder.to_owned(),
         }
     }
 
-    fn with_filesystem<P>(mut self, host_path: P) -> Self
+    fn with_filesystem<P, S>(mut self, host_path: P, guest_path: S) -> Self
     where
         P: AsRef<Path>,
+        S: AsRef<str>,
     {
-        self.wasi_runtime = self.wasi_runtime.with_host_dir("runtime-fs", host_path);
+        self.wasi_runtime = self
+            .wasi_runtime
+            .with_host_dir(guest_path.as_ref(), host_path);
         self
     }
 }
@@ -65,46 +75,33 @@ impl Runtime for NestedWasiRuntime {
         function_arguments: ValueStream,
         function_attachments: Vec<Attachment>,
     ) -> Result<Result<ValueStream, String>, RuntimeError> {
-        let mut runtime_arguments = ValueStream {
-            channels: runtime_parameters
-                .arguments
-                .into_iter()
-                .map(|(k, v)| {
-                    (
-                        k,
-                        Channel {
-                            value: Some(ValueType::Strings(Strings { values: vec![v] })),
-                        },
-                    )
-                })
-                .collect(),
+        let runtime_context = RuntimeContext {
+            code: runtime_parameters.code,
+            entrypoint: runtime_parameters.entrypoint.unwrap_or_default(),
+            arguments: runtime_parameters.arguments,
         };
 
-        // not having any code for the function is a valid case used for example to execute
-        // external functions (gcp, aws lambdas, etc)
-        if let Some(code) = runtime_parameters.code {
-            let mut code_buf = Vec::with_capacity(code.encoded_len());
-            code.encode(&mut code_buf)?;
+        std::fs::create_dir_all(&self.runtime_context_folder).map_err(|e| {
+            RuntimeError::RuntimeError {
+                name: "nested-wasi".to_owned(),
+                message: format!("Failed to create runtime context folder: {}", e),
+            }
+        })?;
+        let runtime_context_file_hostpath = self.runtime_context_folder.join("context");
+        let mut runtime_context_file = std::fs::File::create(runtime_context_file_hostpath)
+            .map_err(|e| RuntimeError::RuntimeError {
+                name: "nested-wasi".to_owned(),
+                message: e.to_string(),
+            })?;
 
-            runtime_arguments.set_channel("_code", code_buf.to_channel());
-
-            let checksums = code.checksums.ok_or(RuntimeError::MissingChecksums)?;
-            runtime_arguments.set_channel("_sha256", checksums.sha256.to_channel());
-        }
-
-        runtime_arguments.set_channel("_entrypoint", runtime_parameters.entrypoint.to_channel());
-
-        // nest arguments and attachments
-        let mut arguments_buf: Vec<u8> = Vec::with_capacity(function_arguments.encoded_len());
-        function_arguments.encode(&mut arguments_buf)?;
-        runtime_arguments.set_channel("_arguments", arguments_buf.to_channel());
-
-        let proto_attachments = Attachments {
-            attachments: function_attachments,
-        };
-        let mut attachments_buf: Vec<u8> = Vec::with_capacity(proto_attachments.encoded_len());
-        proto_attachments.encode(&mut attachments_buf)?;
-        runtime_arguments.set_channel("_attachments", attachments_buf.to_channel());
+        let mut runtime_context_buf: Vec<u8> = Vec::with_capacity(runtime_context.encoded_len());
+        runtime_context.encode(&mut runtime_context_buf)?;
+        runtime_context_file
+            .write_all(&runtime_context_buf)
+            .map_err(|e| RuntimeError::RuntimeError {
+                name: "nested-wasi".to_owned(),
+                message: e.to_string(),
+            })?;
 
         self.wasi_runtime.execute(
             RuntimeParameters {
@@ -133,8 +130,8 @@ impl Runtime for NestedWasiRuntime {
                 }),
                 arguments: HashMap::new(), // files on disk can not have arguments
             },
-            runtime_arguments,
-            vec![], // files on disk can not have attachments
+            function_arguments,
+            function_attachments,
         )
     }
 }
@@ -188,61 +185,65 @@ fn create_nested_wasi_runtime(
     ));
 
     let name = name.to_owned();
+    let ext = ext.to_owned();
     (
         name.clone(),
-        if ext == "wasm" {
-            Box::new(move |_cache_dir: &Path| -> Option<Box<dyn Runtime>> {
-                Some(Box::new(NestedWasiRuntime::new(
-                    &name,
-                    &path,
-                    checksums.clone(),
-                    log.clone(),
-                )))
-            }) as RuntimeWrapper
-        } else {
-            Box::new(move |cache_dir: &Path| -> Option<Box<dyn Runtime>> {
-                // unpack tar.gz to a cached location
-                let destination = cache_dir.join(format!(
-                    "{}-{}",
-                    &name,
-                    checksums
-                        .as_ref()
-                        .map(|cs| &cs.sha256[..16])
-                        .unwrap_or("unknown")
-                ));
-
-                if !destination.exists() {
-                    if let Err(e) = File::open(&path).and_then(|archive_file| {
-                        Archive::new(GzDecoder::new(archive_file)).unpack(&destination)
-                    }) {
-                        warn!(
-                            log,
-                            "failed to unpack runtime archive at \"{}\": {}, caused by: {}",
-                            path.display(),
-                            e,
-                            e.source()
-                                .map(|err| err.to_string())
-                                .unwrap_or_else(|| String::from("unknown"))
-                        );
-                        return None;
+        Box::new(move |cache_dir: &Path| -> Option<Box<dyn Runtime>> {
+            // unpack tar.gz to a cached location
+            let function_dir = cache_dir.join(format!(
+                "{}-{}",
+                &name,
+                checksums
+                    .as_ref()
+                    .map(|cs: &Checksums| &cs.sha256[..16])
+                    .unwrap_or("unknown")
+            ));
+            let context_path = function_dir.join("context");
+            Some(Box::new(
+                if ext == "wasm" {
+                    NestedWasiRuntime::new(
+                        &name,
+                        &path,
+                        &context_path,
+                        checksums.clone(),
+                        log.clone(),
+                    )
+                } else {
+                    if !function_dir.exists() {
+                        if let Err(e) = File::open(&path).and_then(|archive_file| {
+                            Archive::new(GzDecoder::new(archive_file)).unpack(&function_dir)
+                        }) {
+                            warn!(
+                                log,
+                                "failed to unpack runtime archive at \"{}\": {}, caused by: {}",
+                                path.display(),
+                                e,
+                                e.source()
+                                    .map(|err| err.to_string())
+                                    .unwrap_or_else(|| String::from("unknown"))
+                            );
+                            return None;
+                        }
                     }
+
+                    let mut nested_runtime = NestedWasiRuntime::new(
+                        &name,
+                        &function_dir.join(format!("{}.wasm", &name)),
+                        &context_path,
+                        checksums.clone(),
+                        log.clone(),
+                    );
+
+                    // instruct nestedwasiruntime to map "fs"
+                    if function_dir.join("fs").exists() {
+                        nested_runtime =
+                            nested_runtime.with_filesystem(function_dir.join("fs"), "runtime-fs");
+                    }
+                    nested_runtime
                 }
-
-                let mut nested_runtime = NestedWasiRuntime::new(
-                    &name,
-                    &destination.join(format!("{}.wasm", &name)),
-                    checksums.clone(),
-                    log.clone(),
-                );
-
-                // instruct nestedwasiruntime to map "fs"
-                if destination.join("fs").exists() {
-                    nested_runtime = nested_runtime.with_filesystem(destination.join("fs"));
-                }
-
-                Some(Box::new(nested_runtime))
-            }) as RuntimeWrapper
-        },
+                .with_filesystem(context_path, "runtime-context"),
+            ))
+        }) as RuntimeWrapper,
     )
 }
 
@@ -320,11 +321,11 @@ impl RuntimeSource for FileSystemSource {
 #[cfg(test)]
 mod tests {
 
+    use super::*;
+    use firm_types::stream::StreamExt;
     use flate2::{write::GzEncoder, Compression};
     use sha2::Digest;
     use tempfile::TempDir;
-
-    use super::*;
 
     macro_rules! null_logger {
         () => {{
@@ -510,12 +511,9 @@ mod tests {
                 "A valid tar.gz should result in a discoverable runtime"
             );
             assert!(
-                dbg!(good.unwrap().execute(
-                    RuntimeParameters::new("good"),
-                    ValueStream::new(),
-                    vec![]
-                ))
-                .is_ok(),
+                good.unwrap()
+                    .execute(RuntimeParameters::new("good"), ValueStream::new(), vec![])
+                    .is_ok(),
                 "A valid runtime should be executable"
             );
         })

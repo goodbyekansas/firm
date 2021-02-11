@@ -1,6 +1,9 @@
 use std::{env, fmt::Display};
 
-use firm::executor::{AttachmentDownload, ExecutorArgs};
+use firm::{
+    runtime_context::{RuntimeContext, RuntimeContextExt},
+    AttachmentDownload,
+};
 use pyo3::{ffi, PyResult, Python};
 
 // pub use to not have symbols stripped
@@ -23,22 +26,19 @@ impl Display for Entrypoint {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let runtime_context = ExecutorArgs::from_wasi_host()?;
+    let runtime_context = RuntimeContext::from_default()?;
 
-    let mut parts = runtime_context
-        .entrypoint()
-        .unwrap_or("main")
-        .splitn(2, ':');
-
-    let code = runtime_context.code().download()?;
-    env::set_current_dir(code)?;
+    let mut parts = runtime_context.entrypoint.splitn(2, ':');
 
     let entrypoint = Entrypoint {
         module: parts.next().unwrap_or("main").to_owned(),
         function: parts.next().unwrap_or("main").to_owned(),
     };
 
-    let code = runtime_context.code().download_unpacked()?;
+    let code = runtime_context
+        .code
+        .ok_or("code is required for python")?
+        .download_unpacked()?;
 
     env::set_var("PYTHONHOME", "/runtime-fs:{}");
 

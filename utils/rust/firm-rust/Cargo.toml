@@ -16,4 +16,5 @@ lazy_static = "1"
 
 [features]
 net = []
+runtime = []
 mock = ["lazy_static"]
