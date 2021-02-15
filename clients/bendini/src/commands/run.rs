@@ -22,13 +22,14 @@ fn argument_to_list(arg: &str) -> Vec<String> {
     let list_regex: Regex = Regex::new(r#"^\s*\[.*]\s*$"#).unwrap();
     if list_regex.is_match(arg) {
         let arg_regex =
-            Regex::new(r#"(?P<match1>[\p{Emoji}\w.-]+)|"(?P<match2>[\p{Emoji}\w\s.-]*)""#).unwrap();
+            Regex::new(r#"(?P<match1>[\p{Emoji}\w.-]+)|"(?P<match2>[\p{Emoji}'\w\s.-]*)"|'(?P<match3>[\p{Emoji}\w\s.-]*)'"#).unwrap();
         arg_regex
             .captures_iter(arg)
             .filter_map(|capture| {
                 capture
                     .name("match1")
                     .or_else(|| capture.name("match2"))
+                    .or_else(|| capture.name("match3"))
                     .map(|m| m.as_str().to_owned())
             })
             .collect()
@@ -349,6 +350,16 @@ mod tests {
             "arg10" => ChannelSpec {
                 description: String::new(),
                 r#type: ChannelType::Float as i32,
+            },
+            // Test single fnutt
+            "arg11" => ChannelSpec {
+                description: String::new(),
+                r#type: ChannelType::String as i32,
+            },
+            // Test fnutt inside double fnutt
+            "arg12" => ChannelSpec {
+                description: String::new(),
+                r#type: ChannelType::String as i32,
             }
         });
 
@@ -370,6 +381,13 @@ mod tests {
                 // Floats
                 ("arg9".to_owned(), "1.2341".to_owned()),
                 ("arg10".to_owned(), "[ 2.22 3.52 8.45 9.999919 ]".to_owned()),
+                // Test single fnutt
+                (
+                    "arg11".to_owned(),
+                    "['this is a list' of strings]".to_owned(),
+                ),
+                // Test single fnutt inside double fnutt
+                ("arg12".to_owned(), "[\"It's a boy\" of strings]".to_owned()),
             ],
         );
 
@@ -430,5 +448,17 @@ mod tests {
             .iter()
             .enumerate()
             .all(|(i, v)| (v - expected[i]).abs() < f64::EPSILON));
+
+        // Test single fnutt
+        assert_eq!(
+            stream.get_channel_as_ref::<[String]>("arg11").unwrap(),
+            &["this is a list", "of", "strings"]
+        );
+
+        // Test single fnutt inside double fnutt
+        assert_eq!(
+            stream.get_channel_as_ref::<[String]>("arg12").unwrap(),
+            &["It's a boy", "of", "strings"]
+        );
     }
 }
