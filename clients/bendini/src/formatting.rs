@@ -4,7 +4,10 @@ use std::{
 };
 
 use ansi_term::Colour::Green;
-use firm_types::functions::{ChannelSpec, ChannelType, Function, Runtime};
+use firm_types::functions::{
+    channel::Value, execution_result::Result as FunctionResult, Channel, ChannelSpec, ChannelType,
+    ExecutionResult, Function, Runtime, Stream,
+};
 use futures::{future::join, Future};
 use indicatif::MultiProgress;
 use tokio::task;
@@ -174,6 +177,74 @@ impl Display for Displayer<'_, i32> {
                     ChannelType::Bytes => "bytes",
                 })
                 .unwrap_or("invalid-type")
+        )
+    }
+}
+
+impl Display for Displayer<'_, ExecutionResult> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "Execution Id: {}",
+            self.execution_id
+                .as_ref()
+                .map(|i| i.uuid.as_str())
+                .unwrap_or("unknown")
+        )?;
+
+        match self.result.as_ref() {
+            Some(FunctionResult::Ok(outputs)) => {
+                writeln!(f, "Outputs:")?;
+                write!(f, "{}", outputs.display())
+            }
+            Some(FunctionResult::Error(error)) => writeln!(f, "Error: {}", error.msg),
+            None => writeln!(f, "No result set"),
+        }
+    }
+}
+
+impl Display for Displayer<'_, Stream> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.channels.iter().try_for_each(|(name, channel)| {
+            writeln!(f, "{}{}: [{}]", INDENT, name, channel.display())
+        })
+    }
+}
+
+impl Display for Displayer<'_, Channel> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // TODO: truncate if too long
+        write!(
+            f,
+            "{}",
+            match self.value.as_ref() {
+                Some(Value::Strings(v)) => v.values.join(" "),
+                Some(Value::Integers(v)) => v
+                    .values
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" "),
+                Some(Value::Floats(v)) => v
+                    .values
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" "),
+                Some(Value::Booleans(v)) => v
+                    .values
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" "),
+                Some(Value::Bytes(v)) => v
+                    .values
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<String>>()
+                    .join(" "),
+                None => "null".to_owned(),
+            }
         )
     }
 }

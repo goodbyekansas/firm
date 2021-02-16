@@ -12,7 +12,7 @@ use firm_types::{
 use futures::{join, FutureExt, StreamExt, TryFutureExt};
 use tonic_middleware::HttpStatusInterceptor;
 
-use crate::error;
+use crate::{error, formatting::DisplayExt};
 use error::BendiniError;
 use regex::Regex;
 
@@ -215,7 +215,7 @@ pub async fn run(
 
     // Explicit memory drop to ensure that output gets flushed before printing the result.
     std::mem::drop(outputs);
-    res.map(|r| println!("{:#?}", r.into_inner())) // TODO: Add formatter since the debug format is ugly.
+    res.map(|r| println!("{}", r.into_inner().display()))
 }
 
 struct BufferedChannelPrinter {
