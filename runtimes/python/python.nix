@@ -4,6 +4,7 @@ let
     hello = declareComponent ./examples/hello/hello.nix { };
     firmApi = declareComponent ./examples/firm-api/firm-api.nix { };
     firmApiError = declareComponent ./examples/firm-api/firm-api-error.nix { };
+    networking = declareComponent ./examples/networking/networking.nix { };
   };
 
   env = (builtins.mapAttrs
@@ -63,7 +64,7 @@ base.mkComponent {
       ++ pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.llvmPackages_11.llvm;
 
     buildInputs = [ firmRust.package firmTypes.package wasiPythonShims.package ];
-    shellInputs = [ pkgs.coreutils bendini.package avery.package pkgs.wabt ];
+    shellInputs = [ pkgs.coreutils bendini.package avery.package pkgs.wabt pkgs.netcat-gnu ];
     shellHook = ''
       runApiExample()
       {
@@ -81,6 +82,13 @@ base.mkComponent {
 
         echo "Running firmApiError example"
         command cargo run firmApiError | sed "s/^/  [firmApiError] /"
+      }
+
+      runNetExample() {
+        echo "Starting netcat on port 3333..."
+        nc -l -k -p 3333 | sed "s/^/[network] /" &
+        command cargo run networking -i port=3333
+        kill %1 && wait %1
       }
     '';
     RUSTFLAGS = "-Ctarget-feature=-crt-static -Clinker-flavor=gcc -Clink-args=-lwasi-emulated-signal";
