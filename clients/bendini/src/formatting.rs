@@ -218,7 +218,12 @@ impl Display for Displayer<'_, Channel> {
             f,
             "{}",
             match self.value.as_ref() {
-                Some(Value::Strings(v)) => v.values.join(" "),
+                Some(Value::Strings(v)) => v
+                    .values
+                    .iter()
+                    .map(|v| format!(r#""{}""#, v))
+                    .collect::<Vec<String>>()
+                    .join(" "),
                 Some(Value::Integers(v)) => v
                     .values
                     .iter()
