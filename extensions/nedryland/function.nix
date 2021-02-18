@@ -107,8 +107,35 @@ base.extend.mkExtension {
         , outputs ? { }
         , metadata ? { }
         , attachments ? { }
+        , dependencies ? (_: [ ])
         }:
         let
+          pythonWasiPkgs = pkgs.callPackage ./wasi-python-packages.nix { };
+          functionDependencies = dependencies pythonWasiPkgs;
+
+          packagedPythonDependencies = pkgs.stdenv.mkDerivation {
+            name = "${name}-dependencies.tar.gz";
+            phases = [ "buildPhase" "installPhase" ];
+
+            inherit functionDependencies;
+
+            buildPhase = ''
+              mkdir -p dependencies
+              for dep in $functionDependencies; do
+                cp $dep/lib/wasi-wheels/*.whl dependencies/
+                if [ -f $dep/firm/wasi-dependencies ]; then
+                  for pd in $(cat "$dep/firm/wasi-dependencies"); do
+                    cp $pd/lib/wasi-wheels/*.whl dependencies/
+                  done
+                fi
+              done
+            '';
+
+            installPhase = ''
+              tar czf $out dependencies
+            '';
+          };
+
           package = pkgs.stdenv.mkDerivation {
             inherit name version;
 
@@ -124,7 +151,11 @@ base.extend.mkExtension {
             '';
           };
           manifest = {
-            inherit name version inputs outputs metadata attachments;
+            inherit name version inputs outputs metadata;
+            attachments = attachments // (
+              if functionDependencies != [ ] then { dependencies = builtins.toString packagedPythonDependencies; }
+              else { }
+            );
             runtime = { type = "python"; inherit entrypoint; };
           };
         in

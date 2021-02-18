@@ -19,6 +19,9 @@ type gid_t = u32;
 #[allow(non_camel_case_types)]
 type size_t = u32;
 
+#[allow(non_camel_case_types)]
+type pid_t = i32;
+
 /// Change permissions on `pathname` to `mode`
 #[no_mangle]
 pub extern "C" fn chmod(_pathname: *const c_char, _mode: mode_t) -> c_int {
@@ -317,4 +320,10 @@ pub extern "C" fn getgid() -> gid_t {
 #[no_mangle]
 pub extern "C" fn getuid() -> gid_t {
     1
+}
+
+/// Return the id of the current process.
+#[no_mangle]
+pub extern "C" fn getpid() -> pid_t {
+    42
 }

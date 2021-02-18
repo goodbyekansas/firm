@@ -1,4 +1,4 @@
-use std::{env, fmt::Display};
+use std::{env, fmt::Display, fs::File};
 
 use ::firm::{
     runtime_context::{RuntimeContext, RuntimeContextExt},
@@ -6,6 +6,7 @@ use ::firm::{
 };
 
 use pyo3::{ffi, PyResult, Python};
+use zip::ZipArchive;
 
 // pub use to not have symbols stripped
 // TODO: might be a less intrusive way to do this
@@ -53,13 +54,55 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("no folder in unpacked python sdist")?
         .map(|de| de.path())?;
 
+    // unpack all dependencies
+    let dependency_wheels = ::firm::map_attachment_and_unpack("dependencies")
+        .map(Some)
+        .or_else(|e| {
+            if let ::firm::Error::FailedToFindAttachment(_) = e {
+                Ok(None)
+            } else {
+                Err(e)
+            }
+        })?;
+    const DEPENDENCIES_PATH: &str = "/sandbox/dependencies";
+    std::fs::create_dir_all(DEPENDENCIES_PATH)?;
+    dependency_wheels
+        .map(|path| {
+            path.join("dependencies")
+                .read_dir()
+                .map_err(|e| e.to_string())?
+                .try_for_each(|de| {
+                    de.map_err(|e| e.to_string()).and_then(|whl| {
+                        File::open(whl.path())
+                            .map_err(|e| e.to_string())
+                            .and_then(|f| {
+                                ZipArchive::new(f)
+                                    .map_err(|e| e.to_string())
+                                    .and_then(|mut zip| {
+                                        print!("Installing dependency {}...", whl.path().display());
+                                        let r = zip
+                                            .extract(DEPENDENCIES_PATH)
+                                            .map_err(|e| e.to_string());
+                                        println!("done!");
+                                        r
+                                    })
+                            })
+                    })
+                })
+        })
+        .transpose()?;
+
     env::set_var(
         "PYTHONPATH",
         // need to prepend a slash to the given path here
         // to make it absolute for python to be happy
         // if later this is done for us (download() returns
         // an absolute path), remove this slash
-        format!("/runtime-fs/lib:/{}", first_dir.display()),
+        format!(
+            "/runtime-fs/lib:/{}:{}",
+            first_dir.display(),
+            DEPENDENCIES_PATH
+        ),
     );
 
     unsafe {
@@ -93,6 +136,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Ok(_) => {}
         Err(pyerr) => {
             eprintln!("oh no! 🐍 error: {}", pyerr);
+            Python::with_gil(|py| pyerr.print(py));
             ::firm::set_error(pyerr.to_string())?;
         }
     }

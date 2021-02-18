@@ -2,7 +2,7 @@
     "nedryland": {
         "branch": "main",
         "repo": "git@github.com:goodbyekansas/nedryland",
-        "rev": "638a8acf6266cb81761d3e58be40fc8668ab623d",
+        "rev": "e1c2cad03fe6410c1d9301eae3cf1e1b7ec4cdf6",
         "type": "git"
     },
     "niv": {
@@ -23,10 +23,10 @@
         "homepage": "https://www.python.org/",
         "owner": "goodbyekansas",
         "repo": "cpython",
-        "rev": "d0c719fbf24dc652aee079a4576160b7e43ea250",
-        "sha256": "0alh7j1nsm5jysz7k6v4wpipvllrpjprr9ml0djpnhjxq3x98xpg",
+        "rev": "3c8f8d80d2f71197b702da6540af4f97e8fadafe",
+        "sha256": "1ify5di2fmxrk6ss22vskvvp63r92xm0g4d21y29slxp74vr4kmx",
         "type": "tarball",
-        "url": "https://github.com/goodbyekansas/cpython/archive/d0c719fbf24dc652aee079a4576160b7e43ea250.tar.gz",
+        "url": "https://github.com/goodbyekansas/cpython/archive/3c8f8d80d2f71197b702da6540af4f97e8fadafe.tar.gz",
         "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
     }
 }
