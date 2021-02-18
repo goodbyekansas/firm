@@ -1,10 +1,15 @@
 { base, pkgs, pythonSource, overrideCC, wasiPythonShims }:
+let
+  zlib = pkgs.pkgsCross.wasi32.zlib.override {
+    stdenv = pkgs.pkgsCross.wasi32.clang11Stdenv;
+  };
+in
 base.mkComponent {
   # we need clang 11 for being able to debug and print variables
   package = pkgs.pkgsCross.wasi32.clang11Stdenv.mkDerivation {
     name = "wasi-python38";
     src = pythonSource;
-    buildInputs = [ wasiPythonShims.package ];
+    buildInputs = [ wasiPythonShims.package zlib ];
     nativeBuildInputs = [ pkgs.autoreconfHook pkgs.pkg-config pkgs.python38 ];
     # gdb is needed for JIT debugging with lldb. I know, it's a weird relationship they have together.
     shellInputs = [ pkgs.bear pkgs.lldb_11 pkgs.gdb pkgs.wasmtime ];

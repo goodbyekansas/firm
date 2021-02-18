@@ -5,6 +5,7 @@ let
     firmApi = declareComponent ./examples/firm-api/firm-api.nix { };
     firmApiError = declareComponent ./examples/firm-api/firm-api-error.nix { };
     networking = declareComponent ./examples/networking/networking.nix { };
+    yamler = declareComponent ./examples/yamler/yamler.nix { };
   };
 
   env = (builtins.mapAttrs
@@ -44,6 +45,11 @@ let
 
   mkPackage = base.languages.rust.mkPackage.override { stdenv = pkgs.pkgsCross.wasi32.clang11Stdenv; };
 
+  zlib = pkgs.pkgsCross.wasi32.zlib.override {
+    stdenv = pkgs.pkgsCross.wasi32.clang11Stdenv;
+  };
+
+
 in
 base.mkComponent {
   name = "python-runtime";
@@ -63,7 +69,7 @@ base.mkComponent {
     nativeBuildInputs = [ pkgs.python3 pkgs.wasmtime ]
       ++ pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.llvmPackages_11.llvm;
 
-    buildInputs = [ firmRust.package firmTypes.package wasiPythonShims.package ];
+    buildInputs = [ firmRust.package firmTypes.package wasiPythonShims.package zlib ];
     shellInputs = [ pkgs.coreutils bendini.package avery.package pkgs.wabt pkgs.netcat-gnu ];
     shellHook = ''
       runApiExample()
@@ -90,8 +96,16 @@ base.mkComponent {
         command cargo run networking -i port=3333
         kill %1 && wait %1
       }
+
+      runDepsExample() {
+        echo "Running yaml dependency example"
+        command cargo run yamler \
+        -i yaml="$1" \
+        -i yamlkey="$2"
+      }
+
     '';
-    RUSTFLAGS = "-Ctarget-feature=-crt-static -Clinker-flavor=gcc -Clink-args=-lwasi-emulated-signal";
+    RUSTFLAGS = "-Ctarget-feature=-crt-static -Clinker-flavor=gcc -Clink-args=-lwasi-emulated-signal -lz";
     CARGO_TARGET_WASM32_WASI_RUNNER = runner {
       name = "python";
       inherit fileSystemImage;

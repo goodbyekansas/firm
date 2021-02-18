@@ -73,4 +73,5 @@ pub extern "C" fn init() -> *mut ffi::PyObject {
 
 pub fn load_py_module(py: Python<'_>) -> PyResult<&'_ PyModule> {
     PyModule::from_code(py, include_str!("socket.py"), "socket_shim", "socket")
+        .and_then(|_| PyModule::from_code(py, include_str!("select.py"), "select_shim", "select"))
 }
