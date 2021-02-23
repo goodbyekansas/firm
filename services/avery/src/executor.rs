@@ -349,7 +349,7 @@ impl AttachmentDownload for Attachment {
                 // validate integrity
                 self.checksums
                     .as_ref()
-                    .ok_or(RuntimeError::MissingChecksums)
+                    .ok_or_else(|| RuntimeError::MissingChecksums(self.name.clone()))
                     .and_then(|checksums| {
                         let mut hasher = Sha256::new();
                         hasher.update(&content);
@@ -410,8 +410,8 @@ pub enum RuntimeError {
     #[error("Function \"{0}\" did not have a runtime specified.")]
     MissingRuntime(String),
 
-    #[error("Function is missing checksums.")]
-    MissingChecksums,
+    #[error("Attachment \"{0}\" is missing checksums.")]
+    MissingChecksums(String),
 
     #[error("Function is missing id.")]
     FunctionMissingId,

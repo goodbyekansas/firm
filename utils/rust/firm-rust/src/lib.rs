@@ -38,6 +38,7 @@ impl ToResult for u32 {
             0 => Ok(()),
             // TODO: Major hack. We depend on that the numbers for
             // all errors will be the same forever (error.rs in wasi executor).
+            12 => Err(Error::FailedToFindAttachment("".to_owned())),
             6 => Err(Error::HostChannelNotFound),
             ec => Err(Error::HostError(ec)),
         }
@@ -457,6 +458,7 @@ pub mod runtime_context {
                 arguments: ::std::collections::HashMap::new(),
                 code: None,
                 entrypoint: "in-here".to_owned(),
+                name: "Yaharr!".to_owned(),
             };
             write_context!("super-context", written_ctx);
             let r = RuntimeContext::from_file("super-context");

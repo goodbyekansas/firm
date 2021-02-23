@@ -33,7 +33,7 @@ struct NestedWasiRuntime {
     wasi_runtime: wasi::WasiRuntime,
     runtime_name: String,
     runtime_executable: PathBuf,
-    runtime_checksums: Option<Checksums>,
+    runtime_checksums: Checksums,
     logger: Logger,
     runtime_context_folder: PathBuf,
 }
@@ -43,11 +43,11 @@ impl NestedWasiRuntime {
         name: &str,
         executable: &Path,
         runtime_context_folder: &Path,
-        checksums: Option<Checksums>,
+        checksums: Checksums,
         logger: Logger,
     ) -> Self {
         Self {
-            wasi_runtime: wasi::WasiRuntime::new(logger.new(o!("runtime" => "wasi"))),
+            wasi_runtime: wasi::WasiRuntime::new(logger.new(o!())),
             runtime_executable: executable.to_owned(),
             runtime_name: name.to_owned(),
             runtime_checksums: checksums,
@@ -79,6 +79,7 @@ impl Runtime for NestedWasiRuntime {
             code: runtime_parameters.code,
             entrypoint: runtime_parameters.entrypoint.unwrap_or_default(),
             arguments: runtime_parameters.arguments,
+            name: runtime_parameters.function_name.clone(),
         };
 
         std::fs::create_dir_all(&self.runtime_context_folder).map_err(|e| {
@@ -109,13 +110,13 @@ impl Runtime for NestedWasiRuntime {
                 output_sink: runtime_parameters.output_sink,
                 entrypoint: None,
                 code: Some(Attachment {
-                    name: format!("{}-code", self.runtime_name),
+                    name: format!("{}-runtime-code", self.runtime_name),
                     url: Some(AttachmentUrl {
                         url: format!("file://{}", self.runtime_executable.display()),
                         auth_method: AuthMethod::None as i32,
                     }),
                     metadata: HashMap::new(),
-                    checksums: self.runtime_checksums.clone(),
+                    checksums: Some(self.runtime_checksums.clone()),
                     created_at: self
                         .runtime_executable
                         .metadata()
@@ -174,30 +175,27 @@ fn create_nested_wasi_runtime(
     path: PathBuf,
     directory_checksums: &HashMap<String, TOMLChecksums>,
     logger: &Logger,
-) -> (String, RuntimeWrapper) {
-    let checksums = directory_checksums
-        .get(&format!("{}.{}", name, ext))
-        .map(|c| c.into());
-
+) -> Option<(String, RuntimeWrapper)> {
     let log = logger.new(o!(
         "runtime" => name.to_owned(),
         "parent runtime" => "wasi"
     ));
 
+    let checksums: Checksums = directory_checksums
+        .get(&format!("{}.{}", name, ext))
+        .map(|c| c.into())
+        .or_else(|| {
+            warn!(log, "Failed to find checksum for \"{}.{}\"", name, ext);
+            None
+        })?;
+
     let name = name.to_owned();
     let ext = ext.to_owned();
-    (
+    Some((
         name.clone(),
         Box::new(move |cache_dir: &Path| -> Option<Box<dyn Runtime>> {
             // unpack tar.gz to a cached location
-            let function_dir = cache_dir.join(format!(
-                "{}-{}",
-                &name,
-                checksums
-                    .as_ref()
-                    .map(|cs: &Checksums| &cs.sha256[..16])
-                    .unwrap_or("unknown")
-            ));
+            let function_dir = cache_dir.join(format!("{}-{}", &name, &checksums.sha256[..16]));
             let context_path = function_dir.join("context");
             Some(Box::new(
                 if ext == "wasm" {
@@ -244,7 +242,7 @@ fn create_nested_wasi_runtime(
                 .with_filesystem(context_path, "runtime-context"),
             ))
         }) as RuntimeWrapper,
-    )
+    ))
 }
 
 impl FileSystemSource {
@@ -267,17 +265,20 @@ impl FileSystemSource {
                     direntry
                         .ok()
                         .and_then(|direntry| {
-                            direntry.file_type().ok().and_then(|ft| {
-                                if ft.is_file() {
-                                    Some(direntry)
-                                } else {
-                                    None
-                                }
-                            })
+                            direntry
+                                .path()
+                                .canonicalize()
+                                .map_err(|e| {
+                                    warn!(
+                                        logger,
+                                        "Failed to resolve directory entry: {}. Skipping!", e
+                                    );
+                                })
+                                .ok()
+                                .and_then(|path| if path.is_dir() { None } else { Some(path) })
                         })
-                        .and_then(|direntry| {
-                            let p = direntry.path();
-                            p.file_name().and_then(|filename| {
+                        .and_then(|path| {
+                            path.file_name().and_then(|filename| {
                                 let filename = filename.to_string_lossy();
                                 let filename = filename.as_ref();
                                 let (stem, extension) = {
@@ -291,13 +292,13 @@ impl FileSystemSource {
                                             fs_source_logger,
                                             "found runtime {} from file {}", stem, filename
                                         );
-                                        Some(create_nested_wasi_runtime(
+                                        create_nested_wasi_runtime(
                                             stem,
                                             e,
-                                            p.clone(),
+                                            path.clone(),
                                             &directory_checksums,
                                             &logger,
-                                        ))
+                                        )
                                     }
                                     _ => None,
                                 })
@@ -337,6 +338,9 @@ mod tests {
         ($fss:ident, $body:block) => {{
             let td = TempDir::new().unwrap();
             let td_fs = TempDir::new().unwrap();
+
+            let symlink_folder = TempDir::new().unwrap();
+
             std::fs::create_dir_all(td_fs.path().join("fönster/puts")).unwrap();
             std::fs::create_dir_all(td_fs.path().join("fönster/hasp")).unwrap();
             let hello_bytes = include_bytes!("hello.wasm");
@@ -344,6 +348,21 @@ mod tests {
             std::fs::write(&td.path().join("bad.wasm"), hello_bytes).unwrap();
             std::fs::write(&td.path().join("missing.wasm"), hello_bytes).unwrap();
             std::fs::write(&td.path().join("good.wasm"), hello_bytes).unwrap();
+
+            let link_path = symlink_folder.path().join("symlink.wasm");
+            std::fs::write(&link_path, hello_bytes).unwrap();
+
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(&link_path, &td.path().join("symlink.wasm")).unwrap();
+            }
+
+            #[cfg(windows)]
+            {
+                std::os::windows::fs::symlink_file(&link_path, &td.path().join("symlink.wasm"))
+                    .unwrap();
+            }
+
             let mut archive_bad = tar::Builder::new(GzEncoder::new(
                 File::create(&td.path().join("bad_archived.tar.gz")).unwrap(),
                 Compression::default(),
@@ -374,6 +393,14 @@ mod tests {
 
             checksums.insert(
                 String::from("good.wasm"),
+                TOMLChecksums {
+                    sha256: hex::encode(sha2::Sha256::digest(hello_bytes)),
+                    executable_sha256: None,
+                },
+            );
+
+            checksums.insert(
+                String::from("symlink.wasm"),
                 TOMLChecksums {
                     sha256: hex::encode(sha2::Sha256::digest(hello_bytes)),
                     executable_sha256: None,
@@ -439,10 +466,25 @@ mod tests {
                 fss.get("kryptid").is_none(),
                 "asking for a non-existing runtime should give none"
             );
+            assert!(
+                fss.get("symlink").is_some(),
+                "asking for an existing symlinked runtime should give something"
+            );
 
             let good = fss.get("good").unwrap();
             let res = good.execute(RuntimeParameters::new("good"), ValueStream::new(), vec![]);
             assert!(res.is_ok(), "Expected to execute successfully.");
+
+            let symlink = fss.get("symlink").unwrap();
+            let res = symlink.execute(
+                RuntimeParameters::new("symlink"),
+                ValueStream::new(),
+                vec![],
+            );
+            assert!(
+                res.is_ok(),
+                "Expected to execute symlink runtime successfully."
+            );
         });
     }
 

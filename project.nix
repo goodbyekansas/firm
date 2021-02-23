@@ -7,6 +7,7 @@ nedryland.mkProject {
   name = "firm";
   baseExtensions = [
     ./extensions/nedryland/function.nix
+    ./extensions/nedryland/runtime.nix
   ];
 
   components = { callFile }: rec {

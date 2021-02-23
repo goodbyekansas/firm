@@ -58,7 +58,7 @@ if [ -n "${fsimage:-}" ]; then
 
     # -h to resolve symlinks
     # also set mode because of https://github.com/alexcrichton/tar-rs/issues/242
-    echo "📦 creating tar file for runtime filesystem image..."
+    echo "📦 creating tar file for runtime filesystem image at $runtime_dir/$runtime..."
     tar -chzf "$runtime_dir/$runtime" --mode='a+rwX' -C "$tmp_tar_dir" fs -C "$(dirname $executable)" "$(basename $executable)"
     echo "🌅 Image created!"
 else
@@ -82,7 +82,8 @@ avery --config "$avery_dir/avery.toml" &
 trap_command+="; kill -s SIGTERM %1 && wait %1"
 
 echo "🏒 Running example ${example} at ${!example}"
-${!example}/bin/deploy
+
+command "${!example}/bin/deploy"
 
 namevar="${example}_name"
 command bendini run "${!namevar}:*" --follow "$@"

@@ -15,8 +15,11 @@ let
       )
       { };
 
-  mkFunction = attrs@{ name, package, manifest, code, deploy ? true, ... }:
+  mkFunction = attrs_@{ name, package, manifest, code, deploy ? true, ... }:
     let
+      # deploy is a "magic" target on all components
+      # so do not override it
+      attrs = builtins.removeAttrs attrs_ [ "deploy" ];
       manifestGenerator = pkgs.callPackage ./manifest.nix {
         inherit name;
         manifest = manifest // {
@@ -26,20 +29,9 @@ let
         };
       };
 
-      packageWithManifest = package.overrideAttrs (oldAttrs:
-        # if phases have not been changed or if it has but still contains
-        # installPhase we are fine
-        (if !(oldAttrs ? phases) || builtins.elem "installPhase" oldAttrs.phases then {
-          nativeBuildInputs = oldAttrs.nativeBuildInputs or [ ] ++ [ manifestGenerator ];
-          installPhase = ''
-            ${oldAttrs.installPhase or ""}
-            generateManifest
-          '';
-        }
-        else
-          builtins.abort "\"installPhase\" needs to be in \"phases\" for function manifest generation to work"
-        )
-      );
+      packageWithManifest = package.overrideAttrs (oldAttrs: {
+        nativeBuildInputs = oldAttrs.nativeBuildInputs or [ ] ++ [ manifestGenerator ];
+      });
     in
     base.mkComponent (
       attrs // {
@@ -54,9 +46,8 @@ let
     );
 in
 base.extend.mkExtension {
-  componentTypes = base.extend.mkComponentType {
-    name = "function";
-    createFunction = mkFunction;
+  componentTypes = {
+    inherit mkFunction;
   };
   deployFunctions = {
     inherit deployFunction;
@@ -93,9 +84,11 @@ base.extend.mkExtension {
           newPackage = package.overrideAttrs (
             oldAttrs: {
               installPhase = ''
+                runHook preInstall
                 ${oldAttrs.installPhase}
                 mkdir -p $out/bin
                 cp target/wasm32-wasi/release/*.wasm $out/bin
+                runHook postInstall
               '';
             }
           );
@@ -152,13 +145,15 @@ base.extend.mkExtension {
 
             src = if pkgs.lib.isStorePath src then src else (builtins.path { path = src; inherit name; });
 
-            phases = [ "unpackPhase" "installPhase" ];
+            phases = [ "unpackPhase" "installPhase" "generateManifestPhase" ];
             nativeBuildInputs = [ pkgs.python38.pkgs.setuptools ];
 
             installPhase = ''
               mkdir $out
+              runHook preInstall
               ${pkgs.python38}/bin/python setup.py sdist --dist-dir dist --formats=gztar
               cp dist/*.tar.gz $out/code.tar.gz
+              runHook postInstall
             '';
           };
           manifest = {
