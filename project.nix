@@ -110,14 +110,15 @@ let
   );
 in
 # create the build grid (accessed with nix-build, exposed through default.nix)
-project.mkGrid {
-  inherit components;
+project.mkGrid
+  {
+    inherit components;
 
-  # create the project shells (accessed with nix-shell, exposed through shell.nix)
-  extraShells = { };
+    # create the project shells (accessed with nix-shell, exposed through shell.nix)
+    extraShells = { };
 
-  # Add functions and other things you want to re-export, making it publicly visible to users of firm.
-  lib = {
-    inherit setupFunctionDeployment;
-  };
-}
+    # Add functions and other things you want to re-export, making it publicly visible to users of firm.
+    lib = {
+      inherit setupFunctionDeployment;
+    };
+  } // { inherit nedryland; }
