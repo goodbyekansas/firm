@@ -1,16 +1,16 @@
-{ base, pkgs, firmRust, firmTypes, wasiPython, avery, bendini, declareComponent, runCommand, wasiPythonShims }:
+{ base, pkgs, firmRust, firmTypes, avery, bendini, wasiPython, runCommand, wasiPythonShims }:
 let
   examples = {
-    hello = declareComponent ./examples/hello/hello.nix { };
-    firmApi = declareComponent ./examples/firm-api/firm-api.nix { };
-    firmApiError = declareComponent ./examples/firm-api/firm-api-error.nix { };
-    networking = declareComponent ./examples/networking/networking.nix { };
-    yamler = declareComponent ./examples/yamler/yamler.nix { };
+    hello = base.callFile ./examples/hello/hello.nix { };
+    firmApi = base.callFile ./examples/firm-api/firm-api.nix { };
+    firmApiError = base.callFile ./examples/firm-api/firm-api-error.nix { };
+    networking = base.callFile ./examples/networking/networking.nix { };
+    yamler = base.callFile ./examples/yamler/yamler.nix { };
   };
 
   env = (builtins.mapAttrs
     (n: v: {
-      function = (v.deployment.function { bendini = bendini.package; });
+      function = (v.deployment.function { });
       name = v.package.name;
     })
     examples);
@@ -19,7 +19,9 @@ let
     text = builtins.foldl'
       (acc: curr: ''
         ${acc}
-        declare -x ${curr}="${builtins.replaceStrings [ "$" "\"" ] [ "\\$" "\\\"" ] (builtins.toString (builtins.getAttr curr env).function)}"
+        declare -x ${curr}="${builtins.replaceStrings [ "$" "\"" ] [ "\\$" "\\\"" ] (
+          builtins.toString (builtins.getAttr curr env).function
+        )}"
         declare -x ${curr}_name="${(builtins.getAttr curr env).name}"
       '')
       ""

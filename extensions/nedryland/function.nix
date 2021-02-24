@@ -1,12 +1,12 @@
-{ base, pkgs }:
+{ base, pkgs, bendini }:
 let
   deployFunction = { package }:
-    { bendini, endpoint ? "tcp://[::1]", port ? 1939 }: base.deployment.mkDeployment {
+    { endpoint ? "tcp://[::1]", port ? 1939 }: base.deployment.mkDeployment {
       name = "deploy-${package.name}";
       preDeploy = "";
       postDeploy = "";
       deployPhase = ''
-        SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ${bendini}/bin/bendini \
+        SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ${bendini.package}/bin/bendini \
         --address ${endpoint} \
         --port ${builtins.toString port} \
         register ${package}/manifest.toml
