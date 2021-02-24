@@ -1,4 +1,4 @@
-{ base, pkgs }:
+{ base, python3 }:
 rec{
   source = ./.;
   withoutServices = base.languages.protobuf.mkModule {
@@ -6,7 +6,7 @@ rec{
     src = source;
     version = "0.1.0";
     languages = [ base.languages.rust base.languages.python ];
-    pythonVersion = pkgs.python3;
+    pythonVersion = python3;
     includeServices = false;
   };
   withServices = base.languages.protobuf.mkModule {
@@ -14,7 +14,7 @@ rec{
     src = source;
     version = "0.1.0";
     languages = [ base.languages.rust base.languages.python ];
-    pythonVersion = pkgs.python3;
+    pythonVersion = python3;
     includeServices = true;
   };
 }
