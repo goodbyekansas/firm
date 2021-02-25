@@ -24,11 +24,18 @@ let
         };
       };
 
-      packageWithManifest = package.overrideAttrs (oldAttrs: {
-        # make sure we have the manifest generation phase (last)
-        phases = oldAttrs.phases or [ ] ++ [ "generateManifestPhase" ];
-        nativeBuildInputs = oldAttrs.nativeBuildInputs or [ ] ++ [ manifestGenerator ];
-      });
+      packageWithManifest = package.overrideAttrs (oldAttrs:
+        (if builtins.elem "installPhase" oldAttrs.phases then {
+          nativeBuildInputs = oldAttrs.nativeBuildInputs or [ ] ++ [ manifestGenerator ];
+          installPhase = ''
+            ${oldAttrs.installPhase or ""}
+            generateManifest
+          '';
+        }
+        else
+          builtins.abort "\"installPhase\" needs to be in \"phases\" for function manifest generation to work"
+        )
+      );
     in
     base.mkComponent (
       attrs // {

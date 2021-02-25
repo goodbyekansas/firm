@@ -1,5 +1,3 @@
-generateManifestPhase="generateManifest"
-
 generateManifest() {
 
   echo "  📜 [manifest] Creating output manifest..."
@@ -24,3 +22,6 @@ generateManifest() {
     -o $out/manifest.toml | sed "s/^/  📜 [manifest] /"
   echo "  📜 [manifest] Manifest written to $out/manifest.toml"
 }
+
+# Do not actually add generateManifest to any phases. We will insert an
+# explicit call to it in the installPhase of the package.

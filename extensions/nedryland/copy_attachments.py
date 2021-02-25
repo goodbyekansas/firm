@@ -52,7 +52,7 @@ if __name__ == "__main__":
         target = os.path.join(args.outputfolder, name)
         if not os.path.exists(attachment["path"]):
             print(
-                f"Attachment {name} is required but does not exist at {attachment['path']}, exiting..."
+                f"Attachment {name} is required but does not exist at {os.path.abspath(attachment['path'])}, exiting..."
             )
             sys.exit(1)
 
