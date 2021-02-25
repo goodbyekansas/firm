@@ -10,7 +10,7 @@ let
 
   env = (builtins.mapAttrs
     (n: v: {
-      function = (v.deployment.function { });
+      function = v.deployment.function;
       name = v.package.name;
     })
     examples);
