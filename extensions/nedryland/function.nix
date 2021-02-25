@@ -27,7 +27,9 @@ let
       };
 
       packageWithManifest = package.overrideAttrs (oldAttrs:
-        (if builtins.elem "installPhase" oldAttrs.phases then {
+        # if phases have not been changed or if it has but still contains
+        # installPhase we are fine
+        (if !(oldAttrs ? phases) || builtins.elem "installPhase" oldAttrs.phases then {
           nativeBuildInputs = oldAttrs.nativeBuildInputs or [ ] ++ [ manifestGenerator ];
           installPhase = ''
             ${oldAttrs.installPhase or ""}
