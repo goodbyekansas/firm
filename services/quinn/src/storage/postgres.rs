@@ -623,10 +623,8 @@ impl storage::FunctionStorage for PostgresStorage {
 #[cfg(all(test, feature = "postgres-tests"))]
 mod tests {
     use std::collections::HashMap;
-    use std::{
-        panic::{self, AssertUnwindSafe},
-        sync::Mutex,
-    };
+    use std::panic::{self, AssertUnwindSafe};
+    use tokio::sync::Mutex;
 
     use futures::FutureExt;
     use lazy_static::lazy_static;
@@ -655,7 +653,7 @@ mod tests {
             .await
             .unwrap();
             let url = Url::parse(&config.functions_storage_uri).unwrap();
-            let guard = SQL_MUTEX.lock().unwrap();
+            let guard = SQL_MUTEX.lock().await;
             if let Err(e) = AssertUnwindSafe(async move {
                 let $database = PostgresStorage::new_with_init(&url, null_logger!()).await;
                 if let Ok(ref db) = $database {
@@ -1076,50 +1074,59 @@ mod tests {
             );
 
             // Test filtering
-            let mut filt = storage::Filters::default();
-            filt.name = Some({
-                let mut nf = storage::NameFilter::default();
-                nf.pattern = "A".to_owned();
-                nf
-            });
-            let res = storage.list(&filt).await;
+            let res = storage
+                .list(&storage::Filters {
+                    name: Some(storage::NameFilter {
+                        pattern: "A".to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
 
             let rows = res.unwrap();
             assert_eq!(rows.len(), 1);
 
             // Test not finding
-            let mut filt = storage::Filters::default();
-            filt.name = Some({
-                let mut nf = storage::NameFilter::default();
-                nf.pattern = "B".to_owned();
-                nf
-            });
-            let res = storage.list(&filt).await;
+            let res = storage
+                .list(&storage::Filters {
+                    name: Some(storage::NameFilter {
+                        pattern: "B".to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
 
             let rows = res.unwrap();
             assert!(rows.is_empty());
 
             // Test exact name match
-            let mut filt = storage::Filters::default();
-            filt.name = Some(storage::NameFilter {
-                pattern: "a".to_owned(),
-                exact_match: true,
-            });
-
-            let res = storage.list(&filt).await;
+            let res = storage
+                .list(&storage::Filters {
+                    name: Some(storage::NameFilter {
+                        pattern: "a".to_owned(),
+                        exact_match: true,
+                    }),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
 
             let rows = res.unwrap();
             assert!(rows.is_empty());
 
-            filt.name = Some({
-                let mut nf = storage::NameFilter::default();
-                nf.pattern = "Aaa".to_owned();
-                nf
-            });
-            let res = storage.list(&filt).await;
+            let res = storage
+                .list(&storage::Filters {
+                    name: Some(storage::NameFilter {
+                        pattern: "Aaa".to_owned(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
 
             let rows = res.unwrap();
@@ -1130,10 +1137,12 @@ mod tests {
             );
 
             // Metadata filtering
-            let mut filt = storage::Filters::default();
-            filt.metadata = hashmap!("fisk".to_owned() => Some("haj".to_owned()), "snake".to_owned() => Some("snek".to_owned()));
-
-            let res = storage.list(&filt).await;
+            let res = storage
+            .list(&storage::Filters {
+                metadata: hashmap!("fisk".to_owned() => Some("haj".to_owned()), "snake".to_owned() => Some("snek".to_owned())),
+                ..Default::default()
+            })
+            .await;
             assert!(res.is_ok());
 
             let rows = res.unwrap();
@@ -1144,25 +1153,36 @@ mod tests {
             );
 
             // Existing key and wrong value is not a match
-            filt.metadata = hashmap!("fisk".to_owned() => Some("🦈".to_owned()));
-            let res = storage.list(&filt).await;
+            let res = storage
+                .list(&storage::Filters {
+                    metadata: hashmap!("fisk".to_owned() => Some("🦈".to_owned())),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
 
             let rows = res.unwrap();
             assert!(rows.is_empty());
 
             // Existing key with other key's value is not a match
-            filt.metadata = hashmap!("fisk".to_owned() => Some("🐍".to_owned()));
-            let res = storage.list(&filt).await;
+            let res = storage
+                .list(&storage::Filters {
+                    metadata: hashmap!("fisk".to_owned() => Some("🐍".to_owned())),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
 
             let rows = res.unwrap();
             assert!(rows.is_empty());
 
             // Check that filtering on key only work
-            filt.metadata = hashmap!("fisk".to_owned() => None);
-
-            let res = storage.list(&filt).await;
+            let res = storage
+                .list(&storage::Filters {
+                    metadata: hashmap!("fisk".to_owned() => None),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
 
             let rows = res.unwrap();
@@ -1254,15 +1274,16 @@ mod tests {
             let function2_1_0_0_id =
                 storage::FunctionId::from(&storage.insert(function2_1_0_0).await.unwrap());
 
-            let mut filters = storage::Filters::default();
-            filters.order = Some({
-                let mut o = storage::Ordering::default();
-                o.offset = 2;
-                o.limit = 2;
-                o
-            });
-
-            let res = storage.list(&filters).await;
+            let res = storage
+                .list(&storage::Filters {
+                    order: Some(storage::Ordering {
+                        offset: 2,
+                        limit: 2,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 2);
@@ -1273,15 +1294,16 @@ mod tests {
             );
 
             // reverse
-            let mut filters = storage::Filters::default();
-            filters.order = Some({
-                let mut o = storage::Ordering::default();
-                o.limit = 1;
-                o.reverse = true;
-                o
-            });
-
-            let res = storage.list(&filters).await;
+            let res = storage
+                .list(&storage::Filters {
+                    order: Some(storage::Ordering {
+                        limit: 1,
+                        reverse: true,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.first().map(|f| f.name.as_ref()), Some("function2"));
@@ -1381,13 +1403,15 @@ mod tests {
             let _function2_1_10_0_jaws_id =
                 storage::FunctionId::from(&storage.insert(function2_1_10_0_jaws).await.unwrap());
 
-            let mut filters = storage::Filters::default();
-            filters.order = Some({
-                let mut o = storage::Ordering::default();
-                o.limit = 3;
-                o
-            });
-            let res = storage.list(&filters).await;
+            let res = storage
+                .list(&storage::Filters {
+                    order: Some(storage::Ordering {
+                        limit: 3,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(
@@ -1542,8 +1566,10 @@ mod tests {
                 storage::FunctionId::from(&storage.insert(function_1_2_0_beta).await.unwrap());
 
             // Exact match
-            let mut filter = storage::Filters::default();
-            filter.version_requirement = Some(VersionReq::parse("=1.0.0").unwrap());
+            let mut filter = storage::Filters {
+                version_requirement: Some(VersionReq::parse("=1.0.0").unwrap()),
+                ..Default::default()
+            };
             let res = storage.list(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();

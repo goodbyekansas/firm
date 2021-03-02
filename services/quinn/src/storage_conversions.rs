@@ -88,10 +88,10 @@ impl TryFrom<Filters> for storage::Filters {
     }
 }
 
-impl TryFrom<firm_types::functions::Runtime> for storage::Runtime {
+impl TryFrom<firm_types::functions::RuntimeSpec> for storage::Runtime {
     type Error = tonic::Status;
 
-    fn try_from(value: firm_types::functions::Runtime) -> Result<Self, Self::Error> {
+    fn try_from(value: firm_types::functions::RuntimeSpec) -> Result<Self, Self::Error> {
         Ok(storage::Runtime {
             name: value.name.check_empty("runtime.name")?,
             entrypoint: value.entrypoint,
@@ -268,7 +268,7 @@ impl FunctionResolver for &Function {
         attachment_store: &dyn AttachmentStorage,
     ) -> Result<ProtoFunction, StorageError> {
         Ok(ProtoFunction {
-            runtime: Some(firm_types::functions::Runtime {
+            runtime: Some(firm_types::functions::RuntimeSpec {
                 name: self.runtime.name.clone(),
                 entrypoint: self.runtime.entrypoint.clone(),
                 arguments: self.runtime.arguments.clone(),

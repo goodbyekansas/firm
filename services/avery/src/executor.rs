@@ -14,13 +14,13 @@ use url::Url;
 
 use crate::runtime::{Runtime, RuntimeParameters, RuntimeSource};
 use firm_types::{
-    functions::Function,
-    functions::FunctionOutputChunk,
     functions::{
         execution_result::Result as ProtoResult,
         execution_server::Execution as ExecutionServiceTrait, registry_server::Registry,
         Attachment, AuthMethod, ExecutionError, ExecutionId, ExecutionParameters, ExecutionResult,
-        Filters, NameFilter, Ordering, OrderingKey, Stream as ValueStream, VersionRequirement,
+        Filters, Function, FunctionOutputChunk, NameFilter, Ordering, OrderingKey,
+        Runtime as ProtoRuntime, RuntimeFilters, RuntimeList, Stream as ValueStream,
+        VersionRequirement,
     },
     stream::StreamExt,
     tonic,
@@ -94,7 +94,7 @@ impl ExecutionService {
 
     /// Lookup a runtime for the given `runtime_name`
     ///
-    /// If an runtime is not supported, an error is returned
+    /// If a runtime is not supported, an error is returned
     pub async fn lookup_runtime(
         &self,
         runtime_name: &str,
@@ -318,6 +318,36 @@ impl ExecutionServiceTrait for ExecutionService {
     }
 
     type FunctionOutputStream = Receiver<Result<FunctionOutputChunk, tonic::Status>>;
+
+    async fn list_runtimes(
+        &self,
+        request: tonic::Request<RuntimeFilters>,
+    ) -> Result<tonic::Response<RuntimeList>, tonic::Status> {
+        let payload = request.into_inner();
+        Ok(tonic::Response::new(RuntimeList {
+            runtimes: self
+                .runtime_sources
+                .iter()
+                .flat_map(|runtime_src| {
+                    let src_name = runtime_src.name().to_owned();
+                    let filter_name = payload.name.clone();
+                    runtime_src
+                        .list()
+                        .into_iter()
+                        .filter_map(move |runtime_name| {
+                            if runtime_name.contains(&filter_name) {
+                                Some(ProtoRuntime {
+                                    name: runtime_name,
+                                    source: src_name.clone(),
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .collect(),
+        }))
+    }
 }
 
 pub trait AttachmentDownload {
@@ -518,5 +548,68 @@ mod tests {
             res.unwrap_err(),
             RuntimeError::RuntimeNotFound(..)
         ));
+    }
+
+    #[test]
+    fn list_runtimes() {
+        // get the runtimes
+        let fr = registry!();
+        let execution_service = ExecutionService::new(
+            null_logger!(),
+            Box::new(fr),
+            vec![Box::new(runtime::InternalRuntimeSource::new(
+                null_logger!(),
+            ))],
+        );
+
+        let res = futures::executor::block_on(execution_service.list_runtimes(
+            tonic::Request::new(RuntimeFilters {
+                name: String::new(),
+            }),
+        ));
+        assert!(
+            res.is_ok(),
+            "Expected to be able to list runtimes without a filter"
+        );
+        let res = res.unwrap().into_inner();
+        assert_eq!(
+            &res.runtimes,
+            &[ProtoRuntime {
+                name: "wasi".to_owned(),
+                source: "internal".to_owned()
+            }]
+        );
+
+        // with a filter this time
+        let res = futures::executor::block_on(execution_service.list_runtimes(
+            tonic::Request::new(RuntimeFilters {
+                name: String::from("asi"),
+            }),
+        ));
+        assert!(
+            res.is_ok(),
+            "Expected to be able to list runtimes with a filter"
+        );
+        let res = res.unwrap().into_inner();
+        assert_eq!(
+            &res.runtimes,
+            &[ProtoRuntime {
+                name: "wasi".to_owned(),
+                source: "internal".to_owned()
+            }]
+        );
+
+        // with bad filter
+        let res = futures::executor::block_on(execution_service.list_runtimes(
+            tonic::Request::new(RuntimeFilters {
+                name: String::from("wasabi"),
+            }),
+        ));
+        assert!(
+            res.is_ok(),
+            "Expected to be able to list runtimes with a filter"
+        );
+        let res = res.unwrap().into_inner();
+        assert!(res.runtimes.is_empty(), "Expected no matches for wasabi");
     }
 }

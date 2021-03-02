@@ -46,6 +46,13 @@ enum Command {
         pipeable_output: bool,
     },
 
+    /// List available runtimes
+    ListRuntimes {
+        /// List only runtimes matching name
+        #[structopt(short, long)]
+        name: Option<String>,
+    },
+
     /// Register a new function
     Register {
         /// Path to a manifest or path to
@@ -175,5 +182,16 @@ async fn run() -> Result<(), error::BendiniError> {
             .await
         }
         Command::Get { function_id } => commands::get::run(client, function_id).await,
+        Command::ListRuntimes { name } => {
+            commands::list_runtimes::run(
+                ExecutionClient::connect("http://[::1]:1939")
+                    .await
+                    .map_err(|e| {
+                        BendiniError::ConnectionError("local avery".to_owned(), e.to_string())
+                    })?,
+                name.unwrap_or_default(),
+            )
+            .await
+        } // TODO find a way to express execution host vs registry host
     }
 }

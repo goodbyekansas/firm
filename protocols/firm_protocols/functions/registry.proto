@@ -61,7 +61,7 @@ message FunctionData {
   map<string, firm_protocols.functions.ChannelSpec> optional_inputs = 5;
   map<string, firm_protocols.functions.ChannelSpec> outputs = 6;
   AttachmentId code_attachment_id = 7;
-  firm_protocols.functions.Runtime runtime = 8;
+  firm_protocols.functions.RuntimeSpec runtime = 8;
   repeated AttachmentId attachment_ids = 9;
 }
 

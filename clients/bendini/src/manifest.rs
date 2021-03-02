@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use firm_types::functions::{
     AttachmentData, ChannelSpec, ChannelType, Checksums as ProtoChecksums, FunctionData,
-    Runtime as ProtoRuntime,
+    RuntimeSpec as ProtoRuntimeSpec,
 };
 
 #[derive(Debug, Error)]
@@ -260,7 +260,7 @@ impl From<&FunctionManifest> for FunctionData {
                 })
                 .collect(),
             code_attachment_id: None,
-            runtime: Some(ProtoRuntime {
+            runtime: Some(ProtoRuntimeSpec {
                 name: fm.runtime.r#type.clone(),
                 arguments: fm.runtime.args.clone(),
                 entrypoint: fm.runtime.entrypoint.clone(),
@@ -304,7 +304,7 @@ mod tests {
 
     use tempfile::{NamedTempFile, TempDir};
 
-    use firm_types::{attachment_data, runtime};
+    use firm_types::{attachment_data, runtime_spec};
 
     macro_rules! write_toml_to_tempfile {
         ($toml: expr) => {{
@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(rr.name, "super-simple");
         assert_eq!(rr.version, "0.1.0");
 
-        assert_eq!(rr.runtime, Some(runtime!("wasm")));
+        assert_eq!(rr.runtime, Some(runtime_spec!("wasm")));
 
         let toml = r#"
         name = "super-simple"
