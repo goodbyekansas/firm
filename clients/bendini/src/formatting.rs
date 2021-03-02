@@ -6,7 +6,7 @@ use std::{
 use ansi_term::Colour::Green;
 use firm_types::functions::{
     channel::Value, execution_result::Result as FunctionResult, Channel, ChannelSpec, ChannelType,
-    ExecutionResult, Function, Runtime, Stream,
+    ExecutionResult, Function, Runtime, RuntimeSpec, Stream,
 };
 use futures::{future::join, Future};
 use indicatif::MultiProgress;
@@ -92,7 +92,7 @@ impl Display for Displayer<'_, Function> {
                 INDENT,
                 self.runtime
                     .as_ref()
-                    .unwrap_or(&Runtime {
+                    .unwrap_or(&RuntimeSpec {
                         name: "n/a".to_string(),
                         arguments: HashMap::default(),
                         entrypoint: "n/a".to_string(),
@@ -250,6 +250,23 @@ impl Display for Displayer<'_, Channel> {
                     .join(" "),
                 None => "null".to_owned(),
             }
+        )
+    }
+}
+
+impl Display for Displayer<'_, Runtime> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.format == DisplayFormat::JSON {
+            // TODO: return write!(f, "{}", self.serialize());
+            return Ok(());
+        }
+
+        writeln!(
+            f,
+            "{}{} ({})",
+            INDENT,
+            Green.paint(&self.name),
+            &self.source
         )
     }
 }

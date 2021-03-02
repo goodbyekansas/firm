@@ -20,7 +20,7 @@ use firm_types::{
         registry_server::Registry, Attachment, AttachmentData, AttachmentHandle, AttachmentId,
         AttachmentStreamUpload, AttachmentUrl, AuthMethod, ChannelSpec, Filters,
         Function as ProtoFunction, FunctionData, FunctionId, Functions, Ordering, OrderingKey,
-        Runtime,
+        RuntimeSpec,
     },
     tonic,
 };
@@ -38,7 +38,7 @@ struct Function {
     name: String,
     created_at: u64,
     version: Version,
-    runtime: Runtime,
+    runtime: RuntimeSpec,
     required_inputs: HashMap<String, ChannelSpec>,
     optional_inputs: HashMap<String, ChannelSpec>,
     outputs: HashMap<String, ChannelSpec>,

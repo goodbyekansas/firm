@@ -4,7 +4,7 @@ use firm_types::{
 };
 use quinn::{config, registry::RegistryService, storage::OrderingKey};
 
-use firm_types::{attachment_data, filters, function_data, runtime};
+use firm_types::{attachment_data, filters, function_data, runtime_spec};
 use std::collections::HashMap;
 
 macro_rules! null_logger {
@@ -186,7 +186,7 @@ fn list_metadata_filtering() {
     futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
         "matrix-1",
         "0.0.1",
-        runtime!(),
+        runtime_spec!(),
         {"a" => "neo", "b" => "smith"}
     ))))
     .unwrap();
@@ -219,7 +219,7 @@ fn list_metadata_key_filtering() {
     futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
         "words",
         "0.1.0",
-        runtime!(),
+        runtime_spec!(),
         {"potato" => "foot", "fish" => "green"}
     ))))
     .unwrap();

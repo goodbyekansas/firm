@@ -7,6 +7,7 @@ service Execution {
   rpc QueueFunction (ExecutionParameters) returns (ExecutionId);
   rpc RunFunction (ExecutionId) returns (ExecutionResult);
   rpc FunctionOutput (ExecutionId) returns (stream FunctionOutputChunk);
+  rpc ListRuntimes (RuntimeFilters) returns (RuntimeList);
 }
 
 message FunctionOutputChunk {
@@ -80,3 +81,15 @@ message ExecutionError {
   string msg = 1;
 }
 
+message RuntimeFilters {
+  string name = 1;
+}
+
+message Runtime {
+  string name = 1;
+  string source = 2;
+}
+
+message RuntimeList {
+  repeated Runtime runtimes = 1;
+}

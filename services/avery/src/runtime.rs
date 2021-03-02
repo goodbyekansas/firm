@@ -63,6 +63,8 @@ pub trait Runtime: Debug + Send {
 
 pub trait RuntimeSource: Send + Sync {
     fn get(&self, name: &str) -> Option<Box<dyn Runtime>>;
+    fn list(&self) -> Vec<String>;
+    fn name(&self) -> &'static str;
 }
 
 #[derive(Debug)]
@@ -84,5 +86,13 @@ impl RuntimeSource for InternalRuntimeSource {
             ))),
             _ => None,
         }
+    }
+
+    fn list(&self) -> Vec<String> {
+        vec!["wasi".to_owned()]
+    }
+
+    fn name(&self) -> &'static str {
+        "internal"
     }
 }

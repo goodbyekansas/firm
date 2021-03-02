@@ -92,26 +92,26 @@ macro_rules! output {
 macro_rules! function_data {
 
     ($name:expr, $version:expr) => {{
-        $crate::function_data!($name, $version, runtime!())
+        $crate::function_data!($name, $version, runtime_spec!())
     }};
 
-    ($name:expr, $version:expr, $runtime:expr) => {{
-        $crate::function_data!($name, $version, $runtime, {})
+    ($name:expr, $version:expr, $runtime_spec:expr) => {{
+        $crate::function_data!($name, $version, $runtime_spec, {})
     }};
 
-    ($name:expr, $version:expr, $runtime:expr, {$($key:expr => $value:expr),*}) => {{
-        $crate::function_data!($name, $version, $runtime, None, {$($key => $value),*})
+    ($name:expr, $version:expr, $runtime_spec:expr, {$($key:expr => $value:expr),*}) => {{
+        $crate::function_data!($name, $version, $runtime_spec, None, {$($key => $value),*})
     }};
 
-    ($name:expr, $version:expr, $runtime:expr, $code:expr, {$($key:expr => $value:expr),*}) => {{
-        $crate::function_data!($name, $version, $runtime, $code, [], {$($key => $value),*})
+    ($name:expr, $version:expr, $runtime_spec:expr, $code:expr, {$($key:expr => $value:expr),*}) => {{
+        $crate::function_data!($name, $version, $runtime_spec, $code, [], {$($key => $value),*})
     }};
 
-    ($name:expr, $version:expr, $runtime:expr, $code:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}) => {{
+    ($name:expr, $version:expr, $runtime_spec:expr, $code:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}) => {{
         $crate::function_data!(
             $name,
             $version,
-            $runtime,
+            $runtime_spec,
             $code,
             ::std::collections::HashMap::new(),
             ::std::collections::HashMap::new(),
@@ -120,7 +120,7 @@ macro_rules! function_data {
             {$($key => $value),*})
     }};
 
-    ($name:expr, $version:expr, $runtime:expr, $code:expr, $req_inputs:expr, $opt_inputs:expr, $outputs:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}) => {{
+    ($name:expr, $version:expr, $runtime_spec:expr, $code:expr, $req_inputs:expr, $opt_inputs:expr, $outputs:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}) => {{
         let mut metadata = ::std::collections::HashMap::new();
         $(
             metadata.insert(String::from($key), String::from($value));
@@ -128,7 +128,7 @@ macro_rules! function_data {
         $crate::functions::FunctionData {
             name: String::from($name),
             version: String::from($version),
-            runtime: ::std::option::Option::from($runtime),
+            runtime: ::std::option::Option::from($runtime_spec),
             code_attachment_id: ::std::option::Option::from($code),
             metadata,
             required_inputs: $req_inputs,
@@ -140,12 +140,12 @@ macro_rules! function_data {
 }
 
 #[macro_export]
-macro_rules! runtime {
+macro_rules! runtime_spec {
     () => {{
-        $crate::runtime!("runtime")
+        $crate::runtime_spec!("runtime")
     }};
     ($name:expr) => {{
-        $crate::functions::Runtime {
+        $crate::functions::RuntimeSpec {
             name: String::from($name),
             entrypoint: String::new(),
             arguments: ::std::collections::HashMap::new(),

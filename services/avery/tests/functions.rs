@@ -17,7 +17,7 @@ use firm_types::{
     tonic,
 };
 
-use firm_types::{channel_specs, filters, function_data, runtime, stream};
+use firm_types::{channel_specs, filters, function_data, runtime_spec, stream};
 
 macro_rules! null_logger {
     () => {{
@@ -97,7 +97,7 @@ async fn execute() {
         vec![function_data!(
             "say-hello-yourself",
             "0.1.0",
-            runtime!("wasi"),
+            runtime_spec!("wasi"),
             register_code_attachment!(
                 registry_service,
                 include_bytes!("../src/runtime/hello.wasm").to_vec(),

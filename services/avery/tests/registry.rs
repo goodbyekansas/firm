@@ -12,7 +12,7 @@ use firm_types::{
     tonic,
 };
 
-use firm_types::{attachment_data, filters, function_data, runtime};
+use firm_types::{attachment_data, filters, function_data, runtime_spec};
 
 use avery::{config::InternalRegistryConfig, registry::RegistryService as LocalRegistryService};
 
@@ -91,7 +91,7 @@ fn test_list_metadata_filtering() {
     futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
         "matrix-1",
         "0.0.1",
-        runtime!(),
+        runtime_spec!(),
         {"a" => "neo", "b" => "smith"}
     ))))
     .unwrap();
@@ -124,7 +124,7 @@ fn test_list_metadata_key_filtering() {
     futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
         "words",
         "0.1.0",
-        runtime!(),
+        runtime_spec!(),
         {"potato" => "foot", "fish" => "green"}
     ))))
     .unwrap();
@@ -349,7 +349,7 @@ fn test_register_function() {
 
     // Testing if we can register a valid function
     let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
-        function_data!("my-name", "0.2.111111", runtime!()),
+        function_data!("my-name", "0.2.111111", runtime_spec!()),
     )));
     assert!(register_result.is_ok());
 }
@@ -358,7 +358,7 @@ fn test_register_function() {
 fn test_register_dev_version() {
     let fr = registry!();
     let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
-        function_data!("my-name", "0.1.2", runtime!()),
+        function_data!("my-name", "0.1.2", runtime_spec!()),
     )))
     .unwrap()
     .into_inner();
@@ -375,7 +375,7 @@ fn test_register_dev_version() {
     // Register a function with a pre-release and make sure it is preserved
     let fr = registry!();
     let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
-        function_data!("my-name", "0.1.2-kanin", runtime!()),
+        function_data!("my-name", "0.1.2-kanin", runtime_spec!()),
     )))
     .unwrap()
     .into_inner();
@@ -428,7 +428,7 @@ fn test_attachments() {
     let rr = tonic::Request::new(function_data!(
         "name",
         "0.1.0",
-        runtime!(),
+        runtime_spec!(),
         code_result.unwrap().into_inner().id,
         [attachment1_handle.id.unwrap(), attachment2_id.unwrap()],
         {}
@@ -474,7 +474,7 @@ fn test_attachments() {
     let rr = tonic::Request::new(function_data!(
         "name",
         "0.1.0",
-        runtime!(),
+        runtime_spec!(),
         Some(AttachmentId {
             uuid: uuid::Uuid::new_v4().to_string(),
         }),

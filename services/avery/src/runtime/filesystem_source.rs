@@ -317,6 +317,14 @@ impl RuntimeSource for FileSystemSource {
             .get(name)
             .and_then(|rtfm| rtfm(self.cache_dir.path()))
     }
+
+    fn list(&self) -> Vec<String> {
+        self.runtimes.keys().cloned().collect()
+    }
+
+    fn name(&self) -> &'static str {
+        "filesystem"
+    }
 }
 
 #[cfg(test)]
@@ -512,22 +520,8 @@ mod tests {
             // Missing
             let missing = fss.get("missing");
             assert!(
-                missing.is_some(),
-                "Even if we get one with a missing checksum we should get a runtime."
-            );
-            let missing = missing.unwrap();
-            let res = missing.execute(
-                RuntimeParameters::new("missing"),
-                ValueStream::new(),
-                vec![],
-            );
-            assert!(
-                res.is_err(),
-                "Missing checksum must result in error during execution."
-            );
-            assert!(
-                matches!(res.unwrap_err(), RuntimeError::MissingChecksums { .. }),
-                "Missing checksums error is expected."
+                missing.is_none(),
+                "A missing checksum should skip registering the runtime."
             );
         });
     }
