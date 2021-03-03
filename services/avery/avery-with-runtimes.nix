@@ -23,11 +23,19 @@ base.mkComponent {
       source $stdenv/setup
       mkdir -p $out
 
-      cp -r --no-preserve=mode $avery/. $out
+      cp -r --no-preserve=mode,ownership,timestamps $avery/. $out
       chmod +x $out/bin/avery
 
+      # Move all runtimes. This will overwrite the .checksums.toml
       for runtime in $runtimes; do
-        cp -r $runtime/. $out
+        cp -r --no-preserve=mode,ownership,timestamps $runtime/. $out
+      done
+
+      # Create our concatenated .checksums.toml
+      rm $out/share/avery/runtimes/.checksums.toml
+
+      for runtime in $runtimes; do
+        cat $runtime/share/avery/runtimes/.checksums.toml >> $out/share/avery/runtimes/.checksums.toml
       done
 
       mkdir -p $out/etc/avery
