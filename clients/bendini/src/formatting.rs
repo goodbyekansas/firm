@@ -261,7 +261,7 @@ impl Display for Displayer<'_, Runtime> {
             return Ok(());
         }
 
-        writeln!(
+        write!(
             f,
             "{}{} ({})",
             INDENT,
