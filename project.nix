@@ -42,6 +42,9 @@ nedryland.mkProject {
       types = firmTypes.rust.withServices;
     };
 
+    averyWithRuntimes = callFile ./services/avery/avery-with-runtimes.nix { };
+    averyWithDefaultRuntimes = (callFile ./services/avery/avery-with-runtimes.nix { }) { };
+
     bendini = callFile ./clients/bendini/bendini.nix {
       types = firmTypes.rust.withServices;
     };
