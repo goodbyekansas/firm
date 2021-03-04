@@ -19,7 +19,7 @@ jobs:
       run: .github/workflows/setup-ssh.sh .github/workflows/ssh-config
 
     - name: Format the Firm 💋
-      run: ./.github/workflows/with-nedryland-pkgs.sh nix-shell -p nixpkgs-fmt --command "nixpkgs-fmt . --check"
+      run: nix-build -A ci && result/bin/nixfmt
 
   build-package-with-checks:
     name: "Build all components with checks"

@@ -9,6 +9,7 @@ nedryland.mkProject {
     ./extensions/nedryland/function.nix
     ./extensions/nedryland/runtime.nix
   ];
+  ci = nedryland.ci;
 
   components = { callFile }: rec {
     protocols = callFile ./protocols/protocols.nix { };
