@@ -46,7 +46,7 @@ let
         shellInputs = [ pkgs.wabt pkgs.coreutils bendini.package avery.package ] ++ curatedAttrs.shellInputs or [ ];
 
         CARGO_TARGET_WASM32_WASI_RUNNER = runner;
-        useNightly = curatedAttrs.useNightly or "2021-01-27";
+        useNightly = curatedAttrs.useNightly or "2021-03-04";
         installPhase = ''
           mkdir -p $out/share/avery/runtimes
           cp target/wasm32-wasi/release/*.wasm $out/share/avery/runtimes/${runtimeName}.wasm

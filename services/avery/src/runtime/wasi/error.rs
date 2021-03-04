@@ -56,11 +56,11 @@ pub enum WasiError {
 pub type WasiResult<T> = std::result::Result<T, WasiError>;
 
 pub trait ToErrorCode<T> {
-    fn to_error_code(self) -> u32;
+    fn to_error_code(&self) -> u32;
 }
 
 impl<T> ToErrorCode<T> for WasiResult<T> {
-    fn to_error_code(self) -> u32 {
+    fn to_error_code(&self) -> u32 {
         match self {
             Ok(_) => 0,
             Err(e) => e.into(),
@@ -68,8 +68,8 @@ impl<T> ToErrorCode<T> for WasiResult<T> {
     }
 }
 
-impl From<WasiError> for u32 {
-    fn from(err: WasiError) -> Self {
+impl From<&WasiError> for u32 {
+    fn from(err: &WasiError) -> Self {
         match err {
             WasiError::Unknown(_) => 1,
             WasiError::FailedToDerefPointer() => 2,

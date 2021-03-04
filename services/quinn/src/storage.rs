@@ -227,7 +227,7 @@ mod tests {
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
-            StorageError::UnsupportedStorage {..}
+            StorageError::UnsupportedStorage { .. }
         ));
     }
 }

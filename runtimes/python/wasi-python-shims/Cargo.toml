@@ -11,6 +11,6 @@ crate-type = ["lib", "staticlib"]
 lazy_static = "1"
 
 [build-dependencies]
-cbindgen = "0.15"
+cbindgen = "0.18"
 tempfile = "3"
 

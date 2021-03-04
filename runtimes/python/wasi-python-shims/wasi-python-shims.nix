@@ -11,7 +11,7 @@ let
     targets = [ "wasm32-wasi" ];
 
     doCrossCheck = true;
-    useNightly = "2021-01-27";
+    useNightly = "2021-03-04";
 
     # llvm is needed for dsymutil which something uses
     # when building in debug
@@ -25,7 +25,6 @@ let
 
   newPackage = utilityPackage.overrideAttrs (
     oldAttrs: {
-      RUSTFLAGS = "${oldAttrs.RUSTFLAGS or ""} -Clinker-flavor=gcc";
       installPhase = ''
         ${oldAttrs.installPhase}
         mkdir -p $out/lib $out/include

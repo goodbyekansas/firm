@@ -6,12 +6,11 @@ edition = "2018"
 
 [dependencies]
 async-stream = "0.3"
-bb8 = "0.6"
 config = "0.10"
 flate2 = "1"
 futures = "0.3"
 hex = "0.4"
-prost = "0.6"
+prost = "0.7"
 regex = "1"
 semver = "0.11"
 serde = "1"
@@ -23,7 +22,7 @@ structopt = "0.3"
 tar = "0.4"
 tempfile = "3"
 thiserror = "1"
-tokio = { version = "0.2", features = ["rt-threaded", "time", "stream", "macros", "uds", "signal"] } # TODO: Upgrade
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "net", "signal"] }
 toml = "0.5"
 typetag = "0.1"
 url = "2"

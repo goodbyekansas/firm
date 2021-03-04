@@ -740,7 +740,10 @@ mod tests {
 
             let res = storage.insert(same_data).await;
 
-            assert!(matches!(res.unwrap_err(), storage::StorageError::VersionExists { .. }));
+            assert!(matches!(
+                res.unwrap_err(),
+                storage::StorageError::VersionExists { .. }
+            ));
 
             // Insert same function but newer with different version
             let data = storage::Function {
