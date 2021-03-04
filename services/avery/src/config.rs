@@ -7,10 +7,17 @@ fn default_port() -> u64 {
     1939
 }
 
+fn default_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     #[serde(default = "default_port")]
     pub port: u64,
+
+    #[serde(default = "default_enabled")]
+    pub enable_global_port: bool,
 
     #[serde(default)]
     pub registries: Vec<Registry>,

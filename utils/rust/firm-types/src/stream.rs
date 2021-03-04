@@ -25,6 +25,11 @@ pub struct ChannelConversionError {
 /// This converts any Rust value that can be converted
 /// into a channel
 pub trait ToChannel {
+    // TODO: fix below clippy error
+    // the trait should be called IntoChannel
+    // and the method into_channel since it
+    // consumes (rightfully) the value
+    #[allow(clippy::wrong_self_convention)]
     fn to_channel(self) -> Channel;
 }
 

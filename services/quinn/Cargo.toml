@@ -7,32 +7,32 @@ default-run = "quinn"
 
 [dependencies]
 async-trait = "0.1"
-base64 = "0.12"
-bb8 = "0.4"
-bb8-postgres = "0.4"
-config = "0.10.1"
+base64 = "0.13"
+bb8 = "0.7"
+bb8-postgres = "0.7"
+config = "0.10"
 futures = "0.3"
-postgres-types = { version = "0.1", features = ["derive", "with-uuid-0_8"] }
+postgres-types = { version = "0.2", features = ["derive", "with-uuid-0_8"] }
 regex = "1"
-reqwest = { version = "0.10", features = ["json"]}
+reqwest = { version = "0.11", features = ["json"]}
 semver = "0.11"
 semver-parser = "0.10"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 slog = "2"
 slog-async = "2"
 slog-term = "2"
 thiserror = "1"
-tokio = { version = "0.2", features = ["macros", "rt-core", "rt-threaded"] }
-tokio-postgres = "0.5"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio-postgres = "0.7"
 url = "2"
 uuid = { version = "0.8", features = ["v4"] }
 
 
-firm-types = { version = "0.1.0", registry = "nix" }
+firm-types = { version = "0.1", registry = "nix" }
 
 [dev-dependencies]
-lazy_static = "1.4"
+lazy_static = "1"
 
 [features]
 postgres-tests = []

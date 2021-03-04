@@ -379,7 +379,7 @@ mod tests {
         assert!(r.is_err());
         assert!(matches!(
             r.unwrap_err(),
-            ManifestError::ManifestFileReadError{ .. }
+            ManifestError::ManifestFileReadError { .. }
         ));
 
         // Test parsing code and attachments
