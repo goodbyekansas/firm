@@ -11,13 +11,20 @@ fn default_enabled() -> bool {
     true
 }
 
+fn default_internal_port_socket_path() -> PathBuf {
+    PathBuf::from("/tmp/avery.sock")
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     #[serde(default = "default_port")]
     pub port: u64,
 
     #[serde(default = "default_enabled")]
-    pub enable_global_port: bool,
+    pub enable_external_port: bool,
+
+    #[serde(default = "default_internal_port_socket_path")]
+    pub internal_port_socket_path: PathBuf,
 
     #[serde(default)]
     pub registries: Vec<Registry>,

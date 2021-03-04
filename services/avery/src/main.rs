@@ -3,6 +3,7 @@ use structopt::StructOpt;
 
 use firm_types::{
     functions::{execution_server::ExecutionServer, registry_server::RegistryServer},
+    tonic,
     tonic::transport::Server,
 };
 
@@ -13,9 +14,12 @@ use avery::{
     registry::RegistryService,
     runtime,
 };
-use futures::future::FutureExt;
-use std::path::PathBuf;
-use tokio::signal::unix::{signal, SignalKind};
+use futures::{FutureExt, TryFutureExt};
+use std::{net::SocketAddr, path::PathBuf};
+use tokio::{
+    net::UnixListener,
+    signal::unix::{signal, SignalKind},
+};
 use url::Url;
 
 async fn ctrl_c() {
@@ -43,14 +47,101 @@ struct AveryArgs {
     config: Option<PathBuf>,
 }
 
+async fn create_front_door(
+    execution_service: ExecutionService,
+    proxy_registry: ProxyRegistry,
+    addr: SocketAddr,
+    log: Logger,
+) -> Result<(), String> {
+    Server::builder()
+        .add_service(ExecutionServer::new(execution_service))
+        .add_service(RegistryServer::new(proxy_registry))
+        .serve_with_shutdown(addr, shutdown_signal(log.new(o!("scope" => "shutdown"))))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn create_trap_door(
+    local_socket_path: &std::path::Path,
+    execution_service: ExecutionService,
+    proxy_registry: ProxyRegistry,
+    log: Logger,
+) -> Result<(), String> {
+    let incoming = {
+        let uds = UnixListener::bind(local_socket_path).map_err(|e| e.to_string())?;
+
+        async_stream::stream! {
+            while let item = uds.accept().map_ok(|(st, _)| unix::UnixStream(st)).await {
+                yield item;
+            }
+        }
+    };
+
+    let server = Server::builder()
+        .add_service(ExecutionServer::new(execution_service))
+        .add_service(RegistryServer::new(proxy_registry))
+        .serve_with_incoming_shutdown(
+            incoming,
+            shutdown_signal(log.new(o!("scope" => "shutdown"))),
+        )
+        .await
+        .map_err(|e| e.to_string());
+    std::fs::remove_file(local_socket_path).unwrap_or(());
+    server
+}
+
+#[cfg(unix)]
+mod unix {
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use super::tonic::transport::server::Connected;
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+
+    #[derive(Debug)]
+    pub struct UnixStream(pub tokio::net::UnixStream);
+
+    impl Connected for UnixStream {}
+
+    impl AsyncRead for UnixStream {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.0).poll_read(cx, buf)
+        }
+    }
+
+    impl AsyncWrite for UnixStream {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            Pin::new(&mut self.0).poll_write(cx, buf)
+        }
+
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.0).poll_flush(cx)
+        }
+
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.0).poll_shutdown(cx)
+        }
+    }
+}
 async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
     let args = AveryArgs::from_args();
 
     let config = args
         .config
         .map_or_else(config::Config::new, config::Config::new_with_file)?;
-    let port = config.port;
-    let addr = format!("[::]:{}", port).parse().unwrap();
 
     let external_registries = config
         .registries
@@ -137,16 +228,41 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         runtime_sources,
     );
 
+    let front_door = if config.enable_external_port {
+        let port = config.port;
+        let addr = format!("[::]:{}", port).parse()?;
+
+        info!(
+            log,
+            "👨‍⚖️ The Firm is listening for external requests on port {}", port
+        );
+
+        create_front_door(
+            execution_service.clone(),
+            proxy_registry.clone(),
+            addr,
+            log.new(o!("🚪" => "front")),
+        )
+        .boxed()
+    } else {
+        futures::future::ready(Ok(())).boxed()
+    };
+
+    // 🚪
     info!(
         log,
-        "👨‍⚖️ The Firm is listening for requests on port {}", port
+        "👨‍⚖️ The Firm is listening for internal requests on {}",
+        &config.internal_port_socket_path.display()
     );
-
-    Server::builder()
-        .add_service(ExecutionServer::new(execution_service))
-        .add_service(RegistryServer::new(proxy_registry))
-        .serve_with_shutdown(addr, shutdown_signal(log.new(o!("scope" => "shutdown"))))
-        .await?;
+    futures::try_join!(
+        create_trap_door(
+            &config.internal_port_socket_path,
+            execution_service,
+            proxy_registry,
+            log.new(o!("🚪" => "trap")),
+        ),
+        front_door
+    )?;
 
     info!(log, "👋 see you soon - no one leaves the Firm");
     Ok(())

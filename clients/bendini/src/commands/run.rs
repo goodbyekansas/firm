@@ -7,7 +7,7 @@ use firm_types::{
         VersionRequirement,
     },
     stream::ToChannel,
-    tonic::{self, transport::Channel},
+    tonic,
 };
 use futures::{join, FutureExt, StreamExt, TryFutureExt};
 use tonic_middleware::HttpStatusInterceptor;
@@ -121,7 +121,7 @@ where
 
 pub async fn run(
     mut registry_client: RegistryClient<HttpStatusInterceptor>,
-    mut execution_client: ExecutionClient<Channel>,
+    mut execution_client: ExecutionClient<HttpStatusInterceptor>,
     function_id: String,
     arguments: Vec<(String, String)>,
     follow_output: bool,
