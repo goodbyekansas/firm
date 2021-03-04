@@ -3,12 +3,11 @@ let
   deployFunction = package:
     pkgs.lib.makeOverridable
       (
-        { endpoint ? "tcp://[::1]", port ? 1939 }: base.deployment.mkDeployment {
+        { host ? null }: base.deployment.mkDeployment {
           name = "deploy-${package.name}";
           deployPhase = ''
-            SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" ${bendini.package}/bin/bendini \
-            --address ${endpoint} \
-            --port ${builtins.toString port} \
+            ${bendini.package}/bin/bendini \
+            ${if host != null then "--host ${host} \\" else ""}
             register ${package}/manifest.toml
           '';
         }

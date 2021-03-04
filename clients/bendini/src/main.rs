@@ -3,19 +3,19 @@ mod error;
 mod formatting;
 mod manifest;
 
-// std
 use std::path::PathBuf;
 
-// 3rd party
 use firm_types::{
     functions::{execution_client::ExecutionClient, registry_client::RegistryClient},
     tonic::{
         self,
-        transport::{ClientTlsConfig, Endpoint},
+        transport::{ClientTlsConfig, Endpoint, Uri},
     },
 };
 use structopt::StructOpt;
+use tokio::net::UnixStream;
 use tonic_middleware::HttpStatusInterceptor;
+use tower::service_fn;
 
 use error::BendiniError;
 
@@ -25,13 +25,9 @@ use error::BendiniError;
 #[derive(StructOpt, Debug)]
 #[structopt(name = "bendini")]
 struct BendiniArgs {
-    /// Registry address to use
-    #[structopt(short, long, default_value = "http://[::1]")]
-    address: String,
-
-    /// Registry port to use
-    #[structopt(short, long, default_value = "1939")]
-    port: u32,
+    /// Host to use
+    #[structopt(short, long, default_value = "unix://localhost/tmp/avery.sock")] // 🧦
+    host: String,
 
     /// Command to run
     #[structopt(subcommand)]
@@ -114,21 +110,26 @@ async fn main() {
 async fn run() -> Result<(), error::BendiniError> {
     // parse arguments
     let args = BendiniArgs::from_args();
-    let address = format!("{}:{}", args.address, args.port);
 
-    let mut endpoint = Endpoint::from_shared(address.clone())
+    let endpoint = Endpoint::from_shared(args.host.clone())
         .map_err(|e| BendiniError::InvalidUri(e.to_string()))?;
 
-    if endpoint.uri().scheme_str() == Some("https") {
-        endpoint = endpoint
-            .tls_config(ClientTlsConfig::new())
-            .map_err(|e| BendiniError::FailedToCreateTlsConfig(e.to_string()))?;
+    let channel = match endpoint.uri().scheme_str() {
+        Some("https") => match endpoint.tls_config(ClientTlsConfig::new()) {
+            Ok(endpoint_tls) => endpoint_tls.connect().await,
+            Err(e) => Err(e),
+        },
+        Some("unix") => {
+            endpoint
+                .connect_with_connector(service_fn(|uri: Uri| {
+                    println!("using unix socket @ {}", uri.path());
+                    UnixStream::connect(uri.path().to_owned())
+                }))
+                .await
+        }
+        _ => endpoint.connect().await,
     }
-
-    let channel = endpoint
-        .connect()
-        .await
-        .map_err(|e| BendiniError::ConnectionError(endpoint.uri().to_string(), e.to_string()))?;
+    .map_err(|e| BendiniError::ConnectionError(args.host.clone(), e.to_string()))?;
 
     // When calling non pure grpc endpoints we may get content that is not application/grpc.
     // Tonic doesn't handle these cases very well. We have to make a wrapper around
@@ -146,22 +147,23 @@ async fn run() -> Result<(), error::BendiniError> {
         })
         .transpose()?;
 
-    let client = match bearer {
+    let registry_client = match bearer {
         Some(bearer) => {
             println!("Using provided oauth2 credentials 🐻");
-            RegistryClient::with_interceptor(channel, move |mut req: tonic::Request<()>| {
+            RegistryClient::with_interceptor(channel.clone(), move |mut req: tonic::Request<()>| {
                 req.metadata_mut().insert("authorization", bearer.clone());
                 Ok(req)
             })
         }
 
-        None => RegistryClient::new(channel),
+        None => RegistryClient::new(channel.clone()),
     };
+    let execution_client = ExecutionClient::new(channel);
 
     match args.cmd {
-        Command::List { .. } => commands::list::run(client).await,
+        Command::List { .. } => commands::list::run(registry_client).await,
 
-        Command::Register { manifest } => commands::register::run(client, &manifest).await,
+        Command::Register { manifest } => commands::register::run(registry_client, &manifest).await,
 
         Command::Run {
             function_id,
@@ -169,29 +171,17 @@ async fn run() -> Result<(), error::BendiniError> {
             follow_output,
         } => {
             commands::run::run(
-                client,
-                ExecutionClient::connect("http://[::1]:1939")
-                    .await
-                    .map_err(|e| {
-                        BendiniError::ConnectionError("local avery".to_owned(), e.to_string())
-                    })?,
+                registry_client,
+                execution_client,
                 function_id,
                 arguments,
                 follow_output,
             )
             .await
         }
-        Command::Get { function_id } => commands::get::run(client, function_id).await,
+        Command::Get { function_id } => commands::get::run(registry_client, function_id).await,
         Command::ListRuntimes { name } => {
-            commands::list_runtimes::run(
-                ExecutionClient::connect("http://[::1]:1939")
-                    .await
-                    .map_err(|e| {
-                        BendiniError::ConnectionError("local avery".to_owned(), e.to_string())
-                    })?,
-                name.unwrap_or_default(),
-            )
-            .await
-        } // TODO find a way to express execution host vs registry host
+            commands::list_runtimes::run(execution_client, name.unwrap_or_default()).await
+        }
     }
 }

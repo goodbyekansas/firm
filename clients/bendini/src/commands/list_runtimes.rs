@@ -1,10 +1,10 @@
 use firm_types::{functions::execution_client::ExecutionClient, functions::RuntimeFilters, tonic};
-use tonic::transport::Channel;
+use tonic_middleware::HttpStatusInterceptor;
 
 use crate::{error, formatting::DisplayExt};
 
 pub async fn run(
-    mut client: ExecutionClient<Channel>,
+    mut client: ExecutionClient<HttpStatusInterceptor>,
     name: String,
 ) -> Result<(), error::BendiniError> {
     println!("Listing runtimes");
