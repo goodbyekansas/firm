@@ -15,25 +15,25 @@ nedryland.mkProject {
 
     firmTypes = {
       rust = rec {
-        withoutServices = callFile ./utils/rust/firm-types/firm-types.nix {
+        withoutServices = callFile ./libraries/rust/firm-types/firm-types.nix {
           protocols = protocols.withoutServices.rust;
         };
         withServices = withoutServices.override {
           protocols = protocols.withServices.rust;
         };
       };
-      python = callFile ./utils/python/firm-types/firm-types.nix {
+      python = callFile ./libraries/python/firm-types/firm-types.nix {
         protocols = protocols.withoutServices.python;
       };
     };
 
-    wasiPythonShims = callFile ./runtimes/python/wasi-python-shims/wasi-python-shims.nix { };
-    wasiPython = callFile ./runtimes/python/wasiPython.nix {
+    wasiPythonShims = callFile ./services/avery/runtimes/python/wasi-python-shims/wasi-python-shims.nix { };
+    wasiPython = callFile ./services/avery/runtimes/python/wasiPython.nix {
       pythonSource = sources.python;
     };
 
     runtimes = {
-      python = callFile ./runtimes/python/python.nix {
+      python = callFile ./services/avery/runtimes/python/python.nix {
         firmTypes = firmTypes.rust.withoutServices;
       };
     };
@@ -49,7 +49,7 @@ nedryland.mkProject {
       types = firmTypes.rust.withServices;
     };
 
-    firmRust = callFile ./utils/rust/firm-rust/firm-rust.nix {
+    firmRust = callFile ./libraries/rust/firm-rust/firm-rust.nix {
       types = firmTypes.rust.withoutServices;
     };
 
@@ -66,7 +66,7 @@ nedryland.mkProject {
       types = firmTypes.rust.withServices;
     };
 
-    tonicMiddleware = callFile ./utils/rust/tonic-middleware/tonic-middleware.nix {
+    tonicMiddleware = callFile ./libraries/rust/tonic-middleware/tonic-middleware.nix {
       protocols = protocols.withServices.rust; # This brings tonic which we will need. A bit hard to see.
     };
   };
