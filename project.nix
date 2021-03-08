@@ -11,7 +11,7 @@ nedryland.mkProject {
   ];
   ci = nedryland.ci;
 
-  components = { callFile }: rec {
+  components = { callFile, callFunction }: rec {
     protocols = callFile ./protocols/protocols.nix { };
 
     firmTypes = {
@@ -42,6 +42,14 @@ nedryland.mkProject {
     avery = callFile ./services/avery/avery.nix {
       types = firmTypes.rust.withServices;
     };
+
+    averyWindows = callFunction
+      ({ pkgsCross }: avery.override {
+        stdenv = pkgsCross.mingwW64.stdenv;
+        targets = [ "x86_64-pc-windows-gnu" ];
+        defaultTarget = "x86_64-pc-windows-gnu";
+      }) ./services/avery
+      { };
 
     averyWithRuntimes = callFile ./services/avery/avery-with-runtimes.nix { };
     averyWithDefaultRuntimes = (callFile ./services/avery/avery-with-runtimes.nix { }) { };

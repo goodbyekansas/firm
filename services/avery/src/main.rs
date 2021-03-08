@@ -1,9 +1,11 @@
 use slog::{error, info, o, Drain, Logger};
 use structopt::StructOpt;
 
+#[cfg(unix)]
+use firm_types::tonic;
+
 use firm_types::{
     functions::{execution_server::ExecutionServer, registry_server::RegistryServer},
-    tonic,
     tonic::transport::Server,
 };
 
@@ -14,18 +16,27 @@ use avery::{
     registry::RegistryService,
     runtime,
 };
-use futures::{FutureExt, TryFutureExt};
+
+#[cfg(unix)]
+use futures::TryFutureExt;
+
+use futures::FutureExt;
+
 use std::{net::SocketAddr, path::PathBuf};
+
+#[cfg(unix)]
 use tokio::{
     net::UnixListener,
     signal::unix::{signal, SignalKind},
 };
+
 use url::Url;
 
 async fn ctrl_c() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
+#[cfg(unix)]
 async fn sig_term() {
     match signal(SignalKind::terminate()) {
         Ok(mut stream) => stream.recv().await,
@@ -33,6 +44,12 @@ async fn sig_term() {
     };
 }
 
+#[cfg(not(unix))]
+async fn shutdown_signal(_log: Logger) {
+    ctrl_c().await;
+}
+
+#[cfg(unix)]
 async fn shutdown_signal(log: Logger) {
     futures::select! {
         () = ctrl_c().fuse() => { info!(log, "Recieved Ctrl-C"); },
@@ -67,27 +84,39 @@ async fn create_trap_door(
     proxy_registry: ProxyRegistry,
     log: Logger,
 ) -> Result<(), String> {
-    let incoming = {
-        let uds = UnixListener::bind(local_socket_path).map_err(|e| e.to_string())?;
+    #[cfg(not(unix))]
+    {
+        let _a = local_socket_path;
+        let _b = execution_service;
+        let _c = proxy_registry;
+        let _e = log;
+        return Ok(());
+    }
 
-        async_stream::stream! {
-            while let item = uds.accept().map_ok(|(st, _)| unix::UnixStream(st)).await {
-                yield item;
+    #[cfg(unix)]
+    {
+        let incoming = {
+            let uds = UnixListener::bind(local_socket_path).map_err(|e| e.to_string())?;
+
+            async_stream::stream! {
+                while let item = uds.accept().map_ok(|(st, _)| unix::UnixStream(st)).await {
+                    yield item;
+                }
             }
-        }
-    };
+        };
 
-    let server = Server::builder()
-        .add_service(ExecutionServer::new(execution_service))
-        .add_service(RegistryServer::new(proxy_registry))
-        .serve_with_incoming_shutdown(
-            incoming,
-            shutdown_signal(log.new(o!("scope" => "shutdown"))),
-        )
-        .await
-        .map_err(|e| e.to_string());
-    std::fs::remove_file(local_socket_path).unwrap_or(());
-    server
+        let server = Server::builder()
+            .add_service(ExecutionServer::new(execution_service))
+            .add_service(RegistryServer::new(proxy_registry))
+            .serve_with_incoming_shutdown(
+                incoming,
+                shutdown_signal(log.new(o!("scope" => "shutdown"))),
+            )
+            .await
+            .map_err(|e| e.to_string());
+        std::fs::remove_file(local_socket_path).unwrap_or(());
+        server
+    }
 }
 
 #[cfg(unix)]
