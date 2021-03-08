@@ -4,6 +4,9 @@ use std::{
     net::TcpStream,
 };
 
+#[cfg(not(unix))]
+use std::convert::TryInto;
+
 use serde::{de, Deserialize, Serialize};
 use wasmer_wasi::{types, WasiFile, WasiFs, WasiFsError, VIRTUAL_ROOT_FD};
 
@@ -159,7 +162,8 @@ impl WasiFile for SocketFile {
     fn get_raw_fd(&self) -> Option<i32> {
         use std::os::windows::io::AsRawSocket;
         // TODO: Returns an u64. May get truncated.
-        Some(self.stream.as_raw_socket())
+
+        Some(self.stream.as_raw_socket().try_into().unwrap())
     }
 }
 
