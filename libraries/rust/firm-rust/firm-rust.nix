@@ -1,5 +1,5 @@
 { base, pkgs, types }:
-base.languages.rust.mkUtility {
+base.languages.rust.mkLibrary {
   name = "firm-rust";
   src = ./.;
   defaultTarget = "wasm32-wasi";

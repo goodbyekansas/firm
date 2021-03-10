@@ -1,6 +1,6 @@
 { pkgs, base, protocols }:
 
-base.languages.python.mkUtility rec{
+base.languages.python.mkLibrary rec{
   name = "firm-types";
   version = "0.1.0";
   src = ./.;

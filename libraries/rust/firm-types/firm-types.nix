@@ -1,5 +1,5 @@
 { base, pkgs, protocols }:
-base.languages.rust.mkUtility {
+base.languages.rust.mkLibrary {
   name = "firm-types";
   src = ./.;
   propagatedBuildInputs = [ protocols.package ];
