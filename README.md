@@ -47,20 +47,21 @@ Avery also has a local development registry used for quick iteration when workin
 
 ## Bendini
 
-Bendini is a CLI interface to Avery. It has functionality for listing and executing functions.
+Bendini is a CLI interface to Avery. It has functionality for registering, listing and
+executing functions.
 
-## Lomax
-
-Lomax is a CLI interface to the registry API for functions. It therefore has functionality to list
-and register functions.
-
-## Wasi Function Utils
+## firmRust
 
 A Rust library that houses utility functionality for Rust functions targeting the WASI execution
 environment. Contains helpers to get inputs, set outputs and set errors etc.
 
-## Nedryland Extension
+## firmTypes
+Rust and Python type library for communicating via protobuf.
 
-`nedryland/function.nix` contains a Nedryland extension that adds the notion of a "function"
+## Nedryland Extensions
+
+`extensions/nedryland/function.nix` contains a Nedryland extension that adds the notion of a "function"
 microservice component. This component is added to the base set of components that Nedryland already
 supports.
+
+`extensions/nedryland/runtime.nix` contains a Nedryland extension for creating runtimes for functions.
