@@ -1,5 +1,5 @@
 { base, pkgs, protocols }:
-base.languages.rust.mkUtility {
+base.languages.rust.mkLibrary {
   name = "tonic-middleware";
   src = ./.;
   propagatedBuildInputs = [ protocols.package ];

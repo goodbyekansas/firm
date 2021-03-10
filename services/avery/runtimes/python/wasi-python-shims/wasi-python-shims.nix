@@ -21,9 +21,9 @@ let
     shellInputs = [ pkgs.bear ];
   };
 
-  utilityPackage = base.languages.rust.toUtility package;
+  libraryPackage = base.languages.rust.toLibrary package;
 
-  newPackage = utilityPackage.overrideAttrs (
+  newPackage = libraryPackage.overrideAttrs (
     oldAttrs: {
       installPhase = ''
         ${oldAttrs.installPhase}
