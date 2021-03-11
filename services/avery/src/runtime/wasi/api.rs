@@ -330,7 +330,7 @@ impl WasmBuffer {
 
     /// Get a view of the underlying data in this buffer
     pub fn buffer(&self) -> &[u8] {
-        if self.ptr.offset() + self.len > self.memory.size().bytes().0 as u32 {
+        if self.ptr.offset().saturating_add(self.len) > self.memory.size().bytes().0 as u32 {
             panic!(
                 "WASM buffer (offset: {}, size: {}) goes beyond the memory capacity ({})",
                 self.ptr.offset(),
@@ -351,7 +351,7 @@ impl WasmBuffer {
 
     /// Get a mutable view of the underlying data in this buffer
     pub fn buffer_mut(&mut self) -> &mut [u8] {
-        if self.ptr.offset() + self.len > self.memory.size().bytes().0 as u32 {
+        if self.ptr.offset().saturating_add(self.len) > self.memory.size().bytes().0 as u32 {
             panic!(
                 "WASM buffer (offset: {}, size: {}) goes beyond the memory capacity ({})",
                 self.ptr.offset(),
