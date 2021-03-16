@@ -1,6 +1,7 @@
 { pkgs, base, linuxPackages, windowsPackages }:
 with pkgs;
 base.mkComponent {
+  name = "os-packaging";
   package = stdenv.mkDerivation {
     name = "os-packages";
 
@@ -32,12 +33,12 @@ base.mkComponent {
   };
 
   deployment = {
-    windowsInstaller = base.deployment.mkWindowsInstaller { };
-    rpmPackage = base.deployment.mkRPMPackage { };
+    # windowsInstaller = base.deployment.mkWindowsInstaller { };
+    # rpmPackage = base.deployment.mkRPMPackage { };
 
-    upload = base.deployment.uploadFiles [
-      windowsInstaller
-      rpmPackage
-    ];
+    # upload = base.deployment.uploadFiles [
+    #   windowsInstaller
+    #   rpmPackage
+    # ];
   };
 }

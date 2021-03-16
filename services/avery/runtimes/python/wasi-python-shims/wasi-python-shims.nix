@@ -52,4 +52,4 @@ let
     }
   );
 in
-base.mkComponent { inherit name; package = newPackage; deployment = { }; }
+base.mkComponent { inherit name; package = newPackage; }

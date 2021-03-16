@@ -6,6 +6,7 @@ let
 in
 base.mkComponent {
   # we need clang 11 for being able to debug and print variables
+  name = "wasi-python38";
   package = pkgs.pkgsCross.wasi32.clang11Stdenv.mkDerivation {
     name = "wasi-python38";
     src = pythonSource;

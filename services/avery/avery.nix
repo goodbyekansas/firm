@@ -9,7 +9,6 @@ base.languages.rust.mkService {
   ];
 
   buildInputs = [ types.package tonicMiddleware.package ]
-    ++ stdenv.lib.optional stdenv.hostPlatform.isDarwin darwin.apple_sdk.frameworks.Security
     ++ stdenv.lib.optional stdenv.hostPlatform.isWindows pkgsCross.mingwW64.windows.pthreads;
   nativeBuildInputs = stdenv.lib.optional stdenv.hostPlatform.isDarwin xcbuild;
 }

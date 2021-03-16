@@ -55,7 +55,7 @@ jobs:
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
 
     - name: Generate list of derivations to build
-      run: nix-instantiate -A packageWithChecks --add-root ./derivations/drv --indirect
+      run: nix-instantiate check.nix -A all --add-root ./derivations/drv --indirect
 
     - name: Create Github checks for each derivation
       env:
