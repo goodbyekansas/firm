@@ -451,11 +451,11 @@ fn test_attachments() {
     assert_eq!(function.attachments.len(), 2);
     assert_eq!(code.name, "code");
 
-    let code_url = Url::parse(&code.url.unwrap().url);
+    let code_url = Url::parse(&code.url.as_ref().unwrap().url);
     assert!(code_url.is_ok());
     let code_url = code_url.unwrap();
     assert_eq!(code_url.scheme(), "file");
-    assert!(std::path::Path::new(code_url.path()).exists());
+    assert!(std::path::Path::new(&code.url.unwrap().url[7..]).exists());
 
     // Ensure content of attachment
     let attach = function
@@ -464,10 +464,8 @@ fn test_attachments() {
         .find(|a| a.name == "attachment2");
     assert!(attach.is_some());
 
-    let file_path = Url::parse(&attach.as_ref().unwrap().url.as_ref().unwrap().url)
-        .map(|url| url.path().to_owned())
-        .unwrap();
-    let file_content = std::fs::read(&file_path).unwrap();
+    let file_path = &attach.as_ref().unwrap().url.as_ref().unwrap().url[7..];
+    let file_content = std::fs::read(file_path).unwrap();
     assert_eq!(file_content, b"sunesunesunesunesune");
 
     // non-registered attachment

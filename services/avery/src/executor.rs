@@ -371,8 +371,18 @@ impl AttachmentDownload for Attachment {
 
         match (url.0.scheme(), url.1) {
             ("file", _) => {
-                let content = fs::read(url.0.path())
-                    .map_err(|e| AttachmentReadError(url.0.to_string(), e.to_string()))?;
+                let content = self
+                    .url
+                    .as_ref()
+                    .ok_or_else(|| {
+                        RuntimeError::InvalidCodeUrl("Attachment missing url.".to_owned())
+                    })
+                    .and_then(|u| {
+                        // The Url parser looses information on file paths. Therefor just take
+                        // The original and skip "file://"
+                        fs::read(&u.url[7..])
+                            .map_err(|e| AttachmentReadError(u.url.to_owned(), e.to_string()))
+                    })?;
 
                 // TODO: this should be generalized when we
                 // have other transports (like http(s))
@@ -495,7 +505,7 @@ mod tests {
     #[test]
     fn test_download() {
         // non-existent file
-        let attachment = attachment!("file://this-file-does-not-exist");
+        let attachment = attachment!("file:///this-file-does-not-exist");
         let r = attachment.download();
         assert!(r.is_err());
         assert!(matches!(
