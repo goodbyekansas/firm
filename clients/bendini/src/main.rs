@@ -13,11 +13,23 @@ use firm_types::{
     },
 };
 use structopt::StructOpt;
+
+#[cfg(unix)]
 use tokio::net::UnixStream;
+
+#[cfg(windows)]
+use tokio::net::NamedPipe;
+
 use tonic_middleware::HttpStatusInterceptor;
 use tower::service_fn;
 
 use error::BendiniError;
+
+#[cfg(unix)]
+const DEFAULT_HOST: &str = "unix://localhost/tmp/avery.sock";
+
+#[cfg(windows)]
+const DEFAULT_HOST: &str = r#"windows://./pipe/avery"#;
 
 /// Bendini is a CLI interface
 /// to the function registry and
@@ -26,7 +38,7 @@ use error::BendiniError;
 #[structopt(name = "bendini")]
 struct BendiniArgs {
     /// Host to use
-    #[structopt(short, long, default_value = "unix://localhost/tmp/avery.sock")] // 🧦
+    #[structopt(short, long, default_value = DEFAULT_HOST)] // 🧦
     host: String,
 
     /// Command to run
@@ -119,11 +131,26 @@ async fn run() -> Result<(), error::BendiniError> {
             Ok(endpoint_tls) => endpoint_tls.connect().await,
             Err(e) => Err(e),
         },
+        #[cfg(unix)]
         Some("unix") => {
             endpoint
                 .connect_with_connector(service_fn(|uri: Uri| {
                     println!("using unix socket @ {}", uri.path());
                     UnixStream::connect(uri.path().to_owned())
+                }))
+                .await
+        }
+        #[cfg(windows)]
+        Some("windows") => {
+            endpoint
+                .connect_with_connector(service_fn(|uri: Uri| {
+                    let pipe_path = format!(
+                        r#"\\{}{}"#,
+                        uri.host().unwrap_or("."),
+                        uri.path().replace("/", "\\")
+                    );
+                    println!("using named pipe @ {}", &pipe_path);
+                    NamedPipe::connect(pipe_path)
                 }))
                 .await
         }
