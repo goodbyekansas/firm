@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use config::{ConfigError, Environment, File, FileFormat};
 use serde::Deserialize;
 
+use crate::system;
+
 fn default_port() -> u64 {
     1939
 }
@@ -12,7 +14,7 @@ fn default_enabled() -> bool {
 }
 
 fn default_internal_port_socket_path() -> PathBuf {
-    PathBuf::from("/tmp/avery.sock")
+    PathBuf::from(system::INTERNAL_PORT_PATH)
 }
 
 #[derive(Debug, Deserialize)]

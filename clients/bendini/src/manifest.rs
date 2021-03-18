@@ -140,22 +140,28 @@ impl FunctionManifest {
     }
 
     pub fn parse<P: AsRef<Path>>(path: P) -> Result<Self, ManifestError> {
-        let fullpath =
-            path.as_ref()
-                .canonicalize()
-                .map_err(|e| ManifestError::ManifestFileReadError {
-                    path: path.as_ref().to_path_buf(),
-                    io_error: e,
-                })?;
-        let mut manifest: Self = std::fs::read_to_string(&fullpath)
+        path.as_ref()
+            .canonicalize()
             .map_err(|e| ManifestError::ManifestFileReadError {
                 path: path.as_ref().to_path_buf(),
                 io_error: e,
             })
-            .and_then(|toml_content| toml::from_str(&toml_content).map_err(|e| e.into()))?;
-
-        manifest.path = fullpath;
-        Ok(manifest)
+            .and_then(|fullpath| {
+                std::fs::read_to_string(&fullpath)
+                    .map_err(|e| ManifestError::ManifestFileReadError {
+                        path: path.as_ref().to_path_buf(),
+                        io_error: e,
+                    })
+                    .map(|c| (c, fullpath))
+            })
+            .and_then(|(toml_content, fullpath)| {
+                toml::from_str(&toml_content).map_err(|e| e.into()).map(
+                    |mut m: FunctionManifest| {
+                        m.path = fullpath;
+                        m
+                    },
+                )
+            })
     }
 
     fn get_attachment_path(&self, attachment: &Attachment) -> Result<PathBuf, ManifestError> {
@@ -523,8 +529,8 @@ mod tests {
         [attachments.oran.checksums]
         sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
         "#,
-            fkalle.path().display(),
-            foran.path().display(),
+            fkalle.path().to_string_lossy().escape_default(),
+            foran.path().to_string_lossy().escape_default(),
         );
 
         let tomlpath = tempd.path().join("manifest.toml");

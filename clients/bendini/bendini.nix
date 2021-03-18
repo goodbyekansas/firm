@@ -1,8 +1,9 @@
-{ pkgs, base, types, tonicMiddleware }:
+{ pkgs, base, types, tonicMiddleware, stdenv, targets ? [ ], defaultTarget ? "", pkgsCross ? null }:
 base.languages.rust.mkClient {
+  inherit stdenv targets defaultTarget;
   name = "bendini";
   src = ./.;
   buildInputs = [ types.package tonicMiddleware.package ]
-    ++ pkgs.stdenv.lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.darwin.apple_sdk.frameworks.Security;
+    ++ stdenv.lib.optional stdenv.hostPlatform.isWindows pkgsCross.mingwW64.windows.pthreads;
   nativeBuildInputs = [ pkgs.pkg-config pkgs.openssl ];
 }
