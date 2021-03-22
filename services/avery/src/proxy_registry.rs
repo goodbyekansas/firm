@@ -10,7 +10,11 @@ use firm_types::{
 use futures::{stream, StreamExt, TryStreamExt};
 use slog::{info, o, warn, Logger};
 use thiserror::Error;
-use tonic::transport::{ClientTlsConfig, Endpoint};
+use tonic::{
+    metadata::KeyAndValueRef,
+    metadata::MetadataMap,
+    transport::{ClientTlsConfig, Endpoint},
+};
 use tonic_middleware::HttpStatusInterceptor;
 use url::Url;
 
@@ -166,6 +170,19 @@ impl ProxyRegistry {
     }
 }
 
+fn request_with_metadata<T>(payload: T, metadata: &MetadataMap) -> tonic::Request<T> {
+    let mut new_request = tonic::Request::new(payload);
+    let meta = new_request.metadata_mut();
+    metadata.iter().for_each(|kv| {
+        match kv {
+            KeyAndValueRef::Ascii(key, value) => meta.append(key, value.clone()),
+            KeyAndValueRef::Binary(key, value) => meta.append_bin(key, value.clone()),
+        };
+    });
+
+    new_request
+}
+
 /// Implementation of Registry as a proxy
 ///
 /// This basically forwards all calls to an internal registry except
@@ -179,23 +196,25 @@ impl Registry for ProxyRegistry {
         firm_types::tonic::Response<firm_types::functions::Functions>,
         firm_types::tonic::Status,
     > {
+        let metadata = request.metadata().clone();
         let payload = request.into_inner();
-        let mut functions = stream::iter(
-            self.connections
-                .iter()
-                .map(|connection| (connection.clone(), payload.clone())),
-        )
-        .then(|(mut connection, payload)| async move {
+        let mut functions = stream::iter(self.connections.iter().map(|connection| {
+            (
+                connection.clone(),
+                request_with_metadata(payload.clone(), &metadata),
+            )
+        }))
+        .then(|(mut connection, request)| async move {
             connection
                 .client
-                .list(tonic::Request::new(payload))
+                .list(request)
                 .await
                 .map(|functions| (connection.name.clone(), functions))
         })
         .chain(
             stream::once(
                 self.internal_registry
-                    .list(tonic::Request::new(payload.clone())),
+                    .list(request_with_metadata(payload.clone(), &metadata)),
             )
             .map(|f| f.map(|functions| (String::from("internal"), functions))),
         )
@@ -306,24 +325,25 @@ impl Registry for ProxyRegistry {
         firm_types::tonic::Response<firm_types::functions::Function>,
         firm_types::tonic::Status,
     > {
+        let metadata = request.metadata().clone();
         let payload = request.into_inner();
 
         let res = stream::iter(
             self.connections
                 .iter()
-                .map(|client| (client.clone(), payload.clone())),
+                .map(|client| (client.clone(), request_with_metadata(payload.clone(), &metadata))),
         )
-        .then(|(mut connection, payload)| async move {
+        .then(|(mut connection, request)| async move {
             connection
                 .client
-                .get(tonic::Request::new(payload))
+                .get(request)
                 .await
                 .map(|functions| (connection.name.clone(), functions))
         })
         .chain(
             stream::once(
                 self.internal_registry
-                    .get(tonic::Request::new(payload.clone())),
+                    .get(request_with_metadata(payload.clone(), &metadata)),
             )
             .map(|f| f.map(|functions| (String::from("internal"), functions))),
         )
