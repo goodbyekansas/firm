@@ -20,7 +20,11 @@ use tokio::{
 };
 use users::os::unix::UserExt;
 
-use crate::{executor::ExecutionService, proxy_registry::ProxyRegistry, userinfo::apply_user_info};
+use crate::{
+    executor::ExecutionService,
+    proxy_registry::ProxyRegistry,
+    userinfo::{RequestUserInfoExt, UserInfo},
+};
 
 pub const INTERNAL_PORT_PATH: &str = "/tmp/avery.sock";
 pub const DEFAULT_RUNTIME_DIR: &str = "/usr/share/avery/runtimes";
@@ -64,7 +68,7 @@ pub async fn create_trap_door(
     server
 }
 
-fn inject_user(mut req: Request<()>) -> Result<Request<()>, Status> {
+fn inject_user(req: Request<()>) -> Result<Request<()>, Status> {
     req.remote_addr()
         .ok_or_else(|| Status::unauthenticated("Could not find credentials.".to_owned()))
         .and_then(|val| {
@@ -76,19 +80,16 @@ fn inject_user(mut req: Request<()>) -> Result<Request<()>, Status> {
                     let user = users::get_user_by_uid(uid).ok_or_else(|| {
                         Status::unauthenticated(format!("Failed to find user for id {}", uid))
                     })?;
-                    apply_user_info(
+                    req.with_user_info(&UserInfo {
                         // Might drop some chars from the users name but we do not care.
-                        user.name().to_string_lossy().to_string(),
-                        user.home_dir(),
-                        req.metadata_mut(),
-                    )
+                        username: user.name().to_string_lossy().to_string(),
+                        home_dir: user.home_dir().to_owned(),
+                    })
                     .map_err(|_| {
                         Status::unauthenticated(
                             "Failed to insert user metadata in request.".to_owned(),
                         )
-                    })?;
-
-                    Ok(req)
+                    })
                 }
                 SocketAddr::V4(_) => Err(Status::unauthenticated(
                     "Could not find credentials.".to_owned(),
