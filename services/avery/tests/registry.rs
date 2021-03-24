@@ -9,7 +9,7 @@ use firm_types::{
         registry_server::Registry, AttachmentId, AttachmentStreamUpload, Filters, FunctionId,
         NameFilter, Ordering, OrderingKey,
     },
-    tonic,
+    tonic::{self, metadata::AsciiMetadataValue},
 };
 
 use firm_types::{attachment_data, filters, function_data, runtime_spec};
@@ -28,54 +28,64 @@ macro_rules! registry {
     }};
 }
 
+macro_rules! add_user {
+    ($request:expr) => {{
+        let mut req = $request;
+        let metadata = req.metadata_mut();
+        metadata.insert("username", AsciiMetadataValue::from_str("Sune").unwrap());
+        metadata.insert(
+            "home_dir",
+            AsciiMetadataValue::from_str("matbordet").unwrap(),
+        );
+        req
+    }};
+}
+
+macro_rules! request {
+    ($data:expr) => {{
+        add_user!(tonic::Request::new($data))
+    }};
+}
+
 #[test]
 fn test_list_functions() {
     let fr = registry!();
 
     // Test empty
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!())));
+    let list_request = futures::executor::block_on(fr.list(request!(filters!())));
 
     assert!(list_request.is_ok());
     assert_eq!(0, list_request.unwrap().into_inner().functions.len());
 
     // Test with 3
+    futures::executor::block_on(fr.register(request!(function_data!("random-1", "1.2.3"))))
+        .unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!("function-1", "6.6.6"))))
+        .unwrap();
     futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("random-1", "1.2.3"))),
+        fr.register(request!(function_data!("function-dev-1", "100.100.100"))),
     )
     .unwrap();
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("function-1", "6.6.6"))),
-    )
-    .unwrap();
-    futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
-        "function-dev-1",
-        "100.100.100"
-    ))))
-    .unwrap();
-    futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
-        "function-dev-2",
-        "127.0.1"
-    ))))
-    .unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!("function-dev-2", "127.0.1"))))
+        .unwrap();
 
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!())));
+    let list_request = futures::executor::block_on(fr.list(request!(filters!())));
 
     assert!(list_request.is_ok());
     assert_eq!(4, list_request.unwrap().into_inner().functions.len());
 
     // Test filtering by name
-    let list_request =
-        futures::executor::block_on(fr.list(tonic::Request::new(filters!("function"))));
+    let list_request = futures::executor::block_on(fr.list(request!(filters!("function"))));
 
     assert!(list_request.is_ok());
     assert_eq!(3, list_request.unwrap().into_inner().functions.len());
 
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!("dev"))));
+    let list_request = futures::executor::block_on(fr.list(request!(filters!("dev"))));
 
     assert!(list_request.is_ok());
     assert_eq!(2, list_request.unwrap().into_inner().functions.len());
 
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!("dev-2"))));
+    let list_request = futures::executor::block_on(fr.list(request!(filters!("dev-2"))));
     assert!(list_request.is_ok());
     assert_eq!(1, list_request.unwrap().into_inner().functions.len());
 }
@@ -84,11 +94,9 @@ fn test_list_functions() {
 fn test_list_metadata_filtering() {
     let fr = registry!();
 
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("random-1", "5.87.1"))),
-    )
-    .unwrap();
-    futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
+    futures::executor::block_on(fr.register(request!(function_data!("random-1", "5.87.1"))))
+        .unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!(
         "matrix-1",
         "0.0.1",
         runtime_spec!(),
@@ -97,15 +105,15 @@ fn test_list_metadata_filtering() {
     .unwrap();
 
     // Test filtering without filtering
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!())));
+    let list_request = futures::executor::block_on(fr.list(request!(filters!())));
 
     assert!(list_request.is_ok());
     assert_eq!(2, list_request.unwrap().into_inner().functions.len());
 
     // Test filtering with metadata
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(
-        filters!("", {"a" => "neo", "b" => "smith"}),
-    )));
+    let list_request = futures::executor::block_on(
+        fr.list(request!(filters!("", {"a" => "neo", "b" => "smith"}))),
+    );
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
@@ -117,11 +125,9 @@ fn test_list_metadata_filtering() {
 fn test_list_metadata_key_filtering() {
     let fr = registry!();
 
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("random-1", "5.87.1"))),
-    )
-    .unwrap();
-    futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
+    futures::executor::block_on(fr.register(request!(function_data!("random-1", "5.87.1"))))
+        .unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!(
         "words",
         "0.1.0",
         runtime_spec!(),
@@ -130,39 +136,30 @@ fn test_list_metadata_key_filtering() {
     .unwrap();
 
     // Test filtering without filtering
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!())));
+    let list_request = futures::executor::block_on(fr.list(request!(filters!())));
 
     assert!(list_request.is_ok());
     assert_eq!(2, list_request.unwrap().into_inner().functions.len());
 
     // Test filtering with metadata
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!(
-        "",
-        {},
-        ["potato".to_owned()]
-    ))));
+    let list_request =
+        futures::executor::block_on(fr.list(request!(filters!("", {}, ["potato".to_owned()]))));
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
     assert_eq!(1, functions.len());
     assert_eq!("words", functions.first().unwrap().name);
 
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!(
-        "",
-        {},
-        ["fish".to_owned()]
-    ))));
+    let list_request =
+        futures::executor::block_on(fr.list(request!(filters!("", {}, ["fish".to_owned()]))));
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
     assert_eq!(1, functions.len());
     assert_eq!("words", functions.first().unwrap().name);
 
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!(
-        "",
-        {},
-        ["foot".to_owned()]
-    ))));
+    let list_request =
+        futures::executor::block_on(fr.list(request!(filters!("", {}, ["foot".to_owned()]))));
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
@@ -175,34 +172,27 @@ fn test_offset_and_limit() {
     let count: usize = 10;
 
     for i in 0..count {
-        futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
-            &format!("fn-{}", i),
-            "1.1.1"
-        ))))
+        futures::executor::block_on(
+            fr.register(request!(function_data!(&format!("fn-{}", i), "1.1.1"))),
+        )
         .unwrap();
     }
 
-    let list_request =
-        futures::executor::block_on(fr.list(tonic::Request::new(filters!("", count * 2, {}))));
+    let list_request = futures::executor::block_on(fr.list(request!(filters!("", count * 2, {}))));
 
     assert!(list_request.is_ok());
     assert_eq!(count, list_request.unwrap().into_inner().functions.len());
 
     // do not take everything
     let limit: usize = 5;
-    let list_request =
-        futures::executor::block_on(fr.list(tonic::Request::new(filters!("", limit, {}))));
+    let list_request = futures::executor::block_on(fr.list(request!(filters!("", limit, {}))));
 
     assert!(list_request.is_ok());
     assert_eq!(limit, list_request.unwrap().into_inner().functions.len());
 
     // Take last one
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!(
-        "",
-        count,
-        count - 1,
-        {}
-    ))));
+    let list_request =
+        futures::executor::block_on(fr.list(request!(filters!("", count, count - 1, {}))));
 
     assert!(list_request.is_ok());
     assert_eq!(1, list_request.unwrap().into_inner().functions.len());
@@ -213,25 +203,17 @@ fn test_sorting() {
     // yer a wizard harry
     let fr = registry!();
 
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("my-name-a", "1.0.0"))),
-    )
-    .unwrap();
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("my-name-a", "1.0.1"))),
-    )
-    .unwrap();
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("my-name-b", "1.0.2"))),
-    )
-    .unwrap();
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("my-name-c", "1.1.0"))),
-    )
-    .unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!("my-name-a", "1.0.0"))))
+        .unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!("my-name-a", "1.0.1"))))
+        .unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!("my-name-b", "1.0.2"))))
+        .unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!("my-name-c", "1.1.0"))))
+        .unwrap();
 
     // No filter specified
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!())));
+    let list_request = futures::executor::block_on(fr.list(request!(filters!())));
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
@@ -240,7 +222,7 @@ fn test_sorting() {
     assert_eq!("1.0.1-dev", functions.first().unwrap().version);
 
     // Reverse version sorting
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(Filters {
+    let list_request = futures::executor::block_on(fr.list(request!(Filters {
         name: Some(NameFilter {
             pattern: "my-name-a".to_owned(),
             exact_match: true,
@@ -262,23 +244,11 @@ fn test_sorting() {
 
     // testing swedish idioms
     let fr = registry!();
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("sune-a", "1.0.0"))),
-    )
-    .unwrap();
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("sune-a", "2.1.0"))),
-    )
-    .unwrap();
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("sune-b", "2.0.0"))),
-    )
-    .unwrap();
-    futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("sune-b", "1.1.0"))),
-    )
-    .unwrap();
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(Filters {
+    futures::executor::block_on(fr.register(request!(function_data!("sune-a", "1.0.0")))).unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!("sune-a", "2.1.0")))).unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!("sune-b", "2.0.0")))).unwrap();
+    futures::executor::block_on(fr.register(request!(function_data!("sune-b", "1.1.0")))).unwrap();
+    let list_request = futures::executor::block_on(fr.list(request!(Filters {
         name: Some(NameFilter {
             pattern: "sune".to_owned(),
             exact_match: false,
@@ -305,7 +275,7 @@ fn test_get_function() {
     let fr = registry!();
 
     // Test non existant "id"
-    let get_request = futures::executor::block_on(fr.get(tonic::Request::new(FunctionId {
+    let get_request = futures::executor::block_on(fr.get(request!(FunctionId {
         name: "kall-sune".to_owned(),
         version: "1.2.3".to_owned(),
     })));
@@ -317,12 +287,10 @@ fn test_get_function() {
     ));
 
     // Test actually getting a function
-    let f = futures::executor::block_on(
-        fr.register(tonic::Request::new(function_data!("func", "7.7.7"))),
-    )
-    .unwrap()
-    .into_inner();
-    let get_request = futures::executor::block_on(fr.get(tonic::Request::new(FunctionId {
+    let f = futures::executor::block_on(fr.register(request!(function_data!("func", "7.7.7"))))
+        .unwrap()
+        .into_inner();
+    let get_request = futures::executor::block_on(fr.get(request!(FunctionId {
         name: f.name.clone(),
         version: f.version.clone(),
     })));
@@ -337,9 +305,11 @@ fn test_get_function() {
 fn test_register_function() {
     // Register a function missing execution environment
     let fr = registry!();
-    let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
-        function_data!("create-cake", "0.0.1", None),
-    )));
+    let register_result = futures::executor::block_on(fr.register(request!(function_data!(
+        "create-cake",
+        "0.0.1",
+        None
+    ))));
 
     assert!(register_result.is_err());
     assert!(matches!(
@@ -348,24 +318,28 @@ fn test_register_function() {
     ));
 
     // Testing if we can register a valid function
-    let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
-        function_data!("my-name", "0.2.111111", runtime_spec!()),
-    )));
+    let register_result = futures::executor::block_on(fr.register(request!(function_data!(
+        "my-name",
+        "0.2.111111",
+        runtime_spec!()
+    ))));
     assert!(register_result.is_ok());
 }
 
 #[test]
 fn test_register_dev_version() {
     let fr = registry!();
-    let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
-        function_data!("my-name", "0.1.2", runtime_spec!()),
-    )))
+    let register_result = futures::executor::block_on(fr.register(request!(function_data!(
+        "my-name",
+        "0.1.2",
+        runtime_spec!()
+    ))))
     .unwrap()
     .into_inner();
 
     // make sure that the function registered above ends with "-dev"
     // because the local function registry should always append that
-    let get_request = futures::executor::block_on(fr.get(tonic::Request::new(FunctionId {
+    let get_request = futures::executor::block_on(fr.get(request!(FunctionId {
         name: register_result.name,
         version: register_result.version,
     })));
@@ -374,13 +348,15 @@ fn test_register_dev_version() {
 
     // Register a function with a pre-release and make sure it is preserved
     let fr = registry!();
-    let register_result = futures::executor::block_on(fr.register(tonic::Request::new(
-        function_data!("my-name", "0.1.2-kanin", runtime_spec!()),
-    )))
+    let register_result = futures::executor::block_on(fr.register(request!(function_data!(
+        "my-name",
+        "0.1.2-kanin",
+        runtime_spec!()
+    ))))
     .unwrap()
     .into_inner();
 
-    let get_request = futures::executor::block_on(fr.get(tonic::Request::new(FunctionId {
+    let get_request = futures::executor::block_on(fr.get(request!(FunctionId {
         name: register_result.name,
         version: register_result.version,
     })));
@@ -391,22 +367,22 @@ fn test_register_dev_version() {
 #[test]
 fn test_attachments() {
     let fr = registry!();
-    let code_result = futures::executor::block_on(
-        fr.register_attachment(tonic::Request::new(attachment_data!("code"))),
-    );
+    let code_result =
+        futures::executor::block_on(fr.register_attachment(request!(attachment_data!("code"))));
     assert!(code_result.is_ok());
 
-    let attachment1 = futures::executor::block_on(
-        fr.register_attachment(tonic::Request::new(attachment_data!("attachment1"))),
-    );
+    let attachment1 = futures::executor::block_on(fr.register_attachment(add_user!(
+        tonic::Request::new(attachment_data!("attachment1"))
+    )));
     assert!(attachment1.is_ok());
     let attachment1_handle = attachment1.unwrap().into_inner();
 
-    let attachment2 =
-        futures::executor::block_on(fr.register_attachment(tonic::Request::new(attachment_data!(
+    let attachment2 = futures::executor::block_on(fr.register_attachment(add_user!(
+        tonic::Request::new(attachment_data!(
             "attachment2",
             "21db76ad585e9a0c64e7e2cf2bbae937c3601c263ff9639061349468e9217585" // actual sha256 of sune * 5
-        ))));
+        ))
+    )));
     assert!(attachment2.is_ok());
     let attachment2_id = attachment2.unwrap().into_inner().id;
     let attachment2_id_clone = attachment2_id.clone();
@@ -421,11 +397,11 @@ fn test_attachments() {
     };
     pin_mut!(outbound);
     let upload_result =
-        futures::executor::block_on(fr.upload_stream_attachment(tonic::Request::new(outbound)));
+        futures::executor::block_on(fr.upload_stream_attachment(request!(outbound)));
 
     assert!(upload_result.is_ok());
 
-    let rr = tonic::Request::new(function_data!(
+    let rr = request!(function_data!(
         "name",
         "0.1.0",
         runtime_spec!(),
@@ -440,7 +416,7 @@ fn test_attachments() {
     let register_result = register_result.unwrap().into_inner();
 
     // confirm results are as expected from registration
-    let function_result = futures::executor::block_on(fr.get(tonic::Request::new(FunctionId {
+    let function_result = futures::executor::block_on(fr.get(request!(FunctionId {
         name: register_result.name,
         version: register_result.version,
     })));
@@ -451,11 +427,14 @@ fn test_attachments() {
     assert_eq!(function.attachments.len(), 2);
     assert_eq!(code.name, "code");
 
-    let code_url = Url::parse(&code.url.as_ref().unwrap().url);
+    let code_url = Url::parse(&dbg!(&code).url.as_ref().unwrap().url);
     assert!(code_url.is_ok());
     let code_url = code_url.unwrap();
     assert_eq!(code_url.scheme(), "file");
-    assert!(std::path::Path::new(&code.url.unwrap().url[7..]).exists());
+    assert!(std::path::Path::new(&code.url.unwrap().url[7..])
+        .parent()
+        .unwrap()
+        .exists());
 
     // Ensure content of attachment
     let attach = function
@@ -469,7 +448,7 @@ fn test_attachments() {
     assert_eq!(file_content, b"sunesunesunesunesune");
 
     // non-registered attachment
-    let rr = tonic::Request::new(function_data!(
+    let rr = request!(function_data!(
         "name",
         "0.1.0",
         runtime_spec!(),
@@ -495,11 +474,12 @@ fn test_attachments() {
     );
 
     // test invalid checksum
-    let invalid_attachment =
-        futures::executor::block_on(fr.register_attachment(tonic::Request::new(attachment_data!(
+    let invalid_attachment = futures::executor::block_on(fr.register_attachment(add_user!(
+        tonic::Request::new(attachment_data!(
             "invalid-attachment",
             "31db76ad585e9a0c64e7e2cf2bbae937c3601c263ff9639061349468e9217585" // not actual sha256 of sune * 5
-        ))));
+        ))
+    )));
     assert!(invalid_attachment.is_ok());
     let invalid_attachment_id = invalid_attachment.unwrap().into_inner();
 
@@ -513,7 +493,7 @@ fn test_attachments() {
     };
     pin_mut!(outbound);
     let upload_result =
-        futures::executor::block_on(fr.upload_stream_attachment(tonic::Request::new(outbound)));
+        futures::executor::block_on(fr.upload_stream_attachment(request!(outbound)));
     assert!(upload_result.is_err());
     assert!(matches!(
         upload_result.unwrap_err().code(),

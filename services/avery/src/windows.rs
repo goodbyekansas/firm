@@ -34,7 +34,11 @@ use winapi::{
     },
 };
 
-use crate::{executor::ExecutionService, proxy_registry::ProxyRegistry, userinfo::apply_user_info};
+use crate::{
+    executor::ExecutionService,
+    proxy_registry::ProxyRegistry,
+    userinfo::{RequestUserInfoExt, UserInfo},
+};
 
 pub const INTERNAL_PORT_PATH: &str = r#"\\.\pipe\avery"#;
 pub const DEFAULT_RUNTIME_DIR: &str = r#"%PROGRAMDATA%\Avery\runtimes"#;
@@ -104,7 +108,7 @@ unsafe fn get_user() -> Option<String> {
         .then(|| String::from_utf16_lossy(&name[..(size as usize) - 1]))
 }
 
-fn inject_user(mut req: Request<()>) -> Result<Request<()>, Status> {
+fn inject_user(req: Request<()>) -> Result<Request<()>, Status> {
     req.remote_addr()
         .ok_or_else(|| Status::unauthenticated("Could not find credentials.".to_owned()))
         .and_then(|val| {
@@ -130,15 +134,20 @@ fn inject_user(mut req: Request<()>) -> Result<Request<()>, Status> {
                                 "Failed to determine named pipe user.".to_owned(),
                             )
                         })
-                        .and_then(|(user_name, home_folder)| {
-                            apply_user_info(user_name, &home_folder, req.metadata_mut()).map_err(
+                        .and_then(|(username, home_dir)| {
+                            req.with_user_info(
+                                &UserInfo {
+                                    username,
+                                    home_dir,
+                                }
+                            )
+                            .map_err(
                                 |_| {
                                     Status::unauthenticated(
                                         "Failed to insert user metadata in request.".to_owned(),
                                     )
                                 },
-                            )?;
-                            Ok(req)
+                            )
                         })
                 },
                 SocketAddr::V4(_) => Err(Status::unauthenticated(
