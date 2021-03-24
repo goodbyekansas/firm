@@ -3,7 +3,7 @@ use structopt::StructOpt;
 
 use firm_types::{
     functions::{execution_server::ExecutionServer, registry_server::RegistryServer},
-    tonic::transport::Server,
+    tonic::{transport::Server, Request, Status},
 };
 
 use avery::{
@@ -27,6 +27,10 @@ struct AveryArgs {
     config: Option<PathBuf>,
 }
 
+fn temp_lock_front_door(_req: Request<()>) -> Result<Request<()>, Status> {
+    Err(Status::unauthenticated("front door is locked!"))
+}
+
 async fn create_front_door(
     execution_service: ExecutionService,
     proxy_registry: ProxyRegistry,
@@ -34,8 +38,14 @@ async fn create_front_door(
     log: Logger,
 ) -> Result<(), String> {
     Server::builder()
-        .add_service(ExecutionServer::new(execution_service))
-        .add_service(RegistryServer::new(proxy_registry))
+        .add_service(ExecutionServer::with_interceptor(
+            execution_service,
+            temp_lock_front_door,
+        ))
+        .add_service(RegistryServer::with_interceptor(
+            proxy_registry,
+            temp_lock_front_door,
+        ))
         .serve_with_shutdown(
             addr,
             system::shutdown_signal(log.new(o!("scope" => "shutdown"))),
