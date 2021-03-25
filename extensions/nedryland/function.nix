@@ -3,12 +3,14 @@ let
   deployFunction = package:
     pkgs.lib.makeOverridable
       (
-        { host ? null }: base.deployment.mkDeployment {
+        { host ? null }:
+        let
+          host' = if host != null then "--host ${host}" else "";
+        in
+        base.deployment.mkDeployment {
           name = "deploy-${package.name}";
           deployPhase = ''
-            ${bendini.package}/bin/bendini \
-            ${if host != null then "--host ${host} \\" else ""}
-            register ${package}/manifest.toml
+            ${bendini.package}/bin/bendini ${host'} register ${package}/manifest.toml
           '';
         }
       )
