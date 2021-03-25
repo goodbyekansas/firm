@@ -45,7 +45,7 @@ pub fn get_args_and_envs(
     )
 }
 
-async fn read_output<T>(mut output: Output, source: Option<T>, logger: Logger)
+fn read_output<T>(mut output: Output, source: Option<T>, logger: Logger)
 where
     T: Read,
 {
@@ -66,16 +66,10 @@ where
 
 fn setup_readers(c: &mut Child, out: Output, err: Output, logger: &Logger) {
     let (stdout, stderr) = (c.stdout.take(), c.stderr.take());
-    tokio::spawn(read_output(
-        out,
-        stdout,
-        logger.new(o!("reader" => "stdout")),
-    ));
-    tokio::spawn(read_output(
-        err,
-        stderr,
-        logger.new(o!("reader" => "stderr")),
-    ));
+    let stdout_logger = logger.new(o!("reader" => "stdout"));
+    let stderr_logger = logger.new(o!("reader" => "stderr"));
+    std::thread::spawn(|| read_output(out, stdout, stdout_logger));
+    std::thread::spawn(|| read_output(err, stderr, stderr_logger));
 }
 
 pub fn start_process(
