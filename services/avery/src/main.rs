@@ -1,10 +1,8 @@
+use std::path::PathBuf;
+
 use slog::{error, info, o, Drain, Logger};
 use structopt::StructOpt;
-
-use firm_types::{
-    functions::{execution_server::ExecutionServer, registry_server::RegistryServer},
-    tonic::{transport::Server, Request, Status},
-};
+use url::Url;
 
 use avery::{
     config,
@@ -14,44 +12,11 @@ use avery::{
     runtime, system,
 };
 
-use futures::FutureExt;
-
-use std::{net::SocketAddr, path::PathBuf};
-
-use url::Url;
-
 #[derive(StructOpt, Debug)]
 #[structopt(name = "avery")]
 struct AveryArgs {
     #[structopt(short = "c", long = "config", parse(from_os_str), env = "AVERY_CONFIG")]
     config: Option<PathBuf>,
-}
-
-fn temp_lock_front_door(_req: Request<()>) -> Result<Request<()>, Status> {
-    Err(Status::unauthenticated("front door is locked!"))
-}
-
-async fn create_front_door(
-    execution_service: ExecutionService,
-    proxy_registry: ProxyRegistry,
-    addr: SocketAddr,
-    log: Logger,
-) -> Result<(), String> {
-    Server::builder()
-        .add_service(ExecutionServer::with_interceptor(
-            execution_service,
-            temp_lock_front_door,
-        ))
-        .add_service(RegistryServer::with_interceptor(
-            proxy_registry,
-            temp_lock_front_door,
-        ))
-        .serve_with_shutdown(
-            addr,
-            system::shutdown_signal(log.new(o!("scope" => "shutdown"))),
-        )
-        .await
-        .map_err(|e| e.to_string())
 }
 
 async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
@@ -143,41 +108,12 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         runtime_sources,
     );
 
-    let front_door = if config.enable_external_port {
-        let port = config.port;
-        let addr = format!("[::]:{}", port).parse()?;
-
-        info!(
-            log,
-            "👨‍⚖️ The Firm is listening for external requests on port {}", port
-        );
-
-        create_front_door(
-            execution_service.clone(),
-            proxy_registry.clone(),
-            addr,
-            log.new(o!("🚪" => "front")),
-        )
-        .boxed()
-    } else {
-        futures::future::ready(Ok(())).boxed()
-    };
-
-    // 🚪
-    info!(
-        log,
-        "👨‍⚖️ The Firm is listening for internal requests on {}",
-        &config.internal_port_socket_path.display()
-    );
-    futures::try_join!(
-        system::create_trap_door(
-            &config.internal_port_socket_path,
-            execution_service,
-            proxy_registry,
-            log.new(o!("🚪" => "trap")),
-        ),
-        front_door
-    )?;
+    system::create_listener(
+        execution_service,
+        proxy_registry,
+        log.new(o!("scope" => "listener")),
+    )
+    .await?;
 
     info!(log, "👋 see you soon - no one leaves the Firm");
     Ok(())
@@ -185,6 +121,9 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), i32> {
+    // TODO: Check if we run as root and exit if that's the case.
+    // We cannot be allowed to run as root. Must be run as a user.
+
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();

@@ -3,31 +3,8 @@ use std::path::{Path, PathBuf};
 use config::{ConfigError, Environment, File, FileFormat};
 use serde::Deserialize;
 
-use crate::system;
-
-fn default_port() -> u64 {
-    1939
-}
-
-fn default_enabled() -> bool {
-    true
-}
-
-fn default_internal_port_socket_path() -> PathBuf {
-    PathBuf::from(system::INTERNAL_PORT_PATH)
-}
-
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    #[serde(default = "default_port")]
-    pub port: u64,
-
-    #[serde(default = "default_enabled")]
-    pub enable_external_port: bool,
-
-    #[serde(default = "default_internal_port_socket_path")]
-    pub internal_port_socket_path: PathBuf,
-
     #[serde(default)]
     pub registries: Vec<Registry>,
 
@@ -128,23 +105,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults() {
+    fn empty() {
         let c = Config::new_with_toml_string("");
-
         assert!(c.is_ok());
-        assert_eq!(c.unwrap().port, default_port());
-    }
-
-    #[test]
-    fn ports() {
-        // Read the port 🛳️
-        let c = Config::new_with_toml_string(
-            r#"
-        port=1337
-        "#,
-        );
-        assert!(c.is_ok());
-        assert_eq!(c.unwrap().port, 1337);
     }
 
     #[test]

@@ -3,7 +3,6 @@ pub mod executor;
 pub mod proxy_registry;
 pub mod registry;
 pub mod runtime;
-mod userinfo;
 
 #[cfg(unix)]
 pub mod unix;
