@@ -14,7 +14,7 @@ use firm_types::{
         ChannelSpec, ChannelType, ExecutionParameters,
     },
     stream::ToChannel,
-    tonic::{self, metadata::AsciiMetadataValue},
+    tonic,
 };
 
 use firm_types::{channel_specs, filters, function_data, runtime_spec, stream};
@@ -25,47 +25,29 @@ macro_rules! null_logger {
     }};
 }
 
-macro_rules! add_user {
-    ($request:expr) => {{
-        let mut req = $request;
-        let metadata = req.metadata_mut();
-        metadata.insert("username", AsciiMetadataValue::from_str("Sune").unwrap());
-        metadata.insert(
-            "home_dir",
-            AsciiMetadataValue::from_str("matbordet").unwrap(),
-        );
-        req
-    }};
-}
-
-macro_rules! request {
-    ($data:expr) => {{
-        add_user!(tonic::Request::new($data))
-    }};
-}
-
 macro_rules! register_code_attachment {
     ($service:expr) => {{
         futures::executor::block_on(
-            $service.register_attachment(request!(firm_types::attachment_data!("code"))),
+            $service.register_attachment(tonic::Request::new(firm_types::attachment_data!("code"))),
         )
-        .expect("Failed to register code attachment")
+        .unwrap()
         .into_inner()
     }};
     ($service:expr, $content:expr, $sha256:expr) => {{
-        let id = futures::executor::block_on(
-            $service.register_attachment(request!(firm_types::attachment_data!("code", $sha256))),
-        )
-        .expect("Failed to register code attachment")
+        let id = futures::executor::block_on($service.register_attachment(tonic::Request::new(
+            firm_types::attachment_data!("code", $sha256),
+        )))
+        .unwrap()
         .into_inner();
         let code = Ok(AttachmentStreamUpload {
             id: id.id.clone(),
             content: $content,
         });
         futures::executor::block_on(
-            $service.upload_stream_attachment(request!(futures::stream::iter(vec![code]))),
+            $service
+                .upload_stream_attachment(tonic::Request::new(futures::stream::iter(vec![code]))),
         )
-        .expect("Failed to stream upload code chunk");
+        .unwrap();
         id
     }};
 }
@@ -73,10 +55,11 @@ macro_rules! register_code_attachment {
 macro_rules! register_functions {
     ($service:expr, $fns:expr) => {{
         $fns.into_iter().for_each(|f| {
-            futures::executor::block_on($service.register(request!(f.clone()))).map_or_else(
-                |e| println!("Failed to register function \"{}\". Err: {}", f.name, e),
-                |_| (),
-            );
+            futures::executor::block_on($service.register(tonic::Request::new(f.clone())))
+                .map_or_else(
+                    |e| println!("Failed to register function \"{}\". Err: {}", f.name, e),
+                    |_| (),
+                );
         });
         ExecutionService::new(
             null_logger!(),
@@ -90,7 +73,7 @@ macro_rules! register_functions {
 
 macro_rules! first_function {
     ($service:expr) => {{
-        futures::executor::block_on($service.list(request!(filters!())))
+        futures::executor::block_on($service.list(tonic::Request::new(filters!())))
             .unwrap()
             .into_inner()
             .functions
@@ -145,34 +128,35 @@ async fn execute() {
     let correct_args = stream!({ "say" => "sune", "count" => 7i64 });
 
     // Test without reading output
-    let r = futures::executor::block_on(execution_service.queue_function(request!(
+    let r = futures::executor::block_on(execution_service.queue_function(tonic::Request::new(
         ExecutionParameters {
             name: ff.name.clone(),
             version_requirement: ff.version.clone(),
             arguments: Some(correct_args.clone()),
-        }
+        },
     )));
     assert!(r.is_ok());
     let eid = r.unwrap().into_inner();
 
-    let r = futures::executor::block_on(execution_service.run_function(request!(eid)));
+    let r = futures::executor::block_on(execution_service.run_function(tonic::Request::new(eid)));
     assert!(r.is_ok());
 
     // Test checking for correct args and output is getting propagated
-    let r = futures::executor::block_on(execution_service.queue_function(request!(
+    let r = futures::executor::block_on(execution_service.queue_function(tonic::Request::new(
         ExecutionParameters {
             name: ff.name.clone(),
             version_requirement: ff.version.clone(),
             arguments: Some(correct_args),
-        }
+        },
     )));
     assert!(r.is_ok());
     let eid = r.unwrap().into_inner();
 
-    let stream =
-        futures::executor::block_on(execution_service.function_output(request!(eid.clone())))
-            .unwrap()
-            .into_inner();
+    let stream = futures::executor::block_on(
+        execution_service.function_output(tonic::Request::new(eid.clone())),
+    )
+    .unwrap()
+    .into_inner();
 
     let t = thread::spawn(move || {
         let chunks: Vec<Result<FunctionOutputChunk, tonic::Status>> =
@@ -192,19 +176,19 @@ async fn execute() {
         );
     });
 
-    let r = futures::executor::block_on(execution_service.run_function(request!(eid)));
+    let r = futures::executor::block_on(execution_service.run_function(tonic::Request::new(eid)));
 
     assert!(r.is_ok());
     t.join().unwrap();
 
     // Test incorrect args
     let incorrect_args = stream!({ "say" => 7, "count" => "nope" });
-    let r = futures::executor::block_on(execution_service.queue_function(request!(
+    let r = futures::executor::block_on(execution_service.queue_function(tonic::Request::new(
         ExecutionParameters {
             name: ff.name,
             version_requirement: ff.version,
             arguments: Some(incorrect_args),
-        }
+        },
     )));
     assert!(r.is_err());
 }

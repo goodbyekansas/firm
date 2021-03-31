@@ -6,6 +6,13 @@ use std::{
     sync::Mutex,
 };
 
+use futures::{channel::mpsc::Receiver, channel::mpsc::Sender};
+use sha2::{Digest, Sha256};
+use slog::{debug, Logger};
+use thiserror::Error;
+use url::Url;
+
+use crate::runtime::{Runtime, RuntimeParameters, RuntimeSource};
 use firm_types::{
     functions::{
         execution_result::Result as ProtoResult,
@@ -18,18 +25,8 @@ use firm_types::{
     stream::StreamExt,
     tonic,
 };
-use futures::{channel::mpsc::Receiver, channel::mpsc::Sender};
-use sha2::{Digest, Sha256};
-use slog::{debug, Logger};
-use thiserror::Error;
-use url::Url;
 use uuid::Uuid;
-
-use crate::{
-    runtime::{Runtime, RuntimeParameters, RuntimeSource},
-    userinfo::IntoTonicStatus,
-    userinfo::RequestUserInfoExt,
-};
+use RuntimeError::AttachmentReadError;
 
 #[derive(Debug, Clone)]
 pub struct FunctionOutputSink {
@@ -117,33 +114,27 @@ impl ExecutionServiceTrait for ExecutionService {
         request: tonic::Request<ExecutionParameters>,
     ) -> Result<tonic::Response<ExecutionId>, tonic::Status> {
         let execution_id = Uuid::new_v4();
-        let user_info = request.get_user_info().into_tonic_status()?;
+
         // lookup function
         let payload = request.into_inner();
         let function = self
             .registry
-            .list(
-                tonic::Request::new(Filters {
-                    name: Some(NameFilter {
-                        pattern: payload.name.clone(),
-                        exact_match: true,
-                    }),
-                    version_requirement: Some(VersionRequirement {
-                        expression: payload.version_requirement.clone(),
-                    }),
-                    metadata: HashMap::new(),
-                    order: Some(Ordering {
-                        key: OrderingKey::NameVersion as i32,
-                        reverse: false,
-                        offset: 0,
-                        limit: 1,
-                    }),
-                })
-                .with_user_info(&user_info)
-                .map_err(|_| {
-                    tonic::Status::unauthenticated("Failed to insert user data in request")
-                })?,
-            )
+            .list(tonic::Request::new(Filters {
+                name: Some(NameFilter {
+                    pattern: payload.name.clone(),
+                    exact_match: true,
+                }),
+                version_requirement: Some(VersionRequirement {
+                    expression: payload.version_requirement.clone(),
+                }),
+                metadata: HashMap::new(),
+                order: Some(Ordering {
+                    key: OrderingKey::NameVersion as i32,
+                    reverse: false,
+                    offset: 0,
+                    limit: 1,
+                }),
+            }))
             .await?
             .into_inner()
             .functions
@@ -389,9 +380,8 @@ impl AttachmentDownload for Attachment {
                     .and_then(|u| {
                         // The Url parser looses information on file paths. Therefor just take
                         // The original and skip "file://"
-                        fs::read(&u.url[7..]).map_err(|e| {
-                            RuntimeError::AttachmentReadError(u.url.to_owned(), e.to_string())
-                        })
+                        fs::read(&u.url[7..])
+                            .map_err(|e| AttachmentReadError(u.url.to_owned(), e.to_string()))
                     })?;
 
                 // TODO: this should be generalized when we
