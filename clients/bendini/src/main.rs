@@ -3,7 +3,7 @@ mod error;
 mod formatting;
 mod manifest;
 
-use std::path::PathBuf;
+use std::{ops::Deref, path::PathBuf, str::FromStr};
 
 use firm_types::{
     functions::{execution_client::ExecutionClient, registry_client::RegistryClient},
@@ -26,10 +26,58 @@ use tower::service_fn;
 use error::BendiniError;
 
 #[cfg(unix)]
-const DEFAULT_HOST: &str = "unix://localhost/tmp/avery.sock";
+fn get_local_socket() -> Option<String> {
+    use users::get_current_username;
+    get_current_username().map(|username| {
+        format!(
+            "unix://localhost/tmp/avery-{username}.sock",
+            username = username.to_string_lossy()
+        )
+    })
+}
 
 #[cfg(windows)]
-const DEFAULT_HOST: &str = r#"windows://./pipe/avery"#;
+fn get_local_socket() -> Option<String> {
+    use winapi::um::winbase::GetUserNameW;
+    const CAPACITY: usize = 1024;
+    let mut size = CAPACITY as u32;
+    let mut name: [u16; CAPACITY] = [0; CAPACITY];
+    unsafe {
+        (GetUserNameW(name.as_mut_ptr(), &mut size as *mut u32) != 0).then(|| {
+            format!(
+                r#"windows://./pipe/avery-{user}"#,
+                user = String::from_utf16_lossy(&name[..(size as usize) - 1])
+            )
+        })
+    }
+}
+
+#[derive(Debug)]
+struct BendiniHost(String);
+impl Default for BendiniHost {
+    fn default() -> Self {
+        Self(get_local_socket().unwrap_or_default())
+    }
+}
+impl ToString for BendiniHost {
+    fn to_string(&self) -> String {
+        self.0.clone()
+    }
+}
+impl FromStr for BendiniHost {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(s.to_owned()))
+    }
+}
+impl Deref for BendiniHost {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 /// Bendini is a CLI interface
 /// to the function registry and
@@ -38,8 +86,8 @@ const DEFAULT_HOST: &str = r#"windows://./pipe/avery"#;
 #[structopt(name = "bendini")]
 struct BendiniArgs {
     /// Host to use
-    #[structopt(short, long, default_value = DEFAULT_HOST)] // 🧦
-    host: String,
+    #[structopt(short, long, default_value)] // 🧦
+    host: BendiniHost,
 
     /// Command to run
     #[structopt(subcommand)]
