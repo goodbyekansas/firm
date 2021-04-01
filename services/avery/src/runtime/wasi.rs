@@ -93,19 +93,21 @@ impl Runtime for WasiRuntime {
             .logger
             .new(o!("function" => runtime_parameters.function_name.to_owned()));
 
-        let sandbox = Sandbox::new(Path::new("sandbox")).map_err(|e| e.to_string())?;
+        let sandbox = Sandbox::new(&runtime_parameters.root_dir, Path::new("sandbox"))
+            .map_err(|e| e.to_string())?;
         let attachment_sandbox =
-            Sandbox::new(Path::new("attachments")).map_err(|e| e.to_string())?;
+            Sandbox::new(&runtime_parameters.root_dir, Path::new("attachments"))
+                .map_err(|e| e.to_string())?;
 
         info!(
             function_logger,
             "using sandbox directory: {}",
-            sandbox.path().display()
+            sandbox.host_path().display()
         );
         info!(
             function_logger,
             "using sandbox attachments directory: {}",
-            attachment_sandbox.path().display()
+            attachment_sandbox.host_path().display()
         );
 
         let stdout = Output::new(vec![
@@ -113,7 +115,7 @@ impl Runtime for WasiRuntime {
                 OpenOptions::new()
                     .write(true)
                     .create_new(true)
-                    .open(sandbox.path().join("stdout"))
+                    .open(sandbox.host_path().join("stdout"))
                     .map_err(|e| format!("Failed to create stdout sandbox file: {}", e))?,
             ),
             Box::new(LineWriter::new(NamedFunctionOutputSink::new(
@@ -128,7 +130,7 @@ impl Runtime for WasiRuntime {
                 OpenOptions::new()
                     .write(true)
                     .create_new(true)
-                    .open(sandbox.path().join("stderr"))
+                    .open(sandbox.host_path().join("stderr"))
                     .map_err(|e| format!("Failed to create stderr sandbox file: {}", e))?,
             ),
             Box::new(LineWriter::new(NamedFunctionOutputSink::new(
@@ -142,16 +144,16 @@ impl Runtime for WasiRuntime {
             .stdout(Box::new(stdout.clone()))
             .stderr(Box::new(stderr.clone()))
             .preopen(|p| {
-                p.directory(sandbox.path())
-                    .alias("sandbox")
+                p.directory(sandbox.host_path())
+                    .alias(&sandbox.guest_path().to_string_lossy())
                     .read(true)
                     .write(true)
                     .create(true)
             })
             .and_then(|state| {
                 state.preopen(|p| {
-                    p.directory(attachment_sandbox.path())
-                        .alias("attachments")
+                    p.directory(attachment_sandbox.host_path())
+                        .alias(&attachment_sandbox.guest_path().to_string_lossy())
                         .read(true)
                         .write(false)
                         .create(false)
@@ -260,9 +262,11 @@ mod tests {
 
     #[test]
     fn test_execution() {
+        let tmp_fold = tempfile::tempdir().unwrap();
         let executor = WasiRuntime::new(null_logger!());
         let res = executor.execute(
             RuntimeParameters {
+                root_dir: tmp_fold.path().to_owned(),
                 function_name: "hello-world".to_owned(),
                 entrypoint: None, // use default entrypoint _start
                 code: Some(code_file!(include_bytes!("hello.wasm"))),

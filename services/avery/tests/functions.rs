@@ -1,4 +1,4 @@
-use std::thread;
+use std::{ops::Deref, thread};
 
 use futures::StreamExt;
 use slog::o;
@@ -51,6 +51,27 @@ macro_rules! register_code_attachment {
         id
     }};
 }
+struct ExecutionServiceWrapper {
+    execution_service: ExecutionService,
+    _temp_root_dir: tempfile::TempDir,
+}
+
+impl ExecutionServiceWrapper {
+    fn new(execution_service: ExecutionService, temp_root_dir: tempfile::TempDir) -> Self {
+        Self {
+            execution_service,
+            _temp_root_dir: temp_root_dir,
+        }
+    }
+}
+
+impl Deref for ExecutionServiceWrapper {
+    type Target = ExecutionService;
+
+    fn deref(&self) -> &Self::Target {
+        &self.execution_service
+    }
+}
 
 macro_rules! register_functions {
     ($service:expr, $fns:expr) => {{
@@ -61,12 +82,17 @@ macro_rules! register_functions {
                     |_| (),
                 );
         });
-        ExecutionService::new(
-            null_logger!(),
-            Box::new($service.clone()),
-            vec![Box::new(avery::runtime::InternalRuntimeSource::new(
+        let temp_root_directory = tempfile::TempDir::new().unwrap();
+        ExecutionServiceWrapper::new(
+            ExecutionService::new(
                 null_logger!(),
-            ))],
+                Box::new($service.clone()),
+                vec![Box::new(avery::runtime::InternalRuntimeSource::new(
+                    null_logger!(),
+                ))],
+                temp_root_directory.path(),
+            ),
+            temp_root_directory,
         )
     }};
 }

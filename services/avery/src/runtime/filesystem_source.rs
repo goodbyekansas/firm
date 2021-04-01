@@ -130,6 +130,7 @@ impl Runtime for NestedWasiRuntime {
                         .map_or(0, |timestamp| timestamp.as_secs()),
                 }),
                 arguments: HashMap::new(), // files on disk can not have arguments
+                root_dir: runtime_parameters.root_dir,
             },
             function_arguments,
             function_attachments,
@@ -329,12 +330,46 @@ impl RuntimeSource for FileSystemSource {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
+
+    use std::ops::Deref;
+
     use firm_types::stream::StreamExt;
     use flate2::{write::GzEncoder, Compression};
     use sha2::Digest;
     use tempfile::TempDir;
+
+    struct RuntimeParametersWrapper {
+        runtime_parameters: RuntimeParameters,
+        _temp_root_dir: tempfile::TempDir,
+    }
+
+    impl RuntimeParametersWrapper {
+        fn new(runtime_parameters: RuntimeParameters, temp_root_dir: tempfile::TempDir) -> Self {
+            Self {
+                runtime_parameters,
+                _temp_root_dir: temp_root_dir,
+            }
+        }
+    }
+
+    impl Deref for RuntimeParametersWrapper {
+        type Target = RuntimeParameters;
+
+        fn deref(&self) -> &Self::Target {
+            &self.runtime_parameters
+        }
+    }
+
+    macro_rules! runtime_parameters {
+        ($name:expr) => {{
+            let temp_root_dir = tempfile::TempDir::new().unwrap();
+            RuntimeParametersWrapper::new(
+                RuntimeParameters::new($name, temp_root_dir.path()),
+                temp_root_dir,
+            )
+        }};
+    }
 
     macro_rules! null_logger {
         () => {{
@@ -480,15 +515,13 @@ mod tests {
             );
 
             let good = fss.get("good").unwrap();
-            let res = good.execute(RuntimeParameters::new("good"), ValueStream::new(), vec![]);
+            let parameters = runtime_parameters!("good");
+            let res = good.execute(parameters.runtime_parameters, ValueStream::new(), vec![]);
             assert!(res.is_ok(), "Expected to execute successfully.");
 
             let symlink = fss.get("symlink").unwrap();
-            let res = symlink.execute(
-                RuntimeParameters::new("symlink"),
-                ValueStream::new(),
-                vec![],
-            );
+            let parameters = runtime_parameters!("symlink");
+            let res = symlink.execute(parameters.runtime_parameters, ValueStream::new(), vec![]);
             assert!(
                 res.is_ok(),
                 "Expected to execute symlink runtime successfully."
@@ -506,7 +539,8 @@ mod tests {
                 "Even if we get one with a bad checksum we should get a runtime."
             );
             let bad = bad.unwrap();
-            let res = bad.execute(RuntimeParameters::new("bad"), ValueStream::new(), vec![]);
+            let parameters = runtime_parameters!("bad");
+            let res = bad.execute(parameters.runtime_parameters, ValueStream::new(), vec![]);
             assert!(
                 res.is_err(),
                 "Bad checksum must result in error during execution."
@@ -534,9 +568,10 @@ mod tests {
                 bad.is_some(),
                 "A tar.gz archive where the exe has the wrong name should still result in an discoverable runtime"
             );
+            let parameters = runtime_parameters!("bad");
             assert!(
                 bad.unwrap()
-                    .execute(RuntimeParameters::new("bad"), ValueStream::new(), vec![])
+                    .execute(parameters.runtime_parameters, ValueStream::new(), vec![])
                     .is_err(),
                 "An invalid runtime archive should generate an error when executing"
             );
@@ -546,9 +581,10 @@ mod tests {
                 good.is_some(),
                 "A valid tar.gz should result in a discoverable runtime"
             );
+            let parameters = runtime_parameters!("good");
             assert!(
                 good.unwrap()
-                    .execute(RuntimeParameters::new("good"), ValueStream::new(), vec![])
+                    .execute(parameters.runtime_parameters, ValueStream::new(), vec![])
                     .is_ok(),
                 "A valid runtime should be executable"
             );

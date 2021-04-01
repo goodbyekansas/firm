@@ -1,7 +1,11 @@
 pub mod filesystem_source;
 pub mod wasi;
 
-use std::{collections::HashMap, fmt::Debug};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    path::{Path, PathBuf},
+};
 
 use firm_types::{
     functions::{Attachment, Stream as ValueStream},
@@ -13,6 +17,7 @@ use crate::executor::{FunctionOutputSink, RuntimeError};
 
 #[derive(Debug)]
 pub struct RuntimeParameters {
+    pub root_dir: PathBuf,
     pub function_name: String,
     pub entrypoint: Option<String>,
     pub code: Option<Attachment>,
@@ -21,13 +26,14 @@ pub struct RuntimeParameters {
 }
 
 impl RuntimeParameters {
-    pub fn new(function_name: &str) -> Self {
+    pub fn new(function_name: &str, root_dir: &Path) -> Self {
         Self {
             function_name: function_name.to_owned(),
             entrypoint: None,
             code: None,
             arguments: HashMap::new(),
             output_sink: FunctionOutputSink::null(),
+            root_dir: root_dir.to_owned(),
         }
     }
 

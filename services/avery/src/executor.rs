@@ -1,18 +1,14 @@
 use std::{
     collections::HashMap,
     fmt::{self, Debug, Display},
-    fs, str,
+    fs,
+    path::Path,
+    path::PathBuf,
+    str,
     sync::Arc,
     sync::Mutex,
 };
 
-use futures::{channel::mpsc::Receiver, channel::mpsc::Sender};
-use sha2::{Digest, Sha256};
-use slog::{debug, Logger};
-use thiserror::Error;
-use url::Url;
-
-use crate::runtime::{Runtime, RuntimeParameters, RuntimeSource};
 use firm_types::{
     functions::{
         execution_result::Result as ProtoResult,
@@ -25,8 +21,14 @@ use firm_types::{
     stream::StreamExt,
     tonic,
 };
+use futures::{channel::mpsc::Receiver, channel::mpsc::Sender};
+use sha2::{Digest, Sha256};
+use slog::{debug, Logger};
+use thiserror::Error;
+use url::Url;
 use uuid::Uuid;
-use RuntimeError::AttachmentReadError;
+
+use crate::runtime::{Runtime, RuntimeParameters, RuntimeSource};
 
 #[derive(Debug, Clone)]
 pub struct FunctionOutputSink {
@@ -76,6 +78,7 @@ pub struct ExecutionService {
     registry: Arc<Box<dyn Registry>>,
     runtime_sources: Arc<Vec<Box<dyn RuntimeSource>>>,
     execution_queue: Arc<Mutex<HashMap<Uuid, QueuedFunction>>>, // Death row hehurr
+    root_dir: PathBuf,
 }
 
 impl ExecutionService {
@@ -83,12 +86,14 @@ impl ExecutionService {
         log: Logger,
         registry: Box<dyn Registry>,
         runtime_sources: Vec<Box<dyn RuntimeSource>>,
+        root_dir: &Path,
     ) -> Self {
         Self {
             logger: log,
             registry: Arc::new(registry),
             runtime_sources: Arc::new(runtime_sources),
             execution_queue: Arc::new(Mutex::new(HashMap::new())),
+            root_dir: root_dir.to_owned(),
         }
     }
 
@@ -114,7 +119,6 @@ impl ExecutionServiceTrait for ExecutionService {
         request: tonic::Request<ExecutionParameters>,
     ) -> Result<tonic::Response<ExecutionId>, tonic::Status> {
         let execution_id = Uuid::new_v4();
-
         // lookup function
         let payload = request.into_inner();
         let function = self
@@ -233,6 +237,34 @@ impl ExecutionServiceTrait for ExecutionService {
         let output_spec = queued_function.function.outputs.clone();
         let function_name = queued_function.function.name.clone();
         let function_name2 = function_name.clone();
+
+        let function_dir = self.root_dir.join(format!(
+            "{name}-{version}{checksum}",
+            name = &function_name,
+            version = &queued_function.function.version,
+            checksum = &queued_function
+                .function
+                .code
+                .as_ref()
+                .and_then(|cs| cs.checksums.as_ref())
+                .map(|cs| format!("-{}", &cs.sha256[..16]))
+                .unwrap_or_default()
+        ));
+
+        if !function_dir.exists() {
+            std::fs::create_dir(&function_dir).map_err(|ioe| {
+                tonic::Status::internal(format!("Failed to create function directory: {}", ioe))
+            })?;
+        }
+
+        let execution_dir = function_dir.join(&id.uuid);
+        std::fs::create_dir(&execution_dir).map_err(|ioe| {
+            tonic::Status::internal(format!(
+                "Failed to create function execution directory: {}",
+                ioe
+            ))
+        })?;
+
         let execution_res = tokio::task::spawn_blocking(move || {
             runtime.execute(
                 RuntimeParameters {
@@ -245,6 +277,7 @@ impl ExecutionServiceTrait for ExecutionService {
                     code: queued_function.function.code.clone(),
                     arguments: runtime_spec.arguments,
                     output_sink: queued_function.output_sender.into(),
+                    root_dir: execution_dir,
                 },
                 queued_function.arguments,
                 queued_function.function.attachments.clone(),
@@ -380,8 +413,9 @@ impl AttachmentDownload for Attachment {
                     .and_then(|u| {
                         // The Url parser looses information on file paths. Therefor just take
                         // The original and skip "file://"
-                        fs::read(&u.url[7..])
-                            .map_err(|e| AttachmentReadError(u.url.to_owned(), e.to_string()))
+                        fs::read(&u.url[7..]).map_err(|e| {
+                            RuntimeError::AttachmentReadError(u.url.to_owned(), e.to_string())
+                        })
                     })?;
 
                 // TODO: this should be generalized when we
@@ -539,6 +573,7 @@ mod tests {
     #[test]
     fn test_lookup_runtime() {
         // get wasi executor
+        let root_dir = tempfile::TempDir::new().unwrap();
         let fr = registry!();
         let execution_service = ExecutionService::new(
             null_logger!(),
@@ -546,6 +581,7 @@ mod tests {
             vec![Box::new(runtime::InternalRuntimeSource::new(
                 null_logger!(),
             ))],
+            root_dir.path(),
         );
 
         let res = futures::executor::block_on(execution_service.lookup_runtime("wasi"));
@@ -563,6 +599,7 @@ mod tests {
     #[test]
     fn list_runtimes() {
         // get the runtimes
+        let root_dir = tempfile::TempDir::new().unwrap();
         let fr = registry!();
         let execution_service = ExecutionService::new(
             null_logger!(),
@@ -570,6 +607,7 @@ mod tests {
             vec![Box::new(runtime::InternalRuntimeSource::new(
                 null_logger!(),
             ))],
+            root_dir.path(),
         );
 
         let res = futures::executor::block_on(execution_service.list_runtimes(

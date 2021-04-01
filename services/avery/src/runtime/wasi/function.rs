@@ -30,7 +30,7 @@ fn native_attachment_path_from_descriptor(
     attachment_data: &Attachment,
     sandbox: &Sandbox,
 ) -> PathBuf {
-    sandbox.path().join(&attachment_data.name)
+    sandbox.host_path().join(&attachment_data.name)
 }
 
 fn download_and_map_at(
@@ -411,7 +411,8 @@ mod tests {
         let file_path = file.path();
         std::fs::write(file_path, "hejhej").unwrap();
         let mem = create_mem!();
-        let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let sandbox = Sandbox::new(tmp_dir.path(), Path::new("whatever")).unwrap();
         let attachments = vec![attachment!(
             format!("file://{}", file_path.display()),
             "sune",
@@ -457,7 +458,7 @@ mod tests {
 
         // Test bad attachment transport
         let mem = create_mem!();
-        let sandbox = Sandbox::new(Path::new("whatever")).unwrap();
+        let sandbox = Sandbox::new(tmp_dir.path(), Path::new("whatever")).unwrap();
         let attachments = vec![attachment!(
             "fule://din-mamma",
             "sune",

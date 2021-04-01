@@ -102,10 +102,15 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         runtime::InternalRuntimeSource::new(log.new(o!("source" => "internal"))),
     )];
     runtime_sources.extend(directory_sources.into_iter());
+    // TODO Creating a temp directory. In the future this must be configurable.
+    let temp_root_directory = tempfile::Builder::new()
+        .prefix("avery-functions-")
+        .tempdir()?;
     let execution_service = ExecutionService::new(
         log.new(o!("service" => "execution")),
         Box::new(proxy_registry.clone()),
         runtime_sources,
+        temp_root_directory.path(),
     );
 
     system::create_listener(
