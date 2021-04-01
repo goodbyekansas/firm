@@ -9,7 +9,10 @@ use firm_types::{
     stream::ToChannel,
     tonic,
 };
-use futures::{join, FutureExt, StreamExt, TryFutureExt};
+use futures::{
+    future::{abortable, select, Either},
+    FutureExt, StreamExt, TryFutureExt,
+};
 use tonic_middleware::HttpStatusInterceptor;
 
 use crate::{error, formatting::DisplayExt};
@@ -183,7 +186,7 @@ pub async fn run(
 
     let mut outputs: HashMap<String, BufferedChannelPrinter> = HashMap::new();
 
-    let follow_future = if follow_output {
+    let (follow_future, follow_future_abort) = abortable(if follow_output {
         execution_client
             .function_output(execution_id.clone())
             .await
@@ -204,14 +207,23 @@ pub async fn run(
             .boxed()
     } else {
         futures::future::ready(()).boxed()
-    };
-
-    let (_, res) = join!(
+    });
+    let res = match select(
         follow_future,
-        execution_client
-            .run_function(execution_id)
-            .map_err(BendiniError::from),
-    );
+        Box::pin(
+            execution_client
+                .run_function(execution_id)
+                .map_err(BendiniError::from),
+        ),
+    )
+    .await
+    {
+        Either::Left((_, execution_f)) => execution_f.await,
+        Either::Right((res, _)) => {
+            follow_future_abort.abort();
+            res
+        }
+    };
 
     // Explicit memory drop to ensure that output gets flushed before printing the result.
     std::mem::drop(outputs);
