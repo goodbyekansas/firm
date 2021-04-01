@@ -11,7 +11,7 @@ use regex::Regex;
 use semver::{Version, VersionReq};
 use sha2::{Digest, Sha256};
 use slog::{debug, info, warn, Logger};
-use tempfile::NamedTempFile;
+use tempfile::TempDir;
 use uuid::Uuid;
 
 use crate::config::InternalRegistryConfig;
@@ -28,9 +28,10 @@ use firm_types::{
 #[derive(Debug, Clone)]
 pub struct RegistryService {
     functions: Arc<RwLock<Vec<Function>>>,
-    function_attachments: Arc<RwLock<HashMap<Uuid, (Attachment, PathBuf)>>>,
+    function_attachments: Arc<RwLock<HashMap<Uuid, Attachment>>>,
     config: InternalRegistryConfig,
     logger: Logger,
+    attachment_directory: Arc<TempDir>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,50 +48,19 @@ struct Function {
     metadata: HashMap<String, String>,
 }
 
-impl Drop for RegistryService {
-    fn drop(&mut self) {
-        match self.function_attachments.write() {
-            Err(e) => warn!(
-                self.logger,
-                "Failed to acquire write lock for cleaning up attachments: {}. \
-                            Attachments will be leaked (restart computer to clean up)",
-                e
-            ),
-            Ok(mut fas) => {
-                if !fas.is_empty() {
-                    info!(
-                        self.logger,
-                        "🧹 Shutting down registry, cleaning up attachments..."
-                    );
-                    fas.drain().for_each(|(_id, (att, att_path))| {
-                        fs::remove_file(&att_path).map_or_else(
-                            |e| {
-                                warn!(
-                                    self.logger,
-                                    "Failed to clean up attachment \"{}\" at \"{}\": {}",
-                                    att.name,
-                                    att_path.display(),
-                                    e
-                                )
-                            },
-                            |_| (),
-                        )
-                    });
-                    info!(self.logger, "🧹💨  Function attachments cleaned up");
-                }
-            }
-        }
-    }
-}
-
 impl RegistryService {
-    pub fn new(config: InternalRegistryConfig, logger: Logger) -> Self {
-        Self {
+    pub fn new(config: InternalRegistryConfig, logger: Logger) -> Result<Self, std::io::Error> {
+        Ok(Self {
             functions: Arc::new(RwLock::new(Vec::new())),
             function_attachments: Arc::new(RwLock::new(HashMap::new())),
             config,
             logger,
-        }
+            attachment_directory: Arc::new(
+                tempfile::Builder::new()
+                    .prefix("avery-registry-attachments-")
+                    .tempdir()?,
+            ),
+        })
     }
 
     pub async fn upload_stream_attachment<S>(
@@ -141,7 +111,10 @@ impl RegistryService {
                         "Failed to get function attachment with None as id. 🤷".to_owned(),
                     )
                 })
-                .and_then(|idd| self.get_attachment(&idd))?;
+                .and_then(|idd| {
+                    self.get_attachment(&idd)
+                        .map(|a| (a, self.attachment_directory.path().join(idd.uuid)))
+                })?;
 
             // Make sure we only open the file once and re-use the file handle for later writes.
             // Since we get the path inside the chunk we got no other option but to open the file
@@ -213,7 +186,7 @@ impl RegistryService {
         Ok(tonic::Response::new(firm_types::functions::Nothing {}))
     }
 
-    fn get_attachment(&self, id: &AttachmentId) -> Result<(Attachment, PathBuf), tonic::Status> {
+    fn get_attachment(&self, id: &AttachmentId) -> Result<Attachment, tonic::Status> {
         Uuid::parse_str(&id.uuid)
             .map_err(|e| {
                 tonic::Status::new(
@@ -241,7 +214,7 @@ impl RegistryService {
                             format!("failed to find attachment with id: {}", attachment_id),
                         )
                     })
-                    .map(|(attachment, path)| (attachment.clone(), path.clone()))
+                    .map(|attachment| attachment.clone())
             })
     }
 
@@ -250,12 +223,12 @@ impl RegistryService {
             .code
             .clone()
             .map(|c| self.get_attachment(&c))
-            .map_or(Ok(None), |r| r.map(|(attach, _)| Some(attach)))?;
+            .map_or(Ok(None), |r| r.map(Some))?;
 
         let attachments = f
             .attachments
             .iter()
-            .map(|v| self.get_attachment(v).map(|(attach, _)| attach))
+            .map(|v| self.get_attachment(v))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(ProtoFunction {
@@ -517,44 +490,32 @@ impl Registry for RegistryService {
             )
         })?;
 
-        let attachment_file = NamedTempFile::new().map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("Failed to create temp file to save attachment in 😿: {}", e),
-            )
-        })?;
-
-        let (_, path) = attachment_file.keep().map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("Failed to persist temp file with attachment: {}", e),
-            )
-        })?;
-
         let id = Uuid::new_v4();
+        let path = self.attachment_directory.path().join(id.to_string());
         let upload_url = Some(AttachmentUrl {
-            url: String::from("grpc://[::1]"),
+            // TODO: This should be the local socket path.
+            // Currently bendini assumes that if the transport is grpc
+            // the upload host is the same as the registry host which is
+            // obviously not correct but works in this case.
+            url: String::from("grpc://"),
             auth_method: AuthMethod::None as i32,
         });
 
         function_attachments.insert(
             id,
-            (
-                Attachment {
-                    name: payload.name,
-                    url: Some(AttachmentUrl {
-                        url: format!("file://{}", path.display()),
-                        auth_method: AuthMethod::None as i32,
-                    }),
-                    metadata: payload.metadata,
-                    checksums: Some(checksum),
-                    created_at: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or_default(),
-                },
-                path,
-            ),
+            Attachment {
+                name: payload.name,
+                url: Some(AttachmentUrl {
+                    url: format!("file://{}", path.display()),
+                    auth_method: AuthMethod::None as i32,
+                }),
+                metadata: payload.metadata,
+                checksums: Some(checksum),
+                created_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or_default(),
+            },
         );
 
         Ok(tonic::Response::new(AttachmentHandle {

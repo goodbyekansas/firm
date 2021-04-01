@@ -85,7 +85,7 @@ macro_rules! first_function {
 
 macro_rules! registry_service {
     () => {{
-        RegistryService::new(InternalRegistryConfig::default(), null_logger!())
+        RegistryService::new(InternalRegistryConfig::default(), null_logger!()).unwrap()
     }};
 }
 
