@@ -1,37 +1,49 @@
 use std::path::{Path, PathBuf};
 
 use regex::Regex;
-use tempfile::TempDir;
 
 use super::error::WasiError;
 #[derive(Clone, Debug)]
 pub struct Sandbox {
-    path: PathBuf,
+    host_path: PathBuf,
     regex: Regex,
+    guest_path: PathBuf,
 }
 
 impl Sandbox {
-    pub fn new(map_dir: &Path) -> Result<Self, WasiError> {
+    pub fn new(root_dir: &Path, guest_path: &Path) -> Result<Self, WasiError> {
         Ok(Self {
-            path: TempDir::new()
+            host_path: tempfile::Builder::new()
+                .prefix(&guest_path)
+                .tempdir_in(root_dir)
                 .map(|tmp_dir| tmp_dir.into_path())
                 .map_err(|e| {
                     WasiError::SandboxError(format!("Failed to create sandbox temp folder: {}", e))
                 })?,
-            regex: Regex::new(&format!(r#"(^|[=\s;:"]){}(\b)"#, map_dir.display())).map_err(
+            regex: Regex::new(&format!(r#"(^|[=\s;:"]){}(\b)"#, guest_path.display())).map_err(
                 |e| WasiError::SandboxError(format!("Failed to create regex for sandbox: {}", e)),
             )?,
+            guest_path: guest_path.to_owned(),
         })
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    pub fn host_path(&self) -> &Path {
+        &self.host_path
+    }
+
+    pub fn guest_path(&self) -> &Path {
+        &self.guest_path
     }
 
     pub fn map(&self, arg: &str) -> String {
         self.regex
             .replace_all(arg, |caps: &regex::Captures| {
-                format!("{}{}{}", &caps[1], &self.path.to_string_lossy(), &caps[2])
+                format!(
+                    "{}{}{}",
+                    &caps[1],
+                    &self.host_path.to_string_lossy(),
+                    &caps[2]
+                )
             })
             .into_owned()
     }
@@ -42,27 +54,33 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    macro_rules! sandbox {
+        ($root_dir:expr, $guest_path:expr) => {
+            Sandbox::new($root_dir.path(), Path::new($guest_path)).unwrap();
+        };
+    }
     #[test]
     fn test_map_sandbox_dir() {
-        let sandbox = Sandbox::new(Path::new("bandbox")).unwrap();
+        let root_dir = tempfile::TempDir::new().unwrap();
+        let sandbox = sandbox!(root_dir, "bandbox");
         assert_eq!(
-            sandbox.path().join("some").join("dir"),
+            sandbox.host_path().join("some").join("dir"),
             Path::new(&sandbox.map("bandbox/some/dir"))
         );
 
         assert_eq!(
-            format!("--some-arg={}", sandbox.path().display()),
+            format!("--some-arg={}", sandbox.host_path().display()),
             sandbox.map("--some-arg=bandbox")
         );
 
-        let sandbox = Sandbox::new(Path::new("sandbox")).unwrap();
+        let sandbox = sandbox!(root_dir, "sandbox");
         assert_eq!(
-            format!("{0};{0}", sandbox.path().display()),
+            format!("{0};{0}", sandbox.host_path().display()),
             sandbox.map("sandbox;sandbox")
         );
 
         assert_eq!(
-            format!("{0}:{0}", sandbox.path().display()),
+            format!("{0}:{0}", sandbox.host_path().display()),
             sandbox.map("sandbox:sandbox")
         );
 
@@ -72,20 +90,20 @@ mod tests {
         );
 
         assert_eq!(
-            format!("{};kallekula/sandbox", sandbox.path().display()),
+            format!("{};kallekula/sandbox", sandbox.host_path().display()),
             sandbox.map("sandbox;kallekula/sandbox")
         );
 
         assert_eq!(
-            format!("sandboxno;{}/yes", sandbox.path().display()),
+            format!("sandboxno;{}/yes", sandbox.host_path().display()),
             sandbox.map("sandboxno;sandbox/yes")
         );
 
-        let attachmentbox = Sandbox::new(Path::new("attachments")).unwrap();
+        let attachmentbox = sandbox!(root_dir, "attachments");
         assert_eq!(
             format!(
                 "\'from start_blender import main;main.main(\"{}/menu-json\");\'",
-                attachmentbox.path().display()
+                attachmentbox.host_path().display()
             ),
             attachmentbox
                 .map("\'from start_blender import main;main.main(\"attachments/menu-json\");\'")
