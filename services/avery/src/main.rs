@@ -69,7 +69,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
     let internal_registry = RegistryService::new(
         config.internal_registry,
         log.new(o!("service" => "internal-registry")),
-    );
+    )?;
 
     let proxy_registry = ProxyRegistry::new(
         external_registries,

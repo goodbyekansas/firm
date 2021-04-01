@@ -498,7 +498,7 @@ mod tests {
 
     macro_rules! registry {
         () => {{
-            RegistryService::new(InternalRegistryConfig::default(), null_logger!())
+            RegistryService::new(InternalRegistryConfig::default(), null_logger!()).unwrap()
         }};
     }
 

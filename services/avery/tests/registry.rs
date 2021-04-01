@@ -24,7 +24,7 @@ macro_rules! null_logger {
 
 macro_rules! registry {
     () => {{
-        LocalRegistryService::new(InternalRegistryConfig::default(), null_logger!())
+        LocalRegistryService::new(InternalRegistryConfig::default(), null_logger!()).unwrap()
     }};
 }
 
@@ -455,7 +455,10 @@ fn test_attachments() {
     assert!(code_url.is_ok());
     let code_url = code_url.unwrap();
     assert_eq!(code_url.scheme(), "file");
-    assert!(std::path::Path::new(&code.url.unwrap().url[7..]).exists());
+    assert!(std::path::Path::new(&code.url.unwrap().url[7..])
+        .parent()
+        .unwrap()
+        .exists());
 
     // Ensure content of attachment
     let attach = function

@@ -28,7 +28,8 @@ pub async fn create_listener(
     let socket_path = format!(
         "/tmp/avery-{username}.sock",
         username = get_current_username()
-            .ok_or_else(|| "Failed to determine current unix user name.".to_owned())?.to_string_lossy()
+            .ok_or_else(|| "Failed to determine current unix user name.".to_owned())?
+            .to_string_lossy()
     );
 
     info!(

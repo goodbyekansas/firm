@@ -86,6 +86,7 @@ pub async fn register_and_upload_attachment(
 
     match parsed_url.scheme() {
         "grpc" => upload_via_grpc(
+            // TODO: We can't assume that we can re-use the same client just because the transport is grpc.
             client,
             progressbar,
             attachment_id.clone(),
