@@ -168,14 +168,17 @@ impl FunctionManifest {
         let fullpath = self
             .path
             .parent()
-            .ok_or_else(|| ManifestError::InvalidManifestPath(self.path.clone()))?
-            .join(attachment.path.clone());
-        Ok(fullpath
+            .ok_or_else(|| ManifestError::InvalidManifestPath(self.path.clone()))?;
+        #[cfg(windows)]
+        let fullpath = fullpath.join(attachment.path.replace("/", r#"\"#));
+        #[cfg(unix)]
+        let fullpath = fullpath.join(attachment.path.replace(r#"\"#, "/"));
+        fullpath
             .canonicalize()
             .map_err(|e| ManifestError::AttachmentFileReadError {
                 path: fullpath.clone(),
                 io_error: e,
-            })?)
+            })
     }
 
     pub fn code(&self) -> Result<Option<AttachmentInfo>, ManifestError> {
