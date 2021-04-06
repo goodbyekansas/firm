@@ -1,0 +1,16 @@
+syntax = "proto3";
+package firm_protocols.auth;
+
+service Authentication {
+  rpc AcquireToken (AcquireTokenParameters) returns (Token);
+}
+
+message AcquireTokenParameters {
+  string scope = 1;
+}
+
+message Token {
+  string token = 1;
+  uint64 expires_at = 2;
+  string scope = 3;
+}

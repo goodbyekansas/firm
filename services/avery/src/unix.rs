@@ -3,12 +3,9 @@ use std::{
     task::{Context, Poll},
 };
 
-use firm_types::{
-    functions::{execution_server::ExecutionServer, registry_server::RegistryServer},
-    tonic::transport::{server::Connected, Server},
-};
+use firm_types::tonic::transport::server::Connected;
 use futures::{FutureExt, TryFutureExt};
-use slog::{info, o, Logger};
+use slog::{info, Logger};
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::UnixListener,
@@ -16,15 +13,20 @@ use tokio::{
 };
 use users::get_current_username;
 
-use crate::{executor::ExecutionService, proxy_registry::ProxyRegistry};
-
 pub const DEFAULT_RUNTIME_DIR: &str = "/usr/share/avery/runtimes";
 
 pub async fn create_listener(
-    execution_service: ExecutionService,
-    proxy_registry: ProxyRegistry,
     log: Logger,
-) -> Result<(), String> {
+) -> Result<
+    (
+        async_stream::AsyncStream<
+            std::result::Result<UnixStream, std::io::Error>,
+            impl futures::Future<Output = ()>,
+        >,
+        Option<Box<dyn FnOnce()>>,
+    ),
+    String,
+> {
     let socket_path = format!(
         "/tmp/avery-{username}.sock",
         username = get_current_username()
@@ -47,17 +49,10 @@ pub async fn create_listener(
         }
     };
 
-    let server = Server::builder()
-        .add_service(ExecutionServer::new(execution_service))
-        .add_service(RegistryServer::new(proxy_registry))
-        .serve_with_incoming_shutdown(
-            incoming,
-            shutdown_signal(log.new(o!("scope" => "shutdown"))),
-        )
-        .await
-        .map_err(|e| e.to_string());
-    std::fs::remove_file(socket_path).unwrap_or(());
-    server
+    Ok((
+        incoming,
+        Some(Box::new(|| std::fs::remove_file(socket_path).unwrap_or(()))),
+    ))
 }
 
 async fn sig_term() {
@@ -75,7 +70,7 @@ pub async fn shutdown_signal(log: Logger) {
 }
 
 #[derive(Debug)]
-struct UnixStream(pub tokio::net::UnixStream);
+pub struct UnixStream(pub tokio::net::UnixStream);
 
 impl Connected for UnixStream {}
 
