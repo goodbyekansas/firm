@@ -1,10 +1,16 @@
 use std::path::PathBuf;
 
+use firm_types::{
+    auth::authentication_server::AuthenticationServer,
+    functions::execution_server::ExecutionServer, functions::registry_server::RegistryServer,
+    tonic::transport::Server,
+};
 use slog::{error, info, o, Drain, Logger};
 use structopt::StructOpt;
 use url::Url;
 
 use avery::{
+    auth::AuthService,
     config,
     executor::ExecutionService,
     proxy_registry::{ExternalRegistry, ProxyRegistry},
@@ -113,12 +119,25 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         temp_root_directory.path(),
     );
 
-    system::create_listener(
-        execution_service,
-        proxy_registry,
-        log.new(o!("scope" => "listener")),
-    )
-    .await?;
+    let auth_service = AuthService {};
+
+    let (incoming, shutdown_cb) =
+        system::create_listener(log.new(o!("scope" => "listener"))).await?;
+
+    Server::builder()
+        .add_service(ExecutionServer::new(execution_service))
+        .add_service(RegistryServer::new(proxy_registry))
+        .add_service(AuthenticationServer::new(auth_service))
+        .serve_with_incoming_shutdown(
+            incoming,
+            system::shutdown_signal(log.new(o!("scope" => "shutdown"))),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if let Some(f) = shutdown_cb {
+        f();
+    }
 
     info!(log, "👋 see you soon - no one leaves the Firm");
     Ok(())
