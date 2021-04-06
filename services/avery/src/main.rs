@@ -43,32 +43,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
                         reg.name, e
                     )
                 })
-                .and_then(|url| {
-                    let reg_name = reg.name.clone();
-                    reg.oauth_scope
-                        .map(|scope| {
-                            std::env::var(format!("AVERY_OAUTH_{}", scope)).map_err(|e| {
-                                format!(
-                                    "Could not use environment variable \"{}\": {}",
-                                    format!("AVERY_OAUTH_{}", scope),
-                                    e
-                                )
-                            })
-                        })
-                        .transpose()
-                        .map(|oauth| {
-                            oauth.map_or_else(
-                                || ExternalRegistry::new(reg_name.clone(), url.clone()),
-                                |oauth| {
-                                    ExternalRegistry::new_with_oauth(
-                                        reg_name.clone(),
-                                        url.clone(),
-                                        oauth,
-                                    )
-                                },
-                            )
-                        })
-                })
+                .map(|url| ExternalRegistry::new(reg.name, url))
         })
         .collect::<Result<Vec<ExternalRegistry>, String>>()?;
 
@@ -77,10 +52,13 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         log.new(o!("service" => "internal-registry")),
     )?;
 
+    let auth_service = AuthService {};
+
     let proxy_registry = ProxyRegistry::new(
         external_registries,
         internal_registry,
         config.conflict_resolution,
+        auth_service.clone(),
         log.new(o!("service" => "proxy-registry")),
     )
     .await?;
@@ -118,8 +96,6 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         runtime_sources,
         temp_root_directory.path(),
     );
-
-    let auth_service = AuthService {};
 
     let (incoming, shutdown_cb) =
         system::create_listener(log.new(o!("scope" => "listener"))).await?;
