@@ -2,6 +2,7 @@ use firm_types::{
     auth::authentication_server::Authentication, auth::AcquireTokenParameters, auth::Token, tonic,
 };
 
+#[derive(Clone, Debug)]
 pub struct AuthService {}
 
 #[tonic::async_trait]
@@ -10,6 +11,7 @@ impl Authentication for AuthService {
         &self,
         _: tonic::Request<AcquireTokenParameters>,
     ) -> Result<tonic::Response<Token>, tonic::Status> {
-        todo!();
+        // TODO: Actually implement it
+        Err(tonic::Status::unimplemented("Nope"))
     }
 }

@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use config::{ConfigError, Environment, File, FileFormat};
 use serde::Deserialize;
@@ -16,6 +19,9 @@ pub struct Config {
 
     #[serde(default)]
     pub runtime_directories: Vec<PathBuf>,
+
+    #[serde(default)]
+    pub token_scope_mappings: HashMap<String, String>,
 }
 
 fn default_version_suffix() -> String {
@@ -52,7 +58,6 @@ impl Default for ConflictResolutionMethod {
 pub struct Registry {
     pub name: String,
     pub url: String,
-    pub oauth_scope: Option<String>,
 }
 
 const DEFAULT_CFG_FILE_NAME: &str = "avery.toml";
@@ -111,6 +116,32 @@ mod tests {
     }
 
     #[test]
+    fn token_mappings() {
+        let c = Config::new_with_toml_string(
+            r#"
+[token_scope_mappings]
+"registry.sune.com"="oidc.something.external"
+"megistry.rune.bom"="ocd.something.external"
+"#,
+        );
+        assert!(c.is_ok());
+
+        let conf = c.unwrap();
+        assert_eq!(
+            conf.token_scope_mappings
+                .get("registry.sune.com")
+                .map(|s| s.as_str()),
+            Some("oidc.something.external"),
+        );
+        assert_eq!(
+            conf.token_scope_mappings
+                .get("megistry.rune.bom")
+                .map(|s| s.as_str()),
+            Some("ocd.something.external"),
+        );
+    }
+
+    #[test]
     fn registries() {
         // Test registries in config, make sure oath_scope is optional
         let c = Config::new_with_toml_string(
@@ -122,7 +153,6 @@ mod tests {
         [[registries]]
         name="registry3"
         url="https://on-the-internet.com"
-        oauth_scope="everything"
         "#,
         );
         assert!(c.is_ok());
@@ -132,12 +162,10 @@ mod tests {
                 Registry {
                     name: "registry1".to_owned(),
                     url: "https://over-here".to_owned(),
-                    oauth_scope: None
                 },
                 Registry {
                     name: "registry3".to_owned(),
                     url: "https://on-the-internet.com".to_owned(),
-                    oauth_scope: Some("everything".to_owned())
                 }
             ]
         );
@@ -150,7 +178,6 @@ mod tests {
         [[registries]]
         name="registry3"
         url="https://on-the-internet.com"
-        oauth_scope="everything"
         "#,
         );
         assert!(c.is_err());

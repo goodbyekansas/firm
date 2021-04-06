@@ -39,18 +39,16 @@ pub async fn create_listener(
         "👨‍⚖️ The Firm is listening for requests on socket {}", &socket_path
     );
 
-    let incoming = {
-        let uds = UnixListener::bind(&socket_path).map_err(|e| e.to_string())?;
-
-        async_stream::stream! {
-            while let item = uds.accept().map_ok(|(st, _)| UnixStream(st)).await {
-                yield item;
-            }
-        }
-    };
-
     Ok((
-        incoming,
+        {
+            let uds = UnixListener::bind(&socket_path).map_err(|e| e.to_string())?;
+
+            async_stream::stream! {
+                while let item = uds.accept().map_ok(|(st, _)| UnixStream(st)).await {
+                    yield item;
+                }
+            }
+        },
         Some(Box::new(|| std::fs::remove_file(socket_path).unwrap_or(()))),
     ))
 }

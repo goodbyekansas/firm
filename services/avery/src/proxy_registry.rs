@@ -1,6 +1,8 @@
 use std::collections::{hash_map::Entry, HashMap};
 
 use firm_types::{
+    auth::authentication_server::Authentication,
+    auth::AcquireTokenParameters,
     functions::{
         registry_client::RegistryClient, registry_server::Registry, Functions, Ordering,
         OrderingKey,
@@ -8,13 +10,17 @@ use firm_types::{
     tonic,
 };
 use futures::{stream, StreamExt, TryStreamExt};
-use slog::{info, o, warn, Logger};
+use slog::{warn, Logger};
 use thiserror::Error;
-use tonic::transport::{ClientTlsConfig, Endpoint};
+use tokio::runtime::Handle;
+use tonic::{
+    metadata::AsciiMetadataValue,
+    transport::{ClientTlsConfig, Endpoint},
+};
 use tonic_middleware::HttpStatusInterceptor;
 use url::Url;
 
-use crate::{config::ConflictResolutionMethod, registry::RegistryService};
+use crate::{auth::AuthService, config::ConflictResolutionMethod, registry::RegistryService};
 
 #[derive(Debug, Clone)]
 struct RegistryConnection {
@@ -39,7 +45,6 @@ pub struct ProxyRegistry {
 pub struct ExternalRegistry {
     name: String,
     url: Url,
-    oauth_token: Option<String>,
 }
 
 #[derive(Error, Debug)]
@@ -58,8 +63,8 @@ pub enum ProxyRegistryError {
 }
 
 async fn create_connection(
+    auth_service: AuthService,
     registry: ExternalRegistry,
-    log: Logger,
 ) -> Result<RegistryClient<HttpStatusInterceptor>, ProxyRegistryError> {
     let mut endpoint = Endpoint::from_shared(registry.url.to_string())
         .map_err(|e| ProxyRegistryError::InvalidUri(e.to_string()))?;
@@ -72,29 +77,40 @@ async fn create_connection(
     // Tonic doesn't handle these cases very well. We have to make a wrapper around
     // to handle these edge cases. We convert it into normal tonic statuses that tonic can handle.
     let channel = HttpStatusInterceptor::new(endpoint.connect().await?);
+    Ok(RegistryClient::with_interceptor(
+        channel,
+        move |mut req: tonic::Request<()>| {
+            // TODO: Block on calls are really ugly. Unfortunately with_interceptor does
+            // not take async block and we need to use async functionality.
+            if let Some(token) = endpoint
+                .uri()
+                .host()
+                .and_then(|host| {
+                    let host = host.to_owned();
+                    let auth = auth_service.clone();
+                    let handle = Handle::current();
+                    std::thread::spawn(move || {
+                        handle
+                            .block_on(async {
+                                auth.acquire_token(tonic::Request::new(AcquireTokenParameters {
+                                    scope: host,
+                                }))
+                                .await
+                            })
+                            .ok()
+                    })
+                    .join()
+                    .ok()
+                    .and_then(|op| op)
+                })
+                .and_then(|result| AsciiMetadataValue::from_str(&result.get_ref().token).ok())
+            {
+                req.metadata_mut().insert("authorization", token);
+            }
 
-    let bearer = registry
-        .oauth_token
-        .map(|token| {
-            tonic::metadata::MetadataValue::from_str(&format!("Bearer {}", token)).map_err(|e| {
-                ProxyRegistryError::InvalidOauthToken(format!(
-                    "Failed to convert oauth token to metadata value: {}",
-                    e
-                ))
-            })
-        })
-        .transpose()?;
-    Ok(match bearer {
-        Some(bearer) => {
-            info!(log, "Using provided oauth2 credentials 🧸");
-            RegistryClient::with_interceptor(channel, move |mut req: tonic::Request<()>| {
-                req.metadata_mut().insert("authorization", bearer.clone());
-                Ok(req)
-            })
-        }
-
-        None => RegistryClient::new(channel),
-    })
+            Ok(req)
+        },
+    ))
 }
 
 impl ExternalRegistry {
@@ -104,26 +120,7 @@ impl ExternalRegistry {
     /// `name`: A semantic name for the registry (used to identify this registry in list results)
     /// `url`: A url pointing to the external registry
     pub fn new(name: String, url: Url) -> Self {
-        Self {
-            name,
-            url,
-            oauth_token: None,
-        }
-    }
-
-    /// Create a new external registry descriptor for a registry using OAuth
-    ///
-    /// # Parameters
-    /// `name`: A semantic name for the registry (used to identify this registry in list results)
-    /// `url`: A url pointing to the external registry
-    /// `oauth_token`: An OAuth2 token as a String that will be used as a bearer token when
-    /// contacting the registry
-    pub fn new_with_oauth(name: String, url: Url, oauth_token: String) -> Self {
-        Self {
-            name,
-            url,
-            oauth_token: Some(oauth_token),
-        }
+        Self { name, url }
     }
 }
 
@@ -141,6 +138,7 @@ impl ProxyRegistry {
         external_registries: Vec<ExternalRegistry>,
         internal_registry: RegistryService,
         conflict_resolution: ConflictResolutionMethod,
+        auth_service: AuthService,
         log: Logger,
     ) -> Result<Self, ProxyRegistryError> {
         Ok(Self {
@@ -151,11 +149,7 @@ impl ProxyRegistry {
 
                     Ok::<RegistryConnection, ProxyRegistryError>(RegistryConnection {
                         name: reg_name.clone(),
-                        client: create_connection(
-                            er,
-                            log.new(o!("scope" => "connect", "registry" => reg_name)),
-                        )
-                        .await?,
+                        client: create_connection(auth_service.clone(), er).await?,
                     })
                 })
                 .try_collect::<Vec<RegistryConnection>>()
