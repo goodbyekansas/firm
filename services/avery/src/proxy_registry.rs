@@ -103,7 +103,10 @@ async fn create_connection(
                     .ok()
                     .and_then(|op| op)
                 })
-                .and_then(|result| AsciiMetadataValue::from_str(&result.get_ref().token).ok())
+                .and_then(|result| {
+                    AsciiMetadataValue::from_str(&format!("bearer {}", &result.get_ref().token))
+                        .ok()
+                })
             {
                 req.metadata_mut().insert("authorization", token);
             }

@@ -1,4 +1,15 @@
-{ stdenv, base, types, tonicMiddleware, targets ? [ ], defaultTarget ? "", darwin ? null, xcbuild ? null, pkgsCross ? null }:
+{ stdenv
+, base
+, types
+, tonicMiddleware
+, targets ? [ ]
+, defaultTarget ? ""
+, darwin ? null
+, xcbuild ? null
+, pkgsCross ? null
+, openssl
+, pkg-config
+}:
 base.languages.rust.mkService {
   inherit stdenv targets defaultTarget;
   name = "avery";
@@ -8,7 +19,7 @@ base.languages.rust.mkService {
     (path: type: (type == "regular" && baseNameOf path == "avery-with-runtimes.nix"))
   ];
 
-  buildInputs = [ types.package tonicMiddleware.package ]
+  buildInputs = [ types.package tonicMiddleware.package openssl ]
     ++ stdenv.lib.optional stdenv.hostPlatform.isWindows pkgsCross.mingwW64.windows.pthreads;
-  nativeBuildInputs = stdenv.lib.optional stdenv.hostPlatform.isDarwin xcbuild;
+  nativeBuildInputs = [ pkg-config ] ++ stdenv.lib.optional stdenv.hostPlatform.isDarwin xcbuild;
 }
