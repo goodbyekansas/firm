@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>Authenticated</title>
+    <style>
+        body {
+            background-image: url('data:image/gif;base64,R0lGODlhKwBVAOYAAAoQDAsRDQcKCBAaExEbFBwuIRYkGh0vIhclGwwTDg0UD0BqSzpgRC5MNkNuTkJtTUFrTDxjRjthRTZZPzVXPjBPOCpFMShCLyI4KD1kRzFQOS9NNylDMCQ7Kh4xIytGMiU8KyM5KRgnHB8yJBIdFRkoHRMeFkNvTj1lRzdbQDFROURwTz9oST5mSDleQjhcQTNUOy1KNCtHMiU9Kx8zJEBpSjpfQzRVPCxIMydALSY+LCE2JhkpHRMfFi5LNShBLiA0JRssHyI3JxoqHhUiGA0VDxwtIBYjGRQgFw4WEAgMCQ8YERAZEgkOCgoPCwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACwAAAAAKwBVAAAH/4AxSBgfNwsLNx8bERAvODIvEBkbhYeJi42PkZOViIoTOwkAQxcNDBASDTgUECwqOCosEBQ4pqiqrK6wsrS2KTtBoU0ABISGiDgaGY0+PpsaOMc3ycsvzc84GxxIPMIAAgmkGwwOqTgpDywwODAsDynZ5Obo6uwsKDoGO9zeAgFNxWJQePCAQgMNLBww2DDuRAYNDQYWPJhwYQ4OPI7s65ZgmL8mSpKQUubgYQN6MBrAgPDuYIaSEFMsaHAEQ8aN/f4pKQIQQ0SCKVSyOLGwobqfBS/k2GdTI7+O33TyTLBkyAdlDiHaeDArIoQVNg4ygGHgANObTz2K2tkkQZImSP9mVED3rkK7FQxUqGCwgoUFGiCOeDjrlKNaACHbvmVSxKqKFitaaKhgY8UsuxMKiAg8eBBawwHAAWjytkgSJ4wDHJGbgmUKuyxWqCgAwshmwYQxPAUQWhTpJqZRF0lAogiNGI8jq2jQYMaR2psNdMYQpObuADtHny6yRDjxBAMMsIZgg8aODqttg5AuZFB13RwBJMhO2gl3YsNJgDehYMcHHReIsENgM6jHHhIhBGEAfBiIMl8Ro3V3HwHD9bBfAkSIwMMPAhJooAftJbjgETxgAOGDATgh4RLEJJGAhQOYgCGJHA64mmbrgUiEiCGQaKJ8IaXYXRIskuBiDwrEOCP/DwHaOINmMxhAgxA7KthjiUUEMF8SQgKQBBMAGPlikkgkcASJTRIIpZQYVGlAj0GYGEARQaLmJZhiIjlAmWcy2aF4a9LQJo9HxJklnVza+WWYLiKhAAl8ovnnkyVEKaibcIZwKGmigJkEAYwqQMSjfGrYZJQ6FFCCDiJcWtubhWqaAE8uEuMlAQGQsISopCpggKkloqoqq64aAWsQsvK0hCigLoGrrqIWAamvwGIwAwKprsrmc8Zm6uJbyxITgLMB9LArEdKO+iuTwWI7bKsYcCuCt241ES6u5JrLKwmjIlDttT8csGqr6EEXGLLfNsEEs+OSEAASux5RhAn9/otA/8AD01CwerEmYZrCoui3hMMQFyExxUX4y661F3sw8HnyHhyCx0kAwFiYVOlX8skSq3xBiTq0XEKN6BUYXRAWeMAEizfrp+TOE/dcbdA/eLChgEXjaEABN2RQAQL4fackERRKjITUK1NtNdE3ijADDzrMsIEENnjQw5EXkl2EAUUgwbfPQLd89XmAigDDDTmoMIMFKWRA1ot5U8i33ylP3fIQNa6nww47qJCBDRm4IIPcn+9wROQpL0E54BgEfYEHpPxJ2QYzyOCCDxK0oMIPjDt+BAkykr0EAqr/bfkFI8S+Aw6Lp9BCChb8wAEHN7Qg+g8bfB6YmQQMX3zlaSOAPP8pPIAgwfXZTyKBDz/g3sINvDtfwZndE7/68clX8EH7EmSwO+PWawEFpkcB68UAe5/jgK7sZ7zwXcA8zhsgBwroggNuwAJdk8AGLjC391ngHC2oAA9K8D3WBa0CE8ABBjOwPg5KoAY3sIAKLhADBtSAFhOsAQNicIHHSIADBLjfyn6wgw20QHc0tKEEKaDDGthAhTeoAQo2uAEUwPCDNqhBBQ7QwJ/lwAYxxEEWn4jBBUyRgyh4jO4sgAl4nKMGEbjgYzLAgeFpyAI64EAK4CjHI6rAAjGIQA3cKAMxkqcBMqCAGVXwARWgYAEUKGQWKzCCVrkgjY18ZCQNGZZELjL/joU44iUY4cYXLACU1aub3EiJAxyYEpWiVAQjeCEDW6Qika1gZCxmIYMPIqEYH8iFLmlpS0RSwBmSgIY0qMEMZ8zkCEAwgQBEcgFlNBMby1xHO97hg2KeIx0wUAoNTBBNfyiBADP4Zj22CQ9bOuAFDHkBTFZxCIMoYwKFGgE5pRka0liFJNZwxjwHghKhtIQkGfiLboKgz3L2EztxOQk4DRqUDQiFKAxhwAmOQoHMWIeh+/SHAHgjgCIY5wPtwKhRYGASG5ygK6w4wWyoY50DjNOhI8UOhOAygwa4FKYQOAFQYKPSBnTAPQtCgk1DGhog7TQJCjhOSheyFw1ARjKU/wFLAaaE1HgtFadOjZATknCEC2T1MjCYC1AaEL0D0bRHX+XnSB8EABXZZ1dSjQ1fbKCXFrCAVVECEVLhelO5AilRQyoSEcxaGb6oYwYBcxubEGSlIyx1B9Kcj5bqNCQ8fWoHMUgrBTKAA/EcQLKXIpRNe4BZcChhTnXylGcTcLYHYiAH65nBaWcAL0xZlgaszexrEZUi2TKKtrQ1ABGsZVoREGtQlT0AEJCAWSVolrg2u1WuoFqm8Cw3Srp1bm870C3L7qO6dJqVvQKQ3U+Va1eO8i5zw/vcHZXXLNRFAlvUey8A5OtcCiAAAr5rAB2c9rncMkBg8NuenVgXXAz7L/+vBPxdbB2YYAnmzD4aPBUIi0vCo6IwywycsY1FZzr67TDIPkyyiAUYATW5lg4qySqYGUw6TNHvW+q1sDA17GFLMNmLY3yxEbysYFpDcWKC07Sc0TbIEhNwTag2gsEhWbKC1U197sMYsekMytIqwZSLPDg1Ybk9Wt4OiygktuCBmQRibh2ZM9e2wKKZCFtec35Qxzc4j/kHVabzk848CDyvKGwwktERJBfmP1c5TXWW0p3tSiREX2jR3vOznAHtJycFSjchMAClZ6snRddvZHGmMrs8XSk2ESG0QSDAWElNJu5lOtXie3Q3cisw3tJgc7bLQAwIsKg81RrTxNO062j/sGrwCoxV5oPeDFQggQmMgATHdRSkbJ1sXD+w2QUWGB5Jp8HauYC0BDDSvhxlgFMrW3zM/tkOUOUBGkxAd/HLAPR+8BhQAHha7b71mL/9M+aa9SLVQ18GJvGDYOOAX9JyFALc7e14A60ARlwf//ANwH33WwgjQxcCFojqgVs8BxPYQMNdIEACWk8GCGS47VqAAxGInOTv/vZfcuA8ePygei3sYBh7joOft8AGOxgezitu7x32cOEzrOENCahDHnrOf0mk+QGWPnALyM2KYRwjFM1IRbBj0YlQdCINBFzy1nFtkK3co9PV+Eepu1HuVvcjIG24xbbDwAKexGQVISlJKvI8QpGC12Thn+jJuiFBCAj4QCzbGPdTUqJ675MlBO5u+VBmfhELqEAgAAA7');
+            background-repeat: repeat;
+            color: #ca8ebe;
+            text-align: center;
+            text-shadow: 0.5em 0.5em 0.5em mediumvioletred;
+            margin: 8em 8em;
+            font-family: sans-serif;
+        }
+
+        h1 {
+            font-size: 7em;
+        }
+
+        .glitch {
+            position: relative;
+            animation: glitch-skew 1s infinite linear alternate-reverse;
+        }
+
+        .glitch::before {
+            content: attr(data-text);
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            left: 2px;
+            text-shadow: -2px 0 white;
+            clip: rect(44px, 450px, 56px, 0);
+            animation: glitch-anim 5s infinite linear alternate-reverse;
+        }
+
+        .glitch::after {
+            content: attr(data-text);
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            left: -2px;
+            text-shadow: -2px 0 #00fff9, 2px 2px white;
+            animation: glitch-anim2 1s infinite linear alternate-reverse;
+        }
+
+        @keyframes glitch-anim {
+            0% {
+                clip: rect(73px, 9999px, 3px, 0);
+                transform: skew(0.09deg);
+            }
+
+            5% {
+                clip: rect(83px, 9999px, 35px, 0);
+                transform: skew(0.59deg);
+            }
+
+            10% {
+                clip: rect(49px, 9999px, 68px, 0);
+                transform: skew(0.14deg);
+            }
+
+            15% {
+                clip: rect(49px, 9999px, 41px, 0);
+                transform: skew(0.05deg);
+            }
+
+            20% {
+                clip: rect(30px, 9999px, 95px, 0);
+                transform: skew(0.83deg);
+            }
+
+            25% {
+                clip: rect(8px, 9999px, 70px, 0);
+                transform: skew(0.32deg);
+            }
+
+            30% {
+                clip: rect(29px, 9999px, 79px, 0);
+                transform: skew(0.07deg);
+            }
+
+            35% {
+                clip: rect(39px, 9999px, 90px, 0);
+                transform: skew(0.44deg);
+            }
+
+            40% {
+                clip: rect(19px, 9999px, 5px, 0);
+                transform: skew(0.28deg);
+            }
+
+            45% {
+                clip: rect(100px, 9999px, 29px, 0);
+                transform: skew(0.88deg);
+            }
+
+            50% {
+                clip: rect(79px, 9999px, 25px, 0);
+                transform: skew(0.67deg);
+            }
+
+            55% {
+                clip: rect(3px, 9999px, 21px, 0);
+                transform: skew(0.15deg);
+            }
+
+            60% {
+                clip: rect(50px, 9999px, 99px, 0);
+                transform: skew(0.04deg);
+            }
+
+            65% {
+                clip: rect(28px, 9999px, 84px, 0);
+                transform: skew(0.14deg);
+            }
+
+            70% {
+                clip: rect(66px, 9999px, 32px, 0);
+                transform: skew(1deg);
+            }
+
+            75% {
+                clip: rect(84px, 9999px, 27px, 0);
+                transform: skew(0.2deg);
+            }
+
+            80% {
+                clip: rect(78px, 9999px, 32px, 0);
+                transform: skew(0.63deg);
+            }
+
+            85% {
+                clip: rect(98px, 9999px, 49px, 0);
+                transform: skew(0.06deg);
+            }
+
+            90% {
+                clip: rect(79px, 9999px, 34px, 0);
+                transform: skew(0.77deg);
+            }
+
+            95% {
+                clip: rect(45px, 9999px, 35px, 0);
+                transform: skew(0.85deg);
+            }
+
+            100% {
+                clip: rect(21px, 9999px, 37px, 0);
+                transform: skew(0.41deg);
+            }
+        }
+
+        @keyframes glitch-anim2 {
+            0% {
+                clip: rect(32px, 9999px, 28px, 0);
+                transform: skew(0.34deg);
+            }
+
+            5% {
+                clip: rect(90px, 9999px, 76px, 0);
+                transform: skew(0.76deg);
+            }
+
+            10% {
+                clip: rect(67px, 9999px, 41px, 0);
+                transform: skew(0.2deg);
+            }
+
+            15% {
+                clip: rect(57px, 9999px, 6px, 0);
+                transform: skew(0.1deg);
+            }
+
+            20% {
+                clip: rect(86px, 9999px, 77px, 0);
+                transform: skew(0.06deg);
+            }
+
+            25% {
+                clip: rect(31px, 9999px, 1px, 0);
+                transform: skew(0.39deg);
+            }
+
+            30% {
+                clip: rect(29px, 9999px, 51px, 0);
+                transform: skew(0.43deg);
+            }
+
+            35% {
+                clip: rect(2px, 9999px, 70px, 0);
+                transform: skew(0.44deg);
+            }
+
+            40% {
+                clip: rect(49px, 9999px, 26px, 0);
+                transform: skew(0.86deg);
+            }
+
+            45% {
+                clip: rect(8px, 9999px, 90px, 0);
+                transform: skew(0.33deg);
+            }
+
+            50% {
+                clip: rect(51px, 9999px, 9px, 0);
+                transform: skew(0.97deg);
+            }
+
+            55% {
+                clip: rect(58px, 9999px, 6px, 0);
+                transform: skew(0.9deg);
+            }
+
+            60% {
+                clip: rect(19px, 9999px, 92px, 0);
+                transform: skew(0.06deg);
+            }
+
+            65% {
+                clip: rect(81px, 9999px, 53px, 0);
+                transform: skew(0.69deg);
+            }
+
+            70% {
+                clip: rect(67px, 9999px, 70px, 0);
+                transform: skew(0.39deg);
+            }
+
+            75% {
+                clip: rect(40px, 9999px, 21px, 0);
+                transform: skew(0.41deg);
+            }
+
+            80% {
+                clip: rect(98px, 9999px, 19px, 0);
+                transform: skew(0.28deg);
+            }
+
+            85% {
+                clip: rect(58px, 9999px, 77px, 0);
+                transform: skew(0.57deg);
+            }
+
+            90% {
+                clip: rect(91px, 9999px, 38px, 0);
+                transform: skew(0.92deg);
+            }
+
+            95% {
+                clip: rect(88px, 9999px, 96px, 0);
+                transform: skew(0.5deg);
+            }
+
+            100% {
+                clip: rect(69px, 9999px, 77px, 0);
+                transform: skew(0.64deg);
+            }
+        }
+
+        @keyframes glitch-skew {
+            0% {
+                transform: skew(-3deg);
+            }
+
+            10% {
+                transform: skew(3deg);
+            }
+
+            20% {
+                transform: skew(0deg);
+            }
+
+            30% {
+                transform: skew(-4deg);
+            }
+
+            40% {
+                transform: skew(0deg);
+            }
+
+            50% {
+                transform: skew(0deg);
+            }
+
+            60% {
+                transform: skew(0deg);
+            }
+
+            70% {
+                transform: skew(5deg);
+            }
+
+            80% {
+                transform: skew(-3deg);
+            }
+
+            90% {
+                transform: skew(-2deg);
+            }
+
+            100% {
+                transform: skew(1deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <h1 class="glitch" data-text="You are now logged in">
+        You are now logged in,
+    </h1>
+    <h1 class="glitch" data-text="this window can be closed!">
+        this window can be closed!
+    </h1>
+</body>
+
+</html>

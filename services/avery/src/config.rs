@@ -6,6 +6,16 @@ use std::{
 use config::{ConfigError, Environment, File, FileFormat};
 use serde::Deserialize;
 
+#[derive(Debug, Deserialize, PartialEq, Clone)]
+pub struct OidcConfig {
+    pub discovery_url: String,
+    pub client_id: String,
+    pub client_secret: String,
+
+    #[serde(default)]
+    pub hosted_domain: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -21,7 +31,7 @@ pub struct Config {
     pub runtime_directories: Vec<PathBuf>,
 
     #[serde(default)]
-    pub token_scope_mappings: HashMap<String, String>,
+    pub oidc_mappings: HashMap<String, OidcConfig>,
 }
 
 fn default_version_suffix() -> String {
@@ -119,25 +129,36 @@ mod tests {
     fn token_mappings() {
         let c = Config::new_with_toml_string(
             r#"
-[token_scope_mappings]
-"registry.sune.com"="oidc.something.external"
-"megistry.rune.bom"="ocd.something.external"
+[oidc_mappings."registry.sune.com"]
+discovery_url="oidc.something.external"
+client_id="123abc"
+client_secret="weeeooooo"
+[oidc_mappings."megistry.rune.bom"]
+discovery_url="ocd.something.external"
+client_id="456def"
+client_secret="no"
 "#,
         );
         assert!(c.is_ok());
 
         let conf = c.unwrap();
         assert_eq!(
-            conf.token_scope_mappings
-                .get("registry.sune.com")
-                .map(|s| s.as_str()),
-            Some("oidc.something.external"),
+            conf.oidc_mappings.get("registry.sune.com"),
+            Some(&OidcConfig {
+                discovery_url: "oidc.something.external".to_owned(),
+                client_id: "123abc".to_owned(),
+                client_secret: "weeeooooo".to_owned(),
+                hosted_domain: None
+            }),
         );
         assert_eq!(
-            conf.token_scope_mappings
-                .get("megistry.rune.bom")
-                .map(|s| s.as_str()),
-            Some("ocd.something.external"),
+            conf.oidc_mappings.get("megistry.rune.bom"),
+            Some(&OidcConfig {
+                discovery_url: "ocd.something.external".to_owned(),
+                client_id: "456def".to_owned(),
+                client_secret: "no".to_owned(),
+                hosted_domain: None
+            }),
         );
     }
 
