@@ -10,7 +10,7 @@ use firm_types::{
     tonic,
 };
 use futures::{stream, StreamExt, TryStreamExt};
-use slog::{warn, Logger};
+use slog::{o, warn, Logger};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tonic::{
@@ -65,6 +65,7 @@ pub enum ProxyRegistryError {
 async fn create_connection(
     auth_service: AuthService,
     registry: ExternalRegistry,
+    logger: Logger,
 ) -> Result<RegistryClient<HttpStatusInterceptor>, ProxyRegistryError> {
     let mut endpoint = Endpoint::from_shared(registry.url.to_string())
         .map_err(|e| ProxyRegistryError::InvalidUri(e.to_string()))?;
@@ -89,13 +90,23 @@ async fn create_connection(
                     let host = host.to_owned();
                     let auth = auth_service.clone();
                     let handle = Handle::current();
+                    let logger = logger.new(o!());
                     std::thread::spawn(move || {
                         handle
                             .block_on(async {
                                 auth.acquire_token(tonic::Request::new(AcquireTokenParameters {
-                                    scope: host,
+                                    scope: host.clone(),
                                 }))
                                 .await
+                            })
+                            .map_err(|e| {
+                                warn!(
+                                    logger,
+                                    "Requesting auth for scope \"{}\" failed with error: {}",
+                                    host,
+                                    e
+                                );
+                                e
                             })
                             .ok()
                     })
@@ -152,7 +163,12 @@ impl ProxyRegistry {
 
                     Ok::<RegistryConnection, ProxyRegistryError>(RegistryConnection {
                         name: reg_name.clone(),
-                        client: create_connection(auth_service.clone(), er).await?,
+                        client: create_connection(
+                            auth_service.clone(),
+                            er,
+                            log.new(o!("registry" => reg_name)),
+                        )
+                        .await?,
                     })
                 })
                 .try_collect::<Vec<RegistryConnection>>()

@@ -26,6 +26,7 @@ struct AveryArgs {
 }
 
 async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
+    info!(log, "🏎️ Starting Avery...");
     let args = AveryArgs::from_args();
 
     let config = args
@@ -52,7 +53,11 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         log.new(o!("service" => "internal-registry")),
     )?;
 
-    let auth_service = AuthService::new(config.oidc_mappings, log.new(o!("service" => "auth")))?;
+    let auth_service = AuthService::new(
+        config.oidc_providers,
+        config.auth,
+        log.new(o!("service" => "auth")),
+    )?;
 
     let proxy_registry = ProxyRegistry::new(
         external_registries,

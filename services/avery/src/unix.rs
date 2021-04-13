@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -14,6 +15,20 @@ use tokio::{
 use users::get_current_username;
 
 pub const DEFAULT_RUNTIME_DIR: &str = "/usr/share/avery/runtimes";
+
+pub fn user() -> Option<String> {
+    get_current_username().map(|x| x.to_string_lossy().to_string())
+}
+
+pub fn user_data_path() -> Option<PathBuf> {
+    match std::env::var("XDG_DATA_HOME").ok() {
+        Some(p) => Some(PathBuf::from(p)),
+        None => std::env::var("HOME")
+            .ok()
+            .map(|p| PathBuf::from(p).join(".local").join("share")),
+    }
+    .map(|p| p.join("avery"))
+}
 
 pub async fn create_listener(
     log: Logger,

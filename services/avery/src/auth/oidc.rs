@@ -250,12 +250,12 @@ struct Claims {
 }
 
 pub struct Oidc {
-    oidc_config: crate::config::OidcConfig,
+    oidc_config: crate::config::OidcProvider,
     logger: Logger,
 }
 
 impl Oidc {
-    pub fn new(oidc_config: &crate::config::OidcConfig, logger: Logger) -> Self {
+    pub fn new(oidc_config: &crate::config::OidcProvider, logger: Logger) -> Self {
         Self {
             oidc_config: oidc_config.clone(),
             logger,
@@ -375,7 +375,19 @@ impl Oidc {
         let (url, state_string, redirect_uri) =
             self.build_authorize_url(endpoint, code_challenge, addr.port())?;
 
-        open::that(url).map_err(OidcError::FailedToOpenBrowser)?;
+        open::that(url)
+            .and_then(|exit_status| {
+                exit_status.success().then(|| ()).ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!(
+                            "Starting the browser exited with a non-zero exit code: {:?}",
+                            exit_status.code()
+                        ),
+                    )
+                })
+            })
+            .map_err(OidcError::FailedToOpenBrowser)?;
 
         let auth_response = reader
             .await
@@ -682,7 +694,7 @@ r#"
 
         ($discovery_url:expr, $client_id:expr, $hosted_domain:expr) => {{
             Oidc::new(
-                &crate::config::OidcConfig {
+                &crate::config::OidcProvider {
                     discovery_url: $discovery_url.to_owned(),
                     client_id: $client_id.to_owned(),
                     client_secret: "supersecret".to_owned(),
