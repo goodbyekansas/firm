@@ -6,8 +6,17 @@ use std::{
 use config::{ConfigError, Environment, File, FileFormat};
 use serde::Deserialize;
 
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum Auth {
+    None,
+    Oidc { provider: String },
+    SelfSigned,
+    KeyFile { path: PathBuf },
+}
+
 #[derive(Debug, Deserialize, PartialEq, Clone)]
-pub struct OidcConfig {
+pub struct OidcProvider {
     pub discovery_url: String,
     pub client_id: String,
     pub client_secret: String,
@@ -31,7 +40,10 @@ pub struct Config {
     pub runtime_directories: Vec<PathBuf>,
 
     #[serde(default)]
-    pub oidc_mappings: HashMap<String, OidcConfig>,
+    pub oidc_providers: HashMap<String, OidcProvider>,
+
+    #[serde(default)]
+    pub auth: HashMap<String, Auth>,
 }
 
 fn default_version_suffix() -> String {
@@ -126,14 +138,14 @@ mod tests {
     }
 
     #[test]
-    fn token_mappings() {
+    fn oidc_providers() {
         let c = Config::new_with_toml_string(
             r#"
-[oidc_mappings."registry.sune.com"]
+[oidc_providers.overmind]
 discovery_url="oidc.something.external"
 client_id="123abc"
 client_secret="weeeooooo"
-[oidc_mappings."megistry.rune.bom"]
+[oidc_providers.undermined]
 discovery_url="ocd.something.external"
 client_id="456def"
 client_secret="no"
@@ -143,8 +155,8 @@ client_secret="no"
 
         let conf = c.unwrap();
         assert_eq!(
-            conf.oidc_mappings.get("registry.sune.com"),
-            Some(&OidcConfig {
+            conf.oidc_providers.get("overmind"),
+            Some(&OidcProvider {
                 discovery_url: "oidc.something.external".to_owned(),
                 client_id: "123abc".to_owned(),
                 client_secret: "weeeooooo".to_owned(),
@@ -152,8 +164,8 @@ client_secret="no"
             }),
         );
         assert_eq!(
-            conf.oidc_mappings.get("megistry.rune.bom"),
-            Some(&OidcConfig {
+            conf.oidc_providers.get("undermined"),
+            Some(&OidcProvider {
                 discovery_url: "ocd.something.external".to_owned(),
                 client_id: "456def".to_owned(),
                 client_secret: "no".to_owned(),
@@ -202,5 +214,38 @@ client_secret="no"
         "#,
         );
         assert!(c.is_err());
+    }
+
+    #[test]
+    fn auth() {
+        let c = Config::new_with_toml_string(
+            r#"
+        [[registries]]
+        name="registry1"
+        url="https://over-here"
+
+        [[registries]]
+        name="registry3"
+        url="https://on-the-internet.com"
+
+        [auth]
+        "over-here"={type="oidc", provider="auth-inc"}
+        "on-the-internet.com"={type="self-signed"}
+        "not-on-www"={type="key-file", path="/tmp/my/file"}
+        "#,
+        );
+        assert!(c.is_ok());
+        let c = c.unwrap();
+        assert_eq!(c.auth.len(), 3);
+        assert!(
+            matches!(c.auth.get("over-here"), Some(Auth::Oidc{provider}) if provider == "auth-inc")
+        );
+        assert!(matches!(
+            c.auth.get("on-the-internet.com"),
+            Some(Auth::SelfSigned)
+        ));
+        assert!(
+            matches!(c.auth.get("not-on-www"), Some(Auth::KeyFile{path}) if path == Path::new("/tmp/my/file"))
+        );
     }
 }

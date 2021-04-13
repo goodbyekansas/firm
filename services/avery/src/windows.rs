@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -20,6 +21,16 @@ unsafe fn get_user() -> Option<String> {
     let mut name: [u16; CAPACITY] = [0; CAPACITY];
     (GetUserNameW(name.as_mut_ptr(), &mut size as *mut u32) != 0)
         .then(|| String::from_utf16_lossy(&name[..(size as usize) - 1]))
+}
+
+pub fn user() -> Option<String> {
+    unsafe { get_user() }
+}
+
+pub fn user_data_path() -> Option<PathBuf> {
+    std::env::var("LOCALAPPDATA")
+        .ok()
+        .map(|p| PathBuf::from(p).join("avery"))
 }
 
 pub async fn create_listener(
