@@ -55,6 +55,18 @@ impl<'a, U> DisplayExt<'a, U> for U {
     }
 }
 
+macro_rules! warn {
+    ($($args:tt)*) => {
+        ansi_term::Color::Yellow.paint(format!($($args)*))
+    };
+}
+
+macro_rules! error {
+    ($($args:tt)*) => {
+        ansi_term::Color::Red.paint(format!($($args)*))
+    };
+}
+
 pub async fn with_progressbars<F, U, R>(function: F) -> R
 where
     U: Future<Output = R>,

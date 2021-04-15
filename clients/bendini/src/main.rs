@@ -1,27 +1,30 @@
 mod commands;
 mod error;
+#[macro_use]
 mod formatting;
 mod manifest;
 
 use std::{ops::Deref, path::PathBuf, str::FromStr};
 
 use firm_types::{
+    auth::authentication_client::AuthenticationClient,
+    auth::AcquireTokenParameters,
     functions::{execution_client::ExecutionClient, registry_client::RegistryClient},
     tonic::{
         self,
-        transport::{ClientTlsConfig, Endpoint, Uri},
+        transport::{Channel, ClientTlsConfig, Endpoint, Uri},
     },
 };
+use futures::TryFutureExt;
 use structopt::StructOpt;
+use tonic_middleware::HttpStatusInterceptor;
+use tower::service_fn;
 
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
 #[cfg(windows)]
 use tokio::net::NamedPipe;
-
-use tonic_middleware::HttpStatusInterceptor;
-use tower::service_fn;
 
 use error::BendiniError;
 
@@ -88,6 +91,13 @@ struct BendiniArgs {
     /// Host to use
     #[structopt(short, long, default_value)] // 🧦
     host: BendiniHost,
+
+    /// Host to use for authentication.
+    /// This needs to be a trusted connection,
+    /// i.e. run without authentication since
+    /// it's used to fetch authentication for other remote operations.
+    #[structopt(long, default_value)] // 🧦
+    auth_host: BendiniHost,
 
     /// Command to run
     #[structopt(subcommand)]
@@ -162,19 +172,14 @@ async fn main() {
     }
 
     if let Err(e) = run().await {
-        eprintln!("🐞 {}", e);
+        eprintln!("🐞 {}", error!("{}", e));
         std::process::exit(e.into())
     }
 }
 
-async fn run() -> Result<(), error::BendiniError> {
-    // parse arguments
-    let args = BendiniArgs::from_args();
-
-    let endpoint = Endpoint::from_shared(args.host.clone())
-        .map_err(|e| BendiniError::InvalidUri(e.to_string()))?;
-
-    let channel = match endpoint.uri().scheme_str() {
+async fn connect(endpoint: Endpoint) -> Result<Channel, BendiniError> {
+    let uri = endpoint.uri().clone();
+    match uri.scheme_str() {
         Some("https") => match endpoint.tls_config(ClientTlsConfig::new()) {
             Ok(endpoint_tls) => endpoint_tls.connect().await,
             Err(e) => Err(e),
@@ -204,36 +209,91 @@ async fn run() -> Result<(), error::BendiniError> {
         }
         _ => endpoint.connect().await,
     }
-    .map_err(|e| BendiniError::ConnectionError(args.host.clone(), e.to_string()))?;
+    .map_err(|e| BendiniError::ConnectionError(uri.to_string(), e.to_string()))
+}
+
+async fn run() -> Result<(), error::BendiniError> {
+    let args = BendiniArgs::from_args();
+
+    let endpoint = Endpoint::from_shared(args.host.clone())
+        .map_err(|e| BendiniError::InvalidUri(e.to_string()))?;
+
+    let channel = connect(endpoint.clone()).await?;
+
+    let bearer = match futures::future::ready(Endpoint::from_shared(args.auth_host.clone()))
+        .map_err(|e| BendiniError::InvalidUri(e.to_string()))
+        .and_then(connect)
+        .await
+        .map(AuthenticationClient::new)?
+        .acquire_token(tonic::Request::new(AcquireTokenParameters {
+            scope: endpoint
+                .uri()
+                .authority()
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| "localhost".to_owned()),
+        }))
+        .await
+    {
+        Ok(token) => {
+            let token = token.into_inner();
+            (!token.token.is_empty()).then(|| token.token)
+        }
+        Err(e) => {
+            println!(
+                "{} 🤞",
+                warn!(
+                    r#"Acquiring credentials for scope "{}" \
+                failed with error: {}. \
+                Continuing without credentials set.
+                "#,
+                    ansi_term::Style::new().bold().paint(args.host.clone()),
+                    e
+                )
+            );
+            None
+        }
+    }
+    .map(|t| {
+        tonic::metadata::MetadataValue::from_str(&format!("bearer {}", t)).map_err(|e| {
+            BendiniError::InvalidOauthToken(format!(
+                "Failed to convert oauth token to metadata value: {}",
+                e
+            ))
+        })
+    })
+    .transpose()?;
 
     // When calling non pure grpc endpoints we may get content that is not application/grpc.
     // Tonic doesn't handle these cases very well. We have to make a wrapper around
     // to handle these edge cases. We convert it into normal tonic statuses that tonic can handle.
     let channel = HttpStatusInterceptor::new(channel);
-    let bearer = std::env::var_os("OAUTH_TOKEN")
-        .map(|t| {
-            tonic::metadata::MetadataValue::from_str(&format!("Bearer {}", t.to_string_lossy()))
-                .map_err(|e| {
-                    BendiniError::InvalidOauthToken(format!(
-                        "Failed to convert oauth token to metadata value: {}",
-                        e
-                    ))
-                })
-        })
-        .transpose()?;
 
-    let registry_client = match bearer {
+    let (registry_client, execution_client) = match bearer {
         Some(bearer) => {
-            println!("Using provided oauth2 credentials 🐻");
-            RegistryClient::with_interceptor(channel.clone(), move |mut req: tonic::Request<()>| {
-                req.metadata_mut().insert("authorization", bearer.clone());
-                Ok(req)
-            })
+            let bearer2 = bearer.clone();
+            (
+                RegistryClient::with_interceptor(
+                    channel.clone(),
+                    move |mut req: tonic::Request<()>| {
+                        req.metadata_mut().insert("authorization", bearer.clone());
+                        Ok(req)
+                    },
+                ),
+                ExecutionClient::with_interceptor(
+                    channel.clone(),
+                    move |mut req: tonic::Request<()>| {
+                        req.metadata_mut().insert("authorization", bearer2.clone());
+                        Ok(req)
+                    },
+                ),
+            )
         }
 
-        None => RegistryClient::new(channel.clone()),
+        None => (
+            RegistryClient::new(channel.clone()),
+            ExecutionClient::new(channel.clone()),
+        ),
     };
-    let execution_client = ExecutionClient::new(channel);
 
     match args.cmd {
         Command::List { .. } => commands::list::run(registry_client).await,
