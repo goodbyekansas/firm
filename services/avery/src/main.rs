@@ -55,9 +55,12 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
 
     let auth_service = AuthService::new(
         config.oidc_providers,
-        config.auth,
+        config.auth.scopes,
+        config.auth.identity,
+        config.auth.key_store,
         log.new(o!("service" => "auth")),
-    )?;
+    )
+    .await?;
 
     let proxy_registry = ProxyRegistry::new(
         external_registries,

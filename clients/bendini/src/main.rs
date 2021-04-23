@@ -55,7 +55,7 @@ fn get_local_socket() -> Option<String> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct BendiniHost(String);
 impl Default for BendiniHost {
     fn default() -> Self {
@@ -222,7 +222,13 @@ async fn run() -> Result<(), error::BendiniError> {
 
     let bearer = match futures::future::ready(Endpoint::from_shared(args.auth_host.clone()))
         .map_err(|e| BendiniError::InvalidUri(e.to_string()))
-        .and_then(connect)
+        .and_then(|endpoint| async {
+            if args.host == args.auth_host {
+                Ok(channel.clone())
+            } else {
+                connect(endpoint).await
+            }
+        })
         .await
         .map(AuthenticationClient::new)?
         .acquire_token(tonic::Request::new(AcquireTokenParameters {

@@ -8,11 +8,52 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "kebab-case")]
-pub enum Auth {
+pub enum AuthConfig {
     None,
     Oidc { provider: String },
     SelfSigned,
     KeyFile { path: PathBuf },
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum KeyStore {
+    Simple { url: String },
+    None,
+}
+
+impl Default for KeyStore {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum IdentityProvider {
+    Oidc { provider: String },
+    Username,
+    UsernameSuffix { suffix: String },
+    Override { identity: String },
+}
+
+impl Default for IdentityProvider {
+    fn default() -> Self {
+        Self::Username
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub struct Auth {
+    #[serde(default)]
+    pub identity: IdentityProvider,
+
+    #[serde(default)]
+    pub scopes: HashMap<String, AuthConfig>,
+
+    #[serde(default)]
+    pub key_store: KeyStore,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Clone)]
@@ -43,7 +84,7 @@ pub struct Config {
     pub oidc_providers: HashMap<String, OidcProvider>,
 
     #[serde(default)]
-    pub auth: HashMap<String, Auth>,
+    pub auth: Auth,
 }
 
 fn default_version_suffix() -> String {
@@ -229,6 +270,10 @@ client_secret="no"
         url="https://on-the-internet.com"
 
         [auth]
+        identity={type="oidc", provider="auth-inc"}
+        key-store={type="simple", url="https://scones.se"}
+
+        [auth.scopes]
         "over-here"={type="oidc", provider="auth-inc"}
         "on-the-internet.com"={type="self-signed"}
         "not-on-www"={type="key-file", path="/tmp/my/file"}
@@ -236,16 +281,35 @@ client_secret="no"
         );
         assert!(c.is_ok());
         let c = c.unwrap();
-        assert_eq!(c.auth.len(), 3);
+        assert_eq!(c.auth.scopes.len(), 3);
         assert!(
-            matches!(c.auth.get("over-here"), Some(Auth::Oidc{provider}) if provider == "auth-inc")
+            matches!(c.auth.scopes.get("over-here"), Some(AuthConfig::Oidc{provider}) if provider == "auth-inc")
         );
         assert!(matches!(
-            c.auth.get("on-the-internet.com"),
-            Some(Auth::SelfSigned)
+            c.auth.scopes.get("on-the-internet.com"),
+            Some(AuthConfig::SelfSigned)
         ));
         assert!(
-            matches!(c.auth.get("not-on-www"), Some(Auth::KeyFile{path}) if path == Path::new("/tmp/my/file"))
+            matches!(c.auth.scopes.get("not-on-www"), Some(AuthConfig::KeyFile{path}) if path == Path::new("/tmp/my/file"))
         );
+
+        assert_eq!(
+            c.auth.identity,
+            IdentityProvider::Oidc {
+                provider: "auth-inc".to_owned()
+            }
+        );
+
+        assert_eq!(
+            c.auth.key_store,
+            KeyStore::Simple {
+                url: "https://scones.se".to_owned()
+            }
+        );
+
+        // Empty
+        let c = Config::new_with_toml_string("").unwrap();
+        assert_eq!(c.auth.identity, IdentityProvider::Username);
+        assert_eq!(c.auth.key_store, KeyStore::None);
     }
 }
