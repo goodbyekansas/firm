@@ -1,7 +1,7 @@
 {
     "nedryland": {
         "branch": "main",
-        "repo": "git@github.com:goodbyekansas/nedryland",
+        "repo": "ssh://git@github.com/goodbyekansas/nedryland",
         "rev": "4b5de6162ca564c8ee58063102a14f7896213af6",
         "type": "git"
     },

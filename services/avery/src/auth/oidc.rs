@@ -96,6 +96,7 @@ struct AuthContext {
     jwks_uri: String,
     hosted_domain: Option<String>,
     id_token_signing_alg_values_supported: Vec<Algorithm>,
+    claims: Claims,
 }
 
 impl AuthContext {
@@ -106,12 +107,12 @@ impl AuthContext {
 }
 
 #[derive(Debug)]
-pub struct Auth {
+pub struct OidcToken {
     auth_token: AuthToken,
     context: AuthContext,
 }
 
-impl Auth {
+impl OidcToken {
     fn new(auth_token: AuthToken, context: AuthContext) -> Self {
         Self {
             auth_token,
@@ -121,7 +122,7 @@ impl Auth {
 }
 
 #[async_trait::async_trait]
-impl Token for Auth {
+impl Token for OidcToken {
     fn token(&self) -> &str {
         &self.auth_token.id_token
     }
@@ -197,6 +198,38 @@ impl Token for Auth {
         }
 
         Ok(self)
+    }
+
+    fn exp(&self) -> Option<u64> {
+        Some(self.context.claims.exp)
+    }
+
+    fn iss(&self) -> Option<&str> {
+        Some(&self.context.claims.iss)
+    }
+
+    fn iat(&self) -> Option<u64> {
+        Some(self.context.claims.iat)
+    }
+
+    fn jti(&self) -> Option<&str> {
+        None
+    }
+
+    fn nbf(&self) -> Option<u64> {
+        None
+    }
+
+    fn sub(&self) -> Option<&str> {
+        Some(&self.context.claims.sub)
+    }
+
+    fn aud(&self) -> Option<&str> {
+        Some(&self.context.claims.aud)
+    }
+
+    fn claim(&self, key: &str) -> Option<&serde_json::Value> {
+        self.context.claims.extra.get(key)
     }
 }
 
@@ -537,7 +570,7 @@ impl Oidc {
             })
     }
 
-    pub async fn authenticate(&self) -> Result<Auth, OidcError> {
+    pub async fn authenticate(&self) -> Result<OidcToken, OidcError> {
         let cfg = self.get_config().await.map_err(|e| {
             warn!(self.logger, "Failed to get OIDC configuration: {}", e);
             e
@@ -583,8 +616,9 @@ impl Oidc {
                             jwks_uri,
                             hosted_domain: self.oidc_config.hosted_domain.clone(),
                             id_token_signing_alg_values_supported: supported_algorithms,
+                            claims: c,
                         };
-                        Auth::new(auth_token, context)
+                        OidcToken::new(auth_token, context)
                     })
                 }
             })
@@ -979,6 +1013,9 @@ r#"
         ));
 
         let now = chrono::Utc::now().timestamp();
+        let mut aud = HashSet::new();
+        aud.insert(client_id.clone());
+
         let claims = Claims {
             iss: "".to_owned(),
             sub: "".to_owned(),
@@ -1018,8 +1055,8 @@ r#"
 
         let invalid_claims = Claims {
             iss: "".to_owned(),
-            sub: "".to_owned(),
             aud: client_id.clone(),
+            sub: "".to_owned(),
             exp: (now + 3600) as u64,
             iat: now as u64,
             extra: extra_claims,
@@ -1053,7 +1090,7 @@ r#"
         let invalid_claims = Claims {
             iss: "".to_owned(),
             sub: "".to_owned(),
-            aud: client_id,
+            aud: client_id.clone(),
             exp: (now - 3600) as u64,
             iat: now as u64,
             extra: HashMap::new(),
@@ -1288,7 +1325,7 @@ r#"
     async fn refresh() {
         // Do not refresh token
         let m = mock("POST", Matcher::Any).create();
-        let mut auth = Auth::new(
+        let mut auth = OidcToken::new(
             AuthToken {
                 access_token: String::new(),
                 expires_in: 2u64,
@@ -1306,6 +1343,14 @@ r#"
                 jwks_uri: String::new(),
                 hosted_domain: None,
                 id_token_signing_alg_values_supported: vec![],
+                claims: Claims {
+                    iss: "sssss".to_owned(),
+                    sub: "submarine".to_owned(),
+                    aud: "sune".to_owned(),
+                    exp: 8u64,
+                    iat: 5u64,
+                    extra: HashMap::new(),
+                },
             },
         );
         let r = auth.refresh().await;
