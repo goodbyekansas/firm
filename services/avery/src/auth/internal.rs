@@ -6,9 +6,11 @@ use std::{
 use jsonwebtoken::{Algorithm, Header};
 use ring::signature::KeyPair;
 use serde::{Deserialize, Serialize};
+use slog::Logger;
 use thiserror::Error;
 
 use super::Token;
+
 pub struct JwtToken {
     token: String,
     audience: String,
@@ -39,7 +41,7 @@ impl Token for JwtToken {
         &self.token
     }
 
-    async fn refresh(&mut self) -> Result<&mut dyn Token, String> {
+    async fn refresh(&mut self, _logger: &Logger) -> Result<&mut dyn Token, String> {
         self.generator
             .generate(&self.audience)
             .map_err(|e| e.to_string())
@@ -315,6 +317,12 @@ mod test {
 
     use super::*;
 
+    macro_rules! null_logger {
+        () => {{
+            slog::Logger::root(slog::Discard, slog::o!())
+        }};
+    }
+
     #[test]
     fn builder() {
         // No key provided
@@ -400,7 +408,7 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
         std::thread::sleep(std::time::Duration::from_secs(2));
         let exp = tok.expires_at();
         let old_tok = tok.token().to_owned();
-        let tok2 = tok.refresh().await;
+        let tok2 = tok.refresh(&null_logger!()).await;
         assert!(tok2.is_ok());
         let tok2 = tok2.unwrap();
         assert!(

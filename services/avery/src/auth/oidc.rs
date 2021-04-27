@@ -14,7 +14,7 @@ use rand::{seq::SliceRandom, Rng};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use slog::{info, o, warn, Logger};
+use slog::{info, warn, Logger};
 use thiserror::Error;
 use tokio::sync::oneshot::Sender;
 use warp::Filter;
@@ -54,7 +54,7 @@ pub enum OidcError {
     FailedToDecodeJwtHeader(#[source] jsonwebtoken::errors::Error),
 }
 
-#[derive(Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct AuthToken {
     access_token: String,
     expires_in: u64,
@@ -86,10 +86,9 @@ struct RefreshedToken {
     token_type: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 struct AuthContext {
     expires_at: u64,
-    logger: Logger,
     client_id: String,
     client_secret: String,
     token_endpoint: String,
@@ -106,7 +105,7 @@ impl AuthContext {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct OidcToken {
     auth_token: AuthToken,
     context: AuthContext,
@@ -131,9 +130,9 @@ impl Token for OidcToken {
         self.context.expires_at
     }
 
-    async fn refresh(&mut self) -> Result<&mut dyn Token, String> {
+    async fn refresh(&mut self, logger: &Logger) -> Result<&mut dyn Token, String> {
         if chrono::Utc::now().timestamp() as u64 >= self.context.expires_at {
-            info!(self.context.logger, "Refreshing auth token");
+            info!(logger, "Refreshing auth token");
 
             let client = reqwest::Client::new();
             let params = [
@@ -157,7 +156,7 @@ impl Token for OidcToken {
                                     format!("Failed to get body of error response: {}", e)
                                 }),
                             );
-                            warn!(self.context.logger, "Failed to refresh token: {}", err);
+                            warn!(logger, "Failed to refresh token: {}", err);
                             Err(err)
                         }
                         Ok(_) => response
@@ -182,7 +181,7 @@ impl Token for OidcToken {
                             .await
                             .map(move |(refreshed_token, expires_at)| {
                                 info!(
-                                    self.context.logger,
+                                    logger,
                                     "Token successfully refreshed, expires at: {}",
                                     Utc.timestamp(expires_at as i64, 0)
                                 );
@@ -609,7 +608,6 @@ impl Oidc {
                     .map(|c| {
                         let context = AuthContext {
                             expires_at: AuthContext::calculate_expires_at(c.exp, c.iat, 10),
-                            logger: self.logger.new(o!()),
                             client_id: self.oidc_config.client_id.clone(),
                             client_secret: self.oidc_config.client_secret.clone(),
                             token_endpoint,
@@ -1336,7 +1334,6 @@ r#"
             },
             AuthContext {
                 expires_at: (chrono::Utc::now().timestamp() + 3600) as u64,
-                logger: null_logger!(),
                 client_id: String::new(),
                 client_secret: String::new(),
                 token_endpoint: String::new(),
@@ -1353,7 +1350,8 @@ r#"
                 },
             },
         );
-        let r = auth.refresh().await;
+        let log = null_logger!();
+        let r = auth.refresh(&log).await;
         assert!(r.is_ok());
         assert!(
             !m.matched(),
@@ -1411,7 +1409,7 @@ r#"
         auth.auth_token.refresh_token = "super-fresh".to_owned();
         auth.context.jwks_uri = format!("{}/{}", mockito::server_url(), "jwks".to_owned());
 
-        let result = auth.refresh().await;
+        let result = auth.refresh(&log).await;
         assert!(
             result.is_err(),
             "Missing supported algorithms should fail the jwt claim validation"
@@ -1424,7 +1422,7 @@ r#"
         }
 
         auth.context.id_token_signing_alg_values_supported = vec![Algorithm::RS256];
-        let result = auth.refresh().await;
+        let result = auth.refresh(&log).await;
         assert!(result.is_ok());
     }
 }
