@@ -28,7 +28,7 @@ impl Default for KeyStore {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Hash)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum IdentityProvider {
     Oidc { provider: String },
@@ -217,7 +217,7 @@ client_secret="no"
 
     #[test]
     fn registries() {
-        // Test registries in config, make sure oath_scope is optional
+        // Test registries in config, make sure oauth_scope is optional
         let c = Config::new_with_toml_string(
             r#"
         [[registries]]
