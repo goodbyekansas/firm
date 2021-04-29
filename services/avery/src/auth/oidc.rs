@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     collections::HashSet,
     convert::Infallible,
+    fmt::Debug,
     net::SocketAddr,
     net::{Ipv6Addr, SocketAddrV6},
     sync::Arc,
@@ -105,10 +106,21 @@ impl AuthContext {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct OidcToken {
     auth_token: AuthToken,
     context: AuthContext,
+}
+
+impl Debug for OidcToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "OIDC token: {{audience: {}, expires_at: {}}}",
+            self.aud().unwrap_or_default(),
+            self.expires_at()
+        )
+    }
 }
 
 impl OidcToken {
@@ -281,6 +293,7 @@ struct Claims {
     extra: HashMap<String, serde_json::Value>,
 }
 
+#[derive(Debug)]
 pub struct Oidc {
     oidc_config: crate::config::OidcProvider,
     logger: Logger,

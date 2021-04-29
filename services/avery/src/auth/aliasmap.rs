@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+#[derive(Debug)]
 pub struct AliasMap {
     inner: HashMap<String, Vec<String>>,
 }

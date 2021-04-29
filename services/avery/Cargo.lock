@@ -121,6 +121,7 @@ dependencies = [
  "jsonwebtoken",
  "mockito",
  "open",
+ "pem",
  "prost",
  "rand",
  "rand_pcg",
@@ -131,6 +132,7 @@ dependencies = [
  "serde 1.0.124",
  "serde_json",
  "sha2",
+ "simple_asn1 0.5.2",
  "slog",
  "slog-async",
  "slog-term",
@@ -1027,7 +1029,7 @@ dependencies = [
  "ring",
  "serde 1.0.124",
  "serde_json",
- "simple_asn1",
+ "simple_asn1 0.4.1",
 ]
 
 [[package]]
@@ -1239,6 +1241,17 @@ name = "num-bigint"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "090c7f9998ee0ff65aa5b723e4009f7b217707f1fb5ea551329cc4d6231fb304"
+dependencies = [
+ "autocfg",
+ "num-integer",
+ "num-traits 0.2.14",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e0d047c1062aa51e256408c560894e5251f08925980e53cf1aa5bd00eec6512"
 dependencies = [
  "autocfg",
  "num-integer",
@@ -1911,8 +1924,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "692ca13de57ce0613a363c8c2f1de925adebc81b04c923ac60c5488bb44abe4b"
 dependencies = [
  "chrono",
- "num-bigint",
+ "num-bigint 0.2.6",
  "num-traits 0.2.14",
+]
+
+[[package]]
+name = "simple_asn1"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e0e9076e5242ff5a58e854cb478ea9caebce01088f86d3d9c6ad336b7655263"
+dependencies = [
+ "chrono",
+ "num-bigint 0.4.0",
+ "num-traits 0.2.14",
+ "thiserror",
 ]
 
 [[package]]

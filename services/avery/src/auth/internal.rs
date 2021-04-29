@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -6,6 +7,7 @@ use std::{
 use jsonwebtoken::{Algorithm, Header};
 use ring::signature::KeyPair;
 use serde::{Deserialize, Serialize};
+use simple_asn1::{ASN1Block, ASN1Class, ASN1EncodeErr, ToASN1, OID};
 use slog::Logger;
 use thiserror::Error;
 
@@ -17,6 +19,16 @@ pub struct JwtToken {
     generator: TokenGenerator,
     expires_at: u64,
     claims: StandardClaims,
+}
+
+impl Debug for JwtToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "JWT token: {{audience: {}, expires_at: {}}}",
+            self.audience, self.expires_at
+        )
+    }
 }
 
 #[cfg(unix)]
@@ -160,7 +172,7 @@ impl<'a> TokenGeneratorBuilder<'a> {
                     jsonwebtoken::EncodingKey::from_rsa_pem(bytes)
                         .map_err(SelfSignedTokenError::FailedToReadKey)?,
                 ),
-                key_data: None,
+                generated_key_pair: None,
                 subject: self.subject.clone(),
             }),
             Some(PrivateKeySource::RsaFile(path)) => std::fs::read(path)
@@ -171,7 +183,7 @@ impl<'a> TokenGeneratorBuilder<'a> {
                             jsonwebtoken::EncodingKey::from_rsa_pem(&bytes)
                                 .map_err(SelfSignedTokenError::FailedToReadKey)?,
                         ),
-                        key_data: None,
+                        generated_key_pair: None,
                         subject: self.subject.clone(),
                     })
                 }),
@@ -180,7 +192,7 @@ impl<'a> TokenGeneratorBuilder<'a> {
                     jsonwebtoken::EncodingKey::from_ec_pem(bytes)
                         .map_err(SelfSignedTokenError::FailedToReadKey)?,
                 ),
-                key_data: None,
+                generated_key_pair: None,
                 subject: self.subject.clone(),
             }),
             Some(PrivateKeySource::EcdsaFile(path)) => std::fs::read(path)
@@ -191,33 +203,31 @@ impl<'a> TokenGeneratorBuilder<'a> {
                             jsonwebtoken::EncodingKey::from_ec_pem(&bytes)
                                 .map_err(SelfSignedTokenError::FailedToReadKey)?,
                         ),
-                        key_data: None,
+                        generated_key_pair: None,
                         subject: self.subject.clone(),
                     })
                 }),
-            None => {
-                let rng = ring::rand::SystemRandom::new();
-                ring::signature::EcdsaKeyPair::generate_pkcs8(
+            None => ring::signature::EcdsaKeyPair::generate_pkcs8(
+                &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
+                &ring::rand::SystemRandom::new(),
+            )
+            .map_err(SelfSignedTokenError::FailedToGenerateKeyPair)
+            .and_then(|keys| {
+                ring::signature::EcdsaKeyPair::from_pkcs8(
                     &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
-                    &rng,
+                    keys.as_ref(),
                 )
-                .map_err(SelfSignedTokenError::FailedToGenerateKeyPair)
-                .and_then(|keys| {
-                    ring::signature::EcdsaKeyPair::from_pkcs8(
-                        &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING,
-                        keys.as_ref(),
-                    )
-                    .map_err(SelfSignedTokenError::GeneratedKeyRejected)
-                    .map(|key_pair| (key_pair.public_key().as_ref().to_vec(), keys))
-                })
-                .map(|(public_key, private_key)| TokenGenerator {
-                    private_key: Arc::new(jsonwebtoken::EncodingKey::from_ec_der(
-                        private_key.as_ref(),
-                    )),
-                    key_data: Some(Arc::new((public_key, private_key.as_ref().to_vec()))),
-                    subject: self.subject.clone(),
-                })
-            }
+                .map_err(SelfSignedTokenError::GeneratedKeyRejected)
+                .map(|key_pair| (key_pair.public_key().as_ref().to_vec(), keys))
+            })
+            .map(|(public_key, private_key)| TokenGenerator {
+                private_key: Arc::new(jsonwebtoken::EncodingKey::from_ec_der(private_key.as_ref())),
+                generated_key_pair: Some(Arc::new(DerKeyPair {
+                    public_key,
+                    private_key: private_key.as_ref().to_vec(),
+                })),
+                subject: self.subject.clone(),
+            }),
         }
     }
 }
@@ -231,11 +241,110 @@ struct StandardClaims {
     iat: u64,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TokenGenerator {
     private_key: Arc<jsonwebtoken::EncodingKey>,
-    key_data: Option<Arc<(Vec<u8>, Vec<u8>)>>,
+    generated_key_pair: Option<Arc<DerKeyPair>>,
     subject: String,
+}
+
+struct DerKeyPair {
+    public_key: Vec<u8>,
+    private_key: Vec<u8>,
+}
+
+struct EcdsaPublicKey<'a> {
+    content: &'a [u8],
+}
+
+impl ToASN1 for EcdsaPublicKey<'_> {
+    type Error = ASN1EncodeErr;
+    fn to_asn1_class(&self, _: ASN1Class) -> Result<Vec<ASN1Block>, Self::Error> {
+        Ok(vec![ASN1Block::Sequence(
+            0,
+            vec![
+                ASN1Block::Sequence(
+                    0,
+                    vec![
+                        // ecPublicKey (1.2.840.10045.2.1)
+                        ASN1Block::ObjectIdentifier(
+                            0,
+                            OID::new(vec![
+                                1u32.into(),
+                                2u32.into(),
+                                840u32.into(),
+                                10045u32.into(),
+                                2u32.into(),
+                                1u32.into(),
+                            ]),
+                        ),
+                        // prime256v1 (1.2.840.10045.3.1.7)
+                        ASN1Block::ObjectIdentifier(
+                            0,
+                            OID::new(vec![
+                                1u32.into(),
+                                2u32.into(),
+                                840u32.into(),
+                                10045u32.into(),
+                                3u32.into(),
+                                1u32.into(),
+                                7u32.into(),
+                            ]),
+                        ),
+                    ],
+                ),
+                ASN1Block::BitString(0, self.content.len() * 8, self.content.to_vec()),
+            ],
+        )])
+    }
+}
+
+impl Debug for DerKeyPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "DER Key Pair")
+    }
+}
+
+struct PemKeyPair {
+    public_key: String,
+    private_key: String,
+}
+
+impl Debug for PemKeyPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "PEM Key Pair {{ public_key: {} }}", self.public_key)
+    }
+}
+
+impl From<&DerKeyPair> for PemKeyPair {
+    fn from(d: &DerKeyPair) -> Self {
+        // Encode the public key in the same
+        // format as openssl, which seems to be
+        // what jsonwebtoken expects
+        let asn1_public_key = simple_asn1::der_encode(
+            &(EcdsaPublicKey {
+                content: &d.public_key,
+            }),
+        )
+        .unwrap(); // this is fine since the code in ToASN1 cannot fail
+
+        Self {
+            private_key: format!(
+                "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----",
+                base64::encode(&d.private_key)
+            ),
+            public_key: format!(
+                "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----",
+                base64::encode(&asn1_public_key)
+            ),
+        }
+    }
+}
+
+#[allow(dead_code)]
+enum TokenExpiry {
+    ExpiresIn(u64),
+    ExpiresAt(u64),
 }
 
 impl TokenGenerator {
@@ -248,7 +357,7 @@ impl TokenGenerator {
             audience.to_owned(),
             format!("Avery@{}", computer_name),
             self.subject.clone(),
-            3600u64,
+            TokenExpiry::ExpiresIn(3600u64),
         )
     }
 
@@ -257,22 +366,28 @@ impl TokenGenerator {
         audience: String,
         iss: String,
         sub: String,
-        expires_in: u64,
+        expires: TokenExpiry,
     ) -> Result<JwtToken, SelfSignedTokenError> {
         let now = chrono::Utc::now().timestamp() as u64;
 
         let claims = StandardClaims {
             sub,
-            exp: now + expires_in,
+            exp: match expires {
+                TokenExpiry::ExpiresIn(ein) => now + ein,
+                TokenExpiry::ExpiresAt(eat) => eat,
+            },
             iss,
             aud: audience.clone(),
             iat: now,
         };
 
+        let mut header = Header::new(Algorithm::ES256);
+        header.kid = Some(audience.clone()); //Key id is not _really_ the audience but that's how we use it
+
         Ok(JwtToken {
-            token: jsonwebtoken::encode(&Header::new(Algorithm::ES256), &claims, &self.private_key)
+            token: jsonwebtoken::encode(&header, &claims, &self.private_key)
                 .map_err(SelfSignedTokenError::FailedToGenerateToken)?,
-            expires_at: now + expires_in,
+            expires_at: claims.exp,
             audience,
             generator: self.clone(),
             claims,
@@ -284,25 +399,13 @@ impl TokenGenerator {
         private_keyfile_name: P1,
         public_keyfile_name: P2,
     ) -> std::io::Result<()> {
-        if let Some((public_key, private_key)) = self.key_data.as_deref() {
-            std::fs::write(
-                private_keyfile_name.as_ref(),
-                format!(
-                    "-----BEGIN PRIVATE KEY-----\n{}\n-----END PRIVATE KEY-----",
-                    base64::encode(private_key)
-                ),
-            )
-            .and_then(|_| {
-                std::fs::write(
-                    public_keyfile_name.as_ref(),
-                    format!(
-                        "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----",
-                        base64::encode(public_key)
-                    ),
-                )
-            })
-            .and_then(|_| set_permissions(private_keyfile_name.as_ref(), 0o600))
-            .and_then(|_| set_permissions(public_keyfile_name.as_ref(), 0o644))
+        if let Some(keypair) = self.generated_key_pair.as_deref() {
+            let pem: PemKeyPair = keypair.into();
+            let (public_key, private_key) = (pem.public_key, pem.private_key);
+            std::fs::write(private_keyfile_name.as_ref(), private_key)
+                .and_then(|_| std::fs::write(public_keyfile_name.as_ref(), public_key))
+                .and_then(|_| set_permissions(private_keyfile_name.as_ref(), 0o600))
+                .and_then(|_| set_permissions(public_keyfile_name.as_ref(), 0o644))
         } else {
             Err(std::io::ErrorKind::InvalidData.into())
         }
@@ -313,7 +416,7 @@ impl TokenGenerator {
 mod test {
     use std::collections::HashSet;
 
-    use jsonwebtoken::{DecodingKey, Validation};
+    use jsonwebtoken::{DecodingKey, EncodingKey, Validation};
 
     use super::*;
 
@@ -328,7 +431,7 @@ mod test {
         // No key provided
         let b = TokenGeneratorBuilder::new("???").build();
         assert!(b.is_ok());
-        assert!(b.unwrap().key_data.is_some());
+        assert!(b.unwrap().generated_key_pair.is_some());
 
         // From bytes
         let b = TokenGeneratorBuilder::new("!!!")
@@ -364,17 +467,19 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
             .build();
 
         assert!(b.is_ok());
-        assert!(b.unwrap().key_data.is_none());
+        assert!(b.unwrap().generated_key_pair.is_none());
     }
 
     #[test]
     fn generate() {
         let gen = TokenGeneratorBuilder::new("@@@").build().unwrap();
+        let pem: PemKeyPair = gen.generated_key_pair.as_deref().unwrap().into();
+
         let res = gen.generate_impl(
             "everyone".to_owned(),
             "tester".to_owned(),
             "sub".to_owned(),
-            3599u64,
+            TokenExpiry::ExpiresIn(3599u64),
         );
         assert!(res.is_ok());
         let token = res.unwrap();
@@ -382,15 +487,53 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
         aud.insert("everyone".to_owned());
         let clams = jsonwebtoken::decode::<StandardClaims>(
             token.token(),
-            &DecodingKey::from_ec_der(gen.key_data.unwrap().0.as_slice()),
+            &DecodingKey::from_ec_der(
+                gen.generated_key_pair
+                    .as_ref()
+                    .unwrap()
+                    .public_key
+                    .as_slice(),
+            ),
             &Validation {
                 algorithms: vec![Algorithm::ES256],
                 iss: Some("tester".to_owned()),
                 sub: Some("sub".to_owned()),
-                aud: Some(aud),
+                aud: Some(aud.clone()),
                 ..Default::default()
             },
         );
+        assert!(clams.is_ok());
+
+        // Test decoding of pem private key
+        let pem_content = pem::parse(pem.private_key.as_bytes());
+        assert!(pem_content.is_ok(), "PEM private key must be valid PEM");
+        let encoding_key = EncodingKey::from_ec_pem(pem.private_key.as_bytes());
+        assert!(
+            encoding_key.is_ok(),
+            "Must be able to parse PEM encoded version of the private key"
+        );
+
+        // Test PEM encoded variant
+        let pem_content = pem::parse(pem.public_key.as_bytes());
+        assert!(pem_content.is_ok(), "PEM public key must be valid PEM");
+        let decoding_key = DecodingKey::from_ec_pem(pem.public_key.as_bytes());
+        assert!(
+            decoding_key.is_ok(),
+            "Must be able to parse PEM encoded version of the public key"
+        );
+
+        let clams: Result<jsonwebtoken::TokenData<StandardClaims>, jsonwebtoken::errors::Error> =
+            jsonwebtoken::decode::<StandardClaims>(
+                token.token(),
+                &decoding_key.unwrap(),
+                &Validation {
+                    algorithms: vec![Algorithm::ES256],
+                    iss: Some("tester".to_owned()),
+                    sub: Some("sub".to_owned()),
+                    aud: Some(aud),
+                    ..Default::default()
+                },
+            );
         assert!(clams.is_ok());
     }
 
@@ -402,10 +545,10 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
                 "audience".to_owned(),
                 "iss".to_owned(),
                 "sub".to_owned(),
-                1u64,
+                TokenExpiry::ExpiresAt(0),
             )
             .unwrap();
-        std::thread::sleep(std::time::Duration::from_secs(2));
+
         let exp = tok.expires_at();
         let old_tok = tok.token().to_owned();
         let tok2 = tok.refresh(&null_logger!()).await;

@@ -58,6 +58,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         config.auth.scopes,
         config.auth.identity,
         config.auth.key_store,
+        config.auth.allow,
         log.new(o!("service" => "auth")),
     )
     .await?;
