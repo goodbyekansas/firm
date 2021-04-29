@@ -1,11 +1,12 @@
-use firm_types::{
-    auth::{authentication_server::Authentication, AcquireTokenParameters},
-    tonic,
-};
+use std::{collections::HashMap, sync::Arc};
+
 use futures::TryFutureExt;
 use serde::Deserialize;
 use slog::{debug, Logger};
 use thiserror::Error;
+use tokio::sync::RwLock;
+
+use crate::config::AuthConfig;
 
 #[derive(Error, Debug)]
 pub enum KeyStoreError {
@@ -30,19 +31,25 @@ struct PublicKey {
     public_key: String,
 }
 
-#[derive(Clone)]
 pub struct SimpleKeyStore {
     url: String,
-    authentication: super::AuthService,
+    token_source: Arc<RwLock<super::TokenStore>>,
     logger: Logger,
+    scope_mappings: HashMap<String, AuthConfig>,
 }
 
 impl SimpleKeyStore {
-    pub fn new(url: &str, authentication: super::AuthService, logger: Logger) -> Self {
+    pub(super) fn new(
+        url: &str,
+        token_source: Arc<RwLock<super::TokenStore>>,
+        scope_mappings: HashMap<String, AuthConfig>,
+        logger: Logger,
+    ) -> Self {
         Self {
             url: url.to_owned(),
-            authentication,
+            token_source,
             logger,
+            scope_mappings,
         }
     }
 }
@@ -66,23 +73,24 @@ impl KeyStore for SimpleKeyStore {
                     })
                     .map(|host| host.to_string()),
             )
-            .and_then(|scope| {
+            .and_then(|scope| async {
                 debug!(
                     self.logger,
                     "Acquiring token for scope \"{}\" when uploading key", &scope
                 );
 
-                self.authentication
-                    .acquire_token(tonic::Request::new(AcquireTokenParameters {
-                        scope: scope.clone(),
-                    }))
+                self.token_source
+                    .write()
+                    .await
+                    .acquire_token(&scope, &self.scope_mappings, &self.logger)
+                    .await
                     .map_err(move |e| {
                         KeyStoreError::AuthenticationError(format!(
-                            "Failed to acquire token for scope {} when uploading key: {}",
+                            "Failed to acquire token for scope \"{}\" when uploading key: {}",
                             scope, e
                         ))
                     })
-                    .map_ok(|token| (url, token.into_inner().token))
+                    .map(|token| (url, token.token().to_owned()))
             })
         })
         .and_then(|(url, token)| {
@@ -111,37 +119,36 @@ impl KeyStore for SimpleKeyStore {
     async fn set(&self, _id: &str, key_data: &[u8]) -> Result<(), KeyStoreError> {
         futures::future::ready(
             url::Url::parse(&self.url)
-                .map_err(|e| KeyStoreError::Error(format!("Failed to parse url: {}", e))),
+                .map_err(|e| KeyStoreError::Error(format!("Failed to parse url: {}", e)))
+                .and_then(|url| {
+                    url.host()
+                        .ok_or_else(|| {
+                            KeyStoreError::AuthenticationError(format!(
+                                "Url \"{}\" is missing hostname.",
+                                url.to_string(),
+                            ))
+                        })
+                        .map(|host| (url.clone(), host.to_string()))
+                }),
         )
-        .and_then(|url| {
-            futures::future::ready(
-                url.host()
-                    .ok_or_else(|| {
-                        KeyStoreError::AuthenticationError(format!(
-                            "Url \"{}\" is missing hostname.",
-                            url.to_string(),
-                        ))
-                    })
-                    .map(|host| host.to_string()),
-            )
-            .and_then(|scope| {
-                debug!(
-                    self.logger,
-                    "Acquiring token for scope \"{}\" when uploading key", &scope
-                );
+        .and_then(|(url, scope)| async {
+            debug!(
+                self.logger,
+                "Acquiring token for scope \"{}\" when uploading key", &scope
+            );
 
-                self.authentication
-                    .acquire_token(tonic::Request::new(AcquireTokenParameters {
-                        scope: scope.clone(),
-                    }))
-                    .map_err(move |e| {
-                        KeyStoreError::AuthenticationError(format!(
-                            "Failed to acquire token for scope {} when uploading key: {}",
-                            scope, e
-                        ))
-                    })
-                    .map_ok(|token| (url, token.into_inner().token))
-            })
+            self.token_source
+                .write()
+                .await
+                .acquire_token(&scope, &self.scope_mappings, &self.logger)
+                .await
+                .map_err(move |e| {
+                    KeyStoreError::AuthenticationError(format!(
+                        "Failed to acquire token for scope {} when uploading key: {}",
+                        scope, e
+                    ))
+                })
+                .map(|token| (url, token.token().to_owned()))
         })
         .and_then(|(url, token)| {
             futures::future::ready(String::from_utf8(key_data.to_vec()))

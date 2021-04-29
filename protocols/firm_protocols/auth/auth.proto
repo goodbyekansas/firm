@@ -3,6 +3,7 @@ package firm_protocols.auth;
 
 service Authentication {
   rpc AcquireToken (AcquireTokenParameters) returns (Token);
+  rpc Authenticate (AuthenticationParameters) returns (Empty);
 }
 
 message AcquireTokenParameters {
@@ -14,3 +15,10 @@ message Token {
   uint64 expires_at = 2;
   string scope = 3;
 }
+
+message AuthenticationParameters {
+  string expected_audience = 1;
+  string token = 2;
+}
+
+message Empty {}

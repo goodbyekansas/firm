@@ -6,10 +6,9 @@ use std::{
 use config::{ConfigError, Environment, File, FileFormat};
 use serde::Deserialize;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum AuthConfig {
-    None,
     Oidc { provider: String },
     SelfSigned,
     KeyFile { path: PathBuf },
@@ -26,6 +25,12 @@ impl Default for KeyStore {
     fn default() -> Self {
         Self::None
     }
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct AllowConfig {
+    pub users: Vec<String>,
+    // TODO for LDAP and google groups: pub groups: Vec<{ name: String, provider: String }>
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq, Hash)]
@@ -54,6 +59,9 @@ pub struct Auth {
 
     #[serde(default)]
     pub key_store: KeyStore,
+
+    #[serde(default)]
+    pub allow: AllowConfig,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Clone)]
@@ -277,6 +285,9 @@ client_secret="no"
         "over-here"={type="oidc", provider="auth-inc"}
         "on-the-internet.com"={type="self-signed"}
         "not-on-www"={type="key-file", path="/tmp/my/file"}
+
+        [auth.allow]
+        users=["Kreti", "Pleti"]
         "#,
         );
         assert!(c.is_ok());
@@ -305,6 +316,12 @@ client_secret="no"
             KeyStore::Simple {
                 url: "https://scones.se".to_owned()
             }
+        );
+
+        // Test allowed users
+        assert_eq!(
+            c.auth.allow.users,
+            &["Kreti".to_owned(), "Pleti".to_owned()]
         );
 
         // Empty

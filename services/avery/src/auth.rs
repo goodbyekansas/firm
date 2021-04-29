@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    collections::HashSet,
     hash::Hash,
     hash::Hasher,
     path::{Path, PathBuf},
@@ -26,14 +27,53 @@ mod oidc;
 
 #[derive(Clone)]
 pub struct AuthService {
-    providers: Providers,
-    token_cache: Arc<RwLock<TokenCache>>,
     logger: Logger,
-    token_generators: TokenGenerators,
-    user_identity: String,
+    token_store: Arc<RwLock<TokenStore>>,
     key_store: Arc<Box<dyn KeyStore>>,
+    scope_mappings: Arc<HashMap<String, AuthConfig>>,
+    access_list: Arc<HashSet<String>>,
 }
 
+#[derive(Debug, Default)]
+struct TokenStore {
+    token_cache: TokenCache,
+    token_providers: TokenProviders,
+}
+
+impl TokenStore {
+    async fn acquire_token(
+        &mut self,
+        scope: &str,
+        scope_mappings: &HashMap<String, AuthConfig>,
+        logger: &Logger,
+    ) -> Result<&mut dyn Token, String> {
+        match self.token_cache.entry(scope) {
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                debug!(
+                    logger,
+                    "Found cached token for scope \"{}\", expires at {}",
+                    scope,
+                    Utc.timestamp(e.get_mut().as_mut().expires_at() as i64, 0)
+                        .to_string(),
+                );
+                e.into_mut()
+            }
+            std::collections::hash_map::Entry::Vacant(e) => e.insert(
+                self.token_providers
+                    .get_token(scope_mappings, scope)
+                    .await?,
+            ),
+        }
+        .as_mut()
+        // always do refresh, the refresh methods of the providers
+        // are responsible for checking if it is needed
+        .refresh(&logger)
+        .await
+        .map_err(|err| format!("Failed to refresh token for scope \"{}\": {}", scope, err))
+    }
+}
+
+#[derive(Debug)]
 struct TokenCache {
     tokens: HashMap<String, TypedToken>,
     scope_aliases: AliasMap,
@@ -140,6 +180,10 @@ impl TokenCache {
         )
     }
 
+    fn entry(&mut self, scope: &str) -> std::collections::hash_map::Entry<String, TypedToken> {
+        self.tokens.entry(scope.to_owned())
+    }
+
     fn get_as_token(&mut self, key: &str) -> Option<&mut dyn Token> {
         self.get(key).map(|v| v.as_mut())
     }
@@ -156,16 +200,60 @@ impl Default for TokenCache {
     }
 }
 
-#[derive(Clone, Default)]
-struct Providers {
-    oidc: Arc<HashMap<String, Oidc>>,
-    auth: Arc<HashMap<String, AuthConfig>>,
+#[derive(Debug, Default)]
+struct TokenProviders {
+    oidc: HashMap<String, Oidc>,
+    self_signed: Option<internal::TokenGenerator>,
+    self_signed_with_file: HashMap<PathBuf, internal::TokenGenerator>,
 }
 
-#[derive(Clone)]
-struct TokenGenerators {
-    self_signed: Arc<internal::TokenGenerator>,
-    self_signed_with_file: Arc<HashMap<PathBuf, internal::TokenGenerator>>,
+impl TokenProviders {
+    async fn get_token(
+        &self,
+        scope_mappings: &HashMap<String, AuthConfig>,
+        scope: &str,
+    ) -> Result<TypedToken, String> {
+        match scope_mappings.get(scope) {
+            Some(AuthConfig::Oidc { provider }) => {
+                futures::future::ready(self.oidc.get(provider).ok_or_else(|| {
+                    format!("Oidc provider \"{}\" not found.", provider)
+                }))
+                .and_then(|oidc_client| {
+                    oidc_client
+                        .authenticate()
+                        .map_err(|e| e.to_string())
+                })
+                .await
+                .map(TypedToken::Oidc)
+            }
+            Some(AuthConfig::SelfSigned) | None => self
+                .self_signed
+                .as_ref()
+                .ok_or_else(|| {
+                    format!(
+                        "Scope mappings specify to use a self-signed token for scope \"{}\" but none has been configured",
+                        scope
+                    )
+                })
+                .and_then(|generator| generator.generate(scope).map_err(|e| e.to_string()))
+                .map(TypedToken::Internal),
+            Some(AuthConfig::KeyFile { path }) => self
+                .self_signed_with_file
+                .get(path)
+                .ok_or_else(|| {
+                    format!(
+                        "Failed to find self signed generator for keyfile at \"{}\"",
+                        path.display(),
+                    )
+                })
+                .and_then(|generator| {
+                    generator
+                        .generate(scope)
+                        .map_err(|e| e.to_string())
+                })
+                .map(TypedToken::Internal),
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -184,7 +272,7 @@ fn set_keyfolder_permissions(_: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum TypedToken {
     Oidc(oidc::OidcToken),
@@ -245,6 +333,7 @@ impl AuthService {
         auth_scopes: HashMap<String, AuthConfig>,
         identity_provider: IdentityProvider,
         key_store_config: crate::config::KeyStore,
+        access_config: crate::config::AllowConfig,
         logger: Logger,
     ) -> Result<Self, String> {
         let mut token_cache = TokenCache::new(
@@ -253,64 +342,64 @@ impl AuthService {
         )
         .await;
 
-        let providers = Providers {
-            oidc: Arc::new(
-                oidc_providers
-                    .into_iter()
-                    .map(|(key, value)| {
-                        (
-                            key.clone(),
-                            Oidc::new(&value, logger.new(o!("scope" => "oidc", "host" => key))),
-                        )
-                    })
-                    .collect::<HashMap<String, Oidc>>(),
-            ),
-
-            auth: Arc::new(auth_scopes),
-        };
+        let oidc_providers = oidc_providers
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    Oidc::new(&value, logger.new(o!("scope" => "oidc", "host" => key))),
+                )
+            })
+            .collect::<HashMap<String, Oidc>>();
 
         let audience = Self::get_identity(
             identity_provider,
-            &providers,
+            &oidc_providers,
             &mut token_cache,
             crate::system::user,
             logger.new(o!("scope" => "get-identity")),
         )
         .await?;
 
-        let (new_key, token_generators) = Self::create_token_generators(
+        let self_signed_with_file = auth_scopes
+            .iter()
+            .filter_map(|(_, value)| match value {
+                AuthConfig::KeyFile { path } => Some(
+                    internal::TokenGeneratorBuilder::new(&audience)
+                        .with_rsa_private_key_from_file(path)
+                        .build()
+                        .map(|token_generator| (path.to_owned(), token_generator)),
+                ),
+                _ => None,
+            })
+            .collect::<Result<HashMap<_, _>, internal::SelfSignedTokenError>>()
+            .map_err(|e| e.to_string())?;
+
+        let (new_key, self_signed) = Self::create_self_signed_generator(
             &audience,
-            &providers,
             logger.new(o!("scope" => "token-generator-creation")),
         )?;
 
-        let mut auth_service = Self {
-            token_cache: Arc::new(RwLock::new(token_cache)),
-            providers,
-            token_generators,
-            user_identity: audience.clone(),
-            key_store: Arc::new(Box::new(keystore::NullKeyStore {})),
-            logger,
-        };
+        let token_store = Arc::new(RwLock::new(TokenStore {
+            token_cache,
+            token_providers: TokenProviders {
+                oidc: oidc_providers,
+                self_signed: Some(self_signed),
+                self_signed_with_file,
+            },
+        }));
 
-        let key_store = Arc::new(match key_store_config {
-            // TODO:
-            // The key store needs an auth service object that has everything except the key store
-            // and only has a token endpoint. To acquire a token, token cache providers and token generators
-            // are needed from the auth service object. One could create an object that contains cache,
-            // provides and generators with a acquire_token (only takes string scope as arg) function (not containing any tonic specific code).
-            // This object could be sent into the key store.
+        let key_store = match key_store_config {
             crate::config::KeyStore::Simple { url } => Box::new(keystore::SimpleKeyStore::new(
                 &url,
-                auth_service.clone(),
-                auth_service
-                    .logger
-                    .new(o!("scope" => "key-store", "type" => "simple", "url" => url.clone())),
+                token_store.clone(),
+                auth_scopes.clone(),
+                logger.new(o!("scope" => "key-store", "type" => "simple", "url" => url.clone())),
             )) as Box<dyn KeyStore>,
             crate::config::KeyStore::None => {
                 Box::new(keystore::NullKeyStore {}) as Box<dyn KeyStore>
             }
-        });
+        };
 
         // upload the newly generated internal key
         if let Some(public_key_path) = new_key {
@@ -322,20 +411,26 @@ impl AuthService {
                 )
             }))
             .and_then(|key_content| {
-                let key_store = Arc::clone(&key_store);
-                debug!(auth_service.logger, "Uploading key store data");
+                let ks = &key_store;
+                let audience = &audience;
+                let logger = &logger;
                 async move {
-                    key_store
-                        .clone()
-                        .set(&audience, key_content.as_ref())
+                    debug!(logger, "Uploading key store data");
+                    ks.set(audience, key_content.as_ref())
                         .map_err(|e| e.to_string())
                         .await
                 }
             })
             .await?;
         }
-        auth_service.key_store = key_store;
-        Ok(auth_service)
+
+        Ok(Self {
+            key_store: Arc::new(key_store),
+            token_store,
+            scope_mappings: Arc::new(auth_scopes),
+            logger,
+            access_list: Arc::new(access_config.users.into_iter().collect()),
+        })
     }
 
     fn create_alias_map(
@@ -369,7 +464,7 @@ impl AuthService {
 
     async fn get_identity<'a, F>(
         identity_provider: IdentityProvider,
-        providers: &'a Providers,
+        oidc_providers: &'a HashMap<String, Oidc>,
         token_cache: &'a mut TokenCache,
         username_provider: F,
         logger: Logger,
@@ -386,8 +481,7 @@ impl AuthService {
                     "scope-key" => provider_scope_key.clone()
                 ));
                 futures::future::ready(
-                    providers
-                        .oidc
+                    oidc_providers
                         .get(&provider)
                         .ok_or_else(|| format!("OIDC provider \"{}\" not found", provider)),
                 )
@@ -431,17 +525,17 @@ impl AuthService {
         .ok_or_else(|| "Failed to determine identity".to_owned())
     }
 
-    fn create_token_generators<'a>(
-        audience: &'a str,
-        providers: &'a Providers,
+    fn create_self_signed_generator(
+        audience: &str,
         logger: Logger,
-    ) -> Result<(Option<PathBuf>, TokenGenerators), String> {
+    ) -> Result<(Option<PathBuf>, internal::TokenGenerator), String> {
         let keystore_path = crate::system::user_data_path()
             .map(|p| p.join("keys"))
             .ok_or_else(|| {
                 "Could not determine key store path for saving generated keys".to_owned()
             })?;
-        let (new_key, self_signed) = std::fs::create_dir_all(&keystore_path)
+
+        std::fs::create_dir_all(&keystore_path)
             .map_err(|e| {
                 format!(
                     "Failed to create keystore directory at \"{}\": {}",
@@ -483,31 +577,8 @@ impl AuthService {
                             Ok((Some(public_key_path), tg))
                         })
                 }
-                .map(|(new_key, tg)| (new_key, Arc::new(tg)))
-            })?;
-
-        Ok((
-            new_key,
-            TokenGenerators {
-                self_signed,
-                self_signed_with_file: Arc::new(
-                    providers
-                        .auth
-                        .iter()
-                        .filter_map(|(_, value)| match value {
-                            AuthConfig::KeyFile { path } => Some(
-                                internal::TokenGeneratorBuilder::new(&audience)
-                                    .with_rsa_private_key_from_file(path)
-                                    .build()
-                                    .map(|token_generator| (path.to_owned(), token_generator)),
-                            ),
-                            _ => None,
-                        })
-                        .collect::<Result<HashMap<_, _>, internal::SelfSignedTokenError>>()
-                        .map_err(|e| e.to_string())?,
-                ),
-            },
-        ))
+                .map(|(new_key, tg)| (new_key, tg))
+            })
     }
 }
 
@@ -518,84 +589,98 @@ impl Authentication for AuthService {
         request: tonic::Request<AcquireTokenParameters>,
     ) -> Result<tonic::Response<ProtoToken>, tonic::Status> {
         let scope = &request.get_ref().scope;
-        let mut token_cache = self.token_cache.write().await;
-        let auth = match token_cache.get_as_token(scope) {
-            Some(token) => {
-                debug!(
-                    self.logger,
-                    "Found cached token for scope \"{}\", expires at {}",
-                    scope,
-                    Utc.timestamp(token.expires_at() as i64, 0).to_string(),
-                );
-                token
-            }
-            None => token_cache
-                .insert(
-                    scope,
-                    match self.providers.auth.get(scope) {
-                        Some(AuthConfig::None) | None => {
-                            return Ok(tonic::Response::new(ProtoToken {
-                                token: "".to_owned(),
-                                expires_at: 0,
-                                scope: scope.clone(),
-                            }));
-                        }
-                        Some(AuthConfig::Oidc { provider }) => futures::future::ready(
-                            self.providers.oidc.get(provider).ok_or_else(|| {
-                                tonic::Status::internal(format!(
-                                    "Oidc provider \"{}\" not found.",
-                                    provider
-                                ))
-                            }),
-                        )
-                        .and_then(|oidc_client| {
-                            oidc_client
-                                .authenticate()
-                                .map_err(|e| tonic::Status::internal(e.to_string()))
-                        })
-                        .await
-                        .map(TypedToken::Oidc)?,
-                        Some(AuthConfig::SelfSigned) => self
-                            .token_generators
-                            .self_signed
-                            .generate(scope)
-                            .map_err(|e| tonic::Status::internal(e.to_string()))
-                            .map(TypedToken::Internal)?,
-                        Some(AuthConfig::KeyFile { path }) => self
-                            .token_generators
-                            .self_signed_with_file
-                            .get(path)
-                            .ok_or_else(|| {
-                                tonic::Status::internal(format!(
-                                    "Failed to find self signed generator for keyfile at \"{}\"",
-                                    path.display(),
-                                ))
-                            })
-                            .and_then(|generator| {
-                                generator
-                                    .generate(scope)
-                                    .map_err(|e| tonic::Status::internal(e.to_string()))
-                            })
-                            .map(TypedToken::Internal)?,
-                    },
-                )
-                .as_mut(),
-        };
+        let mut store = self.token_store.write().await;
 
-        // always do refresh, the refresh methods of the providers
-        // are responsible for checking if it is needed
-        auth.refresh(&self.logger).await.map_err(|err| {
-            tonic::Status::internal(format!(
-                "Failed to refresh token for scope \"{}\": {}",
-                scope, err
-            ))
-        })?;
+        let token = store
+            .acquire_token(scope, &self.scope_mappings, &self.logger)
+            .await
+            .map_err(tonic::Status::internal)?;
 
         Ok(tonic::Response::new(ProtoToken {
-            token: auth.token().to_owned(),
-            expires_at: auth.expires_at(),
+            token: token.token().to_owned(),
+            expires_at: token.expires_at(),
             scope: request.get_ref().scope.clone(),
         }))
+    }
+
+    async fn authenticate(
+        &self,
+        request: tonic::Request<firm_types::auth::AuthenticationParameters>,
+    ) -> Result<tonic::Response<firm_types::auth::Empty>, tonic::Status> {
+        {
+            let payload = request.into_inner();
+            futures::future::ready(
+                jsonwebtoken::decode_header(&payload.token)
+                    .map_err(|e| {
+                        tonic::Status::invalid_argument(format!(
+                            "Failed decode token header: {}",
+                            e
+                        ))
+                    })
+                    .and_then(|header| {
+                        header.kid.ok_or_else(|| {
+                            tonic::Status::invalid_argument("Header is missing key id")
+                        })
+                    }),
+            )
+            .and_then(|key_id| async move {
+                self.key_store
+                    .get(&key_id)
+                    .map_err(|e| {
+                        tonic::Status::invalid_argument(format!(
+                            "Failed to get public key for key id \"{}\": {}",
+                            &key_id, e
+                        ))
+                    })
+                    .await
+            })
+            .and_then(|key| {
+                let token = payload.token.clone();
+                let aud = payload.expected_audience.clone();
+                async move {
+                    jsonwebtoken::DecodingKey::from_ec_pem(&key)
+                        .map_err(|e| {
+                            tonic::Status::internal(format!("Failed to parse public key: {}", e))
+                        })
+                        .and_then(|decoding_key| {
+                            let mut aud_hash = HashSet::new();
+                            aud_hash.insert(aud);
+                            jsonwebtoken::decode::<serde_json::Value>(
+                                &token,
+                                &decoding_key,
+                                &jsonwebtoken::Validation {
+                                    validate_exp: true,
+                                    aud: Some(aud_hash),
+                                    algorithms: vec![jsonwebtoken::Algorithm::ES256],
+                                    ..Default::default()
+                                },
+                            )
+                            .map_err(|e| {
+                                tonic::Status::invalid_argument(format!(
+                                    "JWT Validation failed: {}",
+                                    e
+                                ))
+                            })
+                        })
+                }
+            })
+            .await
+            .and_then(|claims| {
+                self.access_list
+                    .contains(&payload.token)
+                    .then(|| ())
+                    .or_else(|| {
+                        claims
+                            .claims
+                            .get("sub")
+                            .and_then(|sub| sub.as_str())
+                            .and_then(|sub| self.access_list.contains(sub).then(|| ()))
+                    })
+                    .ok_or_else(|| tonic::Status::permission_denied(""))
+                    .map(|_| tonic::Response::new(firm_types::auth::Empty {}))
+            })
+            .map(|_| tonic::Response::new(firm_types::auth::Empty {}))
+        }
     }
 }
 
@@ -608,6 +693,216 @@ mod tests {
         () => {{
             slog::Logger::root(slog::Discard, slog::o!())
         }};
+    }
+
+    struct FakeKeyStore {
+        key_data: Vec<u8>,
+    }
+
+    #[async_trait::async_trait]
+    impl KeyStore for FakeKeyStore {
+        async fn get(&self, _id: &str) -> Result<Vec<u8>, keystore::KeyStoreError> {
+            Ok(self.key_data.clone())
+        }
+
+        async fn set(&self, _id: &str, _key_data: &[u8]) -> Result<(), keystore::KeyStoreError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Serialize)]
+    struct TestClaims {
+        aud: String,
+        exp: u64,
+        sub: String,
+    }
+
+    #[tokio::test]
+    async fn authenticate() {
+        const PRIVATE_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgiuNp+s23UTotSsEXctwtU0HAA7IHvodB8Q+KA7cW5AuhRANCAASFpp3A7q4Zjtnin9pDoSMzppIczS+O5UkeKM6Wr8HghHI/moGdWYkbGqUPnd2JTmz8YbpGoXz2KewpRQ4no4cx
+-----END PRIVATE KEY-----
+"#;
+        const PUBLIC_KEY: &str = r#"-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEhaadwO6uGY7Z4p/aQ6EjM6aSHM0vjuVJHijOlq/B4IRyP5qBnVmJGxqlD53diU5s/GG6RqF89insKUUOJ6OHMQ==
+-----END PUBLIC KEY-----"#;
+
+        const BAD_PRIVATE_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgv6FgVg2nDbcAvzC5zkG08ITR0czcjeN/y1g/0ggIdtOhRANCAARgG4M/Bd58ts9rGQHw7oL7SK1DMNNpKiY86tv2GM2Q1SHH9iY+FpQxkYbnuyf05u8+OqD5pv0UcfX9r57luz9+
+-----END PRIVATE KEY-----"#;
+
+        let key_store = FakeKeyStore {
+            key_data: PUBLIC_KEY.as_bytes().to_vec(),
+        };
+        let mut auth_service = AuthService {
+            logger: null_logger!(),
+            token_store: Arc::new(RwLock::new(TokenStore::default())),
+            key_store: Arc::new(Box::new(key_store)),
+            scope_mappings: Arc::new(HashMap::new()),
+            access_list: Arc::new(HashSet::new()),
+        };
+        let encoding_key = jsonwebtoken::EncodingKey::from_ec_pem(PRIVATE_KEY.as_bytes()).unwrap();
+
+        assert!(
+            matches!(
+            auth_service
+                .authenticate(tonic::Request::new(
+                    firm_types::auth::AuthenticationParameters {
+                        expected_audience: String::from("publiken"),
+                        token: String::from("dgfijjw4iog89e4wjgdj94edg8904"),
+                    },
+                ))
+                .await, Err(e) if e.code() == tonic::Code::InvalidArgument),
+            "invalid token must generate invalid argument error"
+        );
+
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+        header.kid = Some(String::from("key-id"));
+
+        // Test expiry date
+        assert!(
+            matches!(
+            auth_service
+                .authenticate(tonic::Request::new(
+                    firm_types::auth::AuthenticationParameters {
+                        expected_audience: String::from("publiken"),
+                        token: jsonwebtoken::encode(
+                            &header,
+                            &TestClaims {
+                                aud: String::from("publiken"),
+                                exp: 0u64,
+                                sub: String::from("marine"),
+                            },
+                            &encoding_key,
+                        )
+                        .unwrap(),
+                    },
+                ))
+                .await, Err(e) if e.code() == tonic::Code::InvalidArgument),
+            "expired token must generate invalid argument error"
+        );
+
+        // Audience
+        assert!(
+            matches!(
+            auth_service
+                .authenticate(tonic::Request::new(
+                    firm_types::auth::AuthenticationParameters {
+                        expected_audience: String::from("åskådare"),
+                        token: jsonwebtoken::encode(
+                            &header,
+                            &TestClaims {
+                                aud: String::from("läsekrets"),
+                                exp: (Utc::now().timestamp() + 1234) as u64,
+                                sub: String::from("u-boat"),
+                            },
+                            &encoding_key,
+                        )
+                        .unwrap(),
+                    },
+                ))
+                .await, Err(e) if e.code() == tonic::Code::InvalidArgument),
+            "audience mismatch must generate invalid argument error"
+        );
+
+        // Check auth with wrong private key
+        assert!(
+            matches!(
+            auth_service
+                .authenticate(tonic::Request::new(
+                    firm_types::auth::AuthenticationParameters {
+                        expected_audience: String::from("ja"),
+                        token: jsonwebtoken::encode(
+                            &header,
+                            &TestClaims {
+                                aud: String::from("ja"),
+                                exp: (Utc::now().timestamp() + 1234) as u64,
+                                sub: String::from("u-boat"),
+                            },
+                            &jsonwebtoken::EncodingKey::from_ec_pem(BAD_PRIVATE_KEY.as_bytes()).unwrap(),
+                        )
+                        .unwrap(),
+                    },
+                ))
+                .await, Err(e) if e.code() == tonic::Code::InvalidArgument),
+            "signing key mismatch must generate invalid argument error"
+        );
+
+        // Check token permission failure
+        assert!(
+            matches!(auth_service
+            .authenticate(tonic::Request::new(
+                firm_types::auth::AuthenticationParameters {
+                    expected_audience: String::from("publiken"),
+                    token: jsonwebtoken::encode(
+                        &header,
+                        &TestClaims {
+                            aud: String::from("publiken"),
+                            exp: (Utc::now().timestamp() + 1234) as u64,
+                            sub: String::from("system"),
+                        },
+                        &encoding_key,
+                    )
+                    .unwrap(),
+                },
+            ))
+                     .await, Err(e) if e.code() == tonic::Code::PermissionDenied),
+            "Token without access must generate permission denied error"
+        );
+
+        Arc::get_mut(&mut auth_service.access_list)
+            .unwrap()
+            .insert("user@host".to_owned());
+
+        assert!(
+            auth_service
+                .authenticate(tonic::Request::new(
+                    firm_types::auth::AuthenticationParameters {
+                        expected_audience: String::from("publiken"),
+                        token: jsonwebtoken::encode(
+                            &header,
+                            &TestClaims {
+                                aud: String::from("publiken"),
+                                exp: (Utc::now().timestamp() + 1234) as u64,
+                                sub: String::from("user@host"),
+                            },
+                            &encoding_key,
+                        )
+                        .unwrap(),
+                    },
+                ))
+                .await
+                .is_ok(),
+            "Token with subject access must yield an ok response"
+        );
+
+        let token = jsonwebtoken::encode(
+            &header,
+            &TestClaims {
+                aud: String::from("publiken"),
+                exp: (Utc::now().timestamp() + 1234) as u64,
+                sub: String::from("vadsomhelstspelaringenroll"),
+            },
+            &encoding_key,
+        )
+        .unwrap();
+
+        Arc::get_mut(&mut auth_service.access_list)
+            .unwrap()
+            .insert(token.clone());
+
+        assert!(
+            auth_service
+                .authenticate(tonic::Request::new(
+                    firm_types::auth::AuthenticationParameters {
+                        expected_audience: String::from("publiken"),
+                        token,
+                    },
+                ))
+                .await
+                .is_ok(),
+            "Token with token access must yield an ok response"
+        );
     }
 
     #[test]
@@ -652,7 +947,7 @@ mod tests {
             IdentityProvider::Override {
                 identity: "user@company.com".to_owned(),
             },
-            &Providers::default(),
+            &HashMap::new(),
             &mut TokenCache::default(),
             || None,
             null_logger!(),
@@ -670,7 +965,7 @@ mod tests {
             IdentityProvider::UsernameSuffix {
                 suffix: "@company.com".to_owned(),
             },
-            &Providers::default(),
+            &HashMap::new(),
             &mut TokenCache::default(),
             || Some("user".to_owned()),
             null_logger!(),
@@ -686,7 +981,7 @@ mod tests {
 
         let id = AuthService::get_identity(
             IdentityProvider::Username,
-            &Providers::default(),
+            &HashMap::new(),
             &mut TokenCache::default(),
             || Some("username".to_owned()),
             null_logger!(),
