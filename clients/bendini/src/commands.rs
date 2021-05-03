@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod get;
 pub mod list;
 pub mod list_runtimes;

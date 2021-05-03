@@ -3,7 +3,10 @@ package firm_protocols.auth;
 
 service Authentication {
   rpc AcquireToken (AcquireTokenParameters) returns (Token);
-  rpc Authenticate (AuthenticationParameters) returns (Empty);
+  rpc Authenticate (AuthenticationParameters) returns (AuthenticationResponse);
+  rpc ListRemoteAccessRequests (RemoteAccessListParameters) returns (RemoteAccessRequests);
+  rpc ApproveRemoteAccessRequest (RemoteAccessApproval) returns (RemoteAccessRequest);
+  rpc GetRemoteAccessRequest (RemoteAccessRequestId) returns (RemoteAccessRequest);
 }
 
 message AcquireTokenParameters {
@@ -19,6 +22,48 @@ message Token {
 message AuthenticationParameters {
   string expected_audience = 1;
   string token = 2;
+  bool create_remote_access_request = 3;
 }
 
-message Empty {}
+message RemoteAccessRequests {
+  repeated RemoteAccessRequest requests = 1;
+}
+
+message AuthenticationResponse {
+  RemoteAccessRequestId remote_access_request_id = 1;
+}
+
+message RemoteAccessRequestId {
+  string uuid = 1;
+}
+
+message RemoteAccessRequest {
+  RemoteAccessRequestId id = 1;
+  string subject = 2;
+  uint64 expires_at = 3;
+  bool approved = 4;
+}
+
+message RemoteAccessApproval {
+  bool approved = 1;
+  RemoteAccessRequestId id = 2;
+}
+
+message RemoteAccessListParameters {
+  string subject_filter = 1;
+  bool include_approved = 2;
+  Ordering order = 3;
+}
+
+message Ordering {
+  OrderingKey key = 1;
+  bool reverse = 2;
+  uint32 offset = 3;
+  uint32 limit = 4;
+}
+
+
+enum OrderingKey { 
+  SUBJECT = 0;
+  EXPIRES_AT = 1;
+}

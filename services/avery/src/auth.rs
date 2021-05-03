@@ -5,25 +5,46 @@ use std::{
     hash::Hasher,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 use chrono::{TimeZone, Utc};
+use expiremap::ExpireMap;
 use firm_types::{
     auth::authentication_server::Authentication, auth::AcquireTokenParameters,
     auth::Token as ProtoToken, tonic,
 };
-use futures::TryFutureExt;
+use futures::{future::OptionFuture, TryFutureExt};
 use serde::{Deserialize, Serialize};
 use slog::{debug, info, o, warn, Logger};
-use tokio::sync::RwLock;
+use tokio::{sync::RwLock, time::Instant};
 
-use self::{aliasmap::AliasMap, keystore::KeyStore, oidc::Oidc};
+pub use self::keystore::{KeyStore, KeyStoreError};
+use self::{aliasmap::AliasMap, oidc::Oidc};
 use crate::config::{AuthConfig, IdentityProvider, OidcProvider};
 
 mod aliasmap;
+mod expiremap;
 mod internal;
 mod keystore;
 mod oidc;
+
+#[derive(Debug, Clone, Default)]
+struct PendingAccessRequest {
+    subject: String,
+    expires_at: u64,
+    approved: bool,
+}
+
+impl From<firm_types::auth::RemoteAccessRequest> for PendingAccessRequest {
+    fn from(rar: firm_types::auth::RemoteAccessRequest) -> Self {
+        Self {
+            subject: rar.subject,
+            expires_at: rar.expires_at,
+            approved: rar.approved,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -31,7 +52,21 @@ pub struct AuthService {
     token_store: Arc<RwLock<TokenStore>>,
     key_store: Arc<Box<dyn KeyStore>>,
     scope_mappings: Arc<HashMap<String, AuthConfig>>,
-    access_list: Arc<HashSet<String>>,
+    access_list: ExpireMap<String, ()>,
+    pending_access_requests: ExpireMap<uuid::Uuid, PendingAccessRequest>,
+}
+
+impl Default for AuthService {
+    fn default() -> Self {
+        Self {
+            logger: slog::Logger::root(slog::Discard, slog::o!()),
+            token_store: Arc::new(RwLock::new(TokenStore::default())),
+            key_store: Arc::new(Box::new(keystore::NullKeyStore {})),
+            scope_mappings: Arc::new(HashMap::new()),
+            access_list: ExpireMap::default(),
+            pending_access_requests: ExpireMap::default(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -328,7 +363,19 @@ impl ScopeKey for IdentityProvider {
 }
 
 impl AuthService {
-    pub async fn new(
+    pub fn new(keystore: Box<dyn KeyStore>) -> Self {
+        Self {
+            key_store: Arc::new(keystore),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_access_list(&mut self, access_list: HashSet<String>) -> &mut Self {
+        self.access_list = access_list.into_iter().collect();
+        self
+    }
+
+    pub async fn from_config(
         oidc_providers: HashMap<String, OidcProvider>,
         auth_scopes: HashMap<String, AuthConfig>,
         identity_provider: IdentityProvider,
@@ -429,7 +476,8 @@ impl AuthService {
             token_store,
             scope_mappings: Arc::new(auth_scopes),
             logger,
-            access_list: Arc::new(access_config.users.into_iter().collect()),
+            access_list: access_config.users.into_iter().collect(),
+            pending_access_requests: ExpireMap::default(),
         })
     }
 
@@ -606,7 +654,7 @@ impl Authentication for AuthService {
     async fn authenticate(
         &self,
         request: tonic::Request<firm_types::auth::AuthenticationParameters>,
-    ) -> Result<tonic::Response<firm_types::auth::Empty>, tonic::Status> {
+    ) -> Result<tonic::Response<firm_types::auth::AuthenticationResponse>, tonic::Status> {
         {
             let payload = request.into_inner();
             futures::future::ready(
@@ -664,23 +712,238 @@ impl Authentication for AuthService {
                         })
                 }
             })
-            .await
-            .and_then(|claims| {
-                self.access_list
-                    .contains(&payload.token)
-                    .then(|| ())
-                    .or_else(|| {
+            .and_then(|claims| async move {
+                claims
+                    .claims
+                    .get("sub")
+                    .and_then(|sub| sub.as_str().map(|s| s.to_owned()))
+                    .and_then(|sub| {
                         claims
                             .claims
-                            .get("sub")
-                            .and_then(|sub| sub.as_str())
-                            .and_then(|sub| self.access_list.contains(sub).then(|| ()))
+                            .get("exp")
+                            .and_then(|exp| exp.as_u64())
+                            .map(|exp| (sub, exp))
                     })
-                    .ok_or_else(|| tonic::Status::permission_denied(""))
-                    .map(|_| tonic::Response::new(firm_types::auth::Empty {}))
+                    .ok_or_else(|| {
+                        tonic::Status::invalid_argument("JWT claims do not contain sub and exp")
+                    })
             })
-            .map(|_| tonic::Response::new(firm_types::auth::Empty {}))
+            .and_then(|(sub, exp)| {
+                let create_remote_access_request = payload.create_remote_access_request;
+                async move {
+                    self.access_list
+                        .contains(&sub)
+                        .await
+                        .then(|| None)
+                        .or_else(|| {
+                            create_remote_access_request.then(|| Some(uuid::Uuid::new_v4()))
+                        })
+                        .map(|maybe_rid| (maybe_rid, sub, exp))
+                        .ok_or_else(|| tonic::Status::permission_denied(""))
+                }
+            })
+            .and_then(|(maybe_request_id, sub, exp)| async move {
+                OptionFuture::<_>::from(maybe_request_id.map(|uuid| async move {
+                    self.pending_access_requests
+                        .insert(
+                            uuid,
+                            PendingAccessRequest {
+                                subject: sub.to_owned(),
+                                expires_at: exp,
+                                approved: false,
+                            },
+                            Some(
+                                Instant::now()
+                                    .checked_add(Duration::from_secs(
+                                        exp - chrono::Utc::now().timestamp() as u64,
+                                    ))
+                                    .ok_or_else(|| {
+                                        tonic::Status::internal(
+                                            "Failed to calculate \
+                                             expiry date for pending access request.",
+                                        )
+                                    })?,
+                            ),
+                        )
+                        .await;
+                    Ok(firm_types::auth::RemoteAccessRequestId {
+                        uuid: uuid.to_string(),
+                    })
+                }))
+                .await
+                .transpose()
+            })
+            .await
+            .map(|remote_access_request_id| {
+                tonic::Response::new(firm_types::auth::AuthenticationResponse {
+                    remote_access_request_id,
+                })
+            })
         }
+    }
+
+    async fn list_remote_access_requests(
+        &self,
+        request: tonic::Request<firm_types::auth::RemoteAccessListParameters>,
+    ) -> Result<tonic::Response<firm_types::auth::RemoteAccessRequests>, tonic::Status> {
+        let subject_filter = &request.get_ref().subject_filter;
+        let include_approved = request.get_ref().include_approved;
+        let mut results: Vec<firm_types::auth::RemoteAccessRequest> = self
+            .pending_access_requests
+            .snapshot()
+            .await
+            .iter()
+            .filter(|(_, v)| {
+                (subject_filter.is_empty() || v.subject.contains(subject_filter))
+                    && (include_approved || !v.approved)
+            })
+            .map(|(k, v)| firm_types::auth::RemoteAccessRequest {
+                id: Some(firm_types::auth::RemoteAccessRequestId {
+                    uuid: k.to_string(),
+                }),
+                expires_at: v.expires_at,
+                subject: v.subject.to_owned(),
+                approved: v.approved,
+            })
+            .collect();
+        match request.get_ref().order {
+            Some(firm_types::auth::Ordering { key, reverse, .. })
+                if key == firm_types::auth::OrderingKey::ExpiresAt as i32 =>
+            {
+                results.sort_unstable_by(|a, b| {
+                    if reverse {
+                        b.expires_at.cmp(&a.expires_at)
+                    } else {
+                        a.expires_at.cmp(&b.expires_at)
+                    }
+                })
+            }
+            Some(firm_types::auth::Ordering { reverse, .. }) => results.sort_unstable_by(|a, b| {
+                if reverse {
+                    b.subject.cmp(&a.subject)
+                } else {
+                    a.subject.cmp(&b.subject)
+                }
+            }),
+            None => results.sort_unstable_by(|a, b| a.subject.cmp(&b.subject)),
+        }
+
+        Ok(tonic::Response::new(
+            firm_types::auth::RemoteAccessRequests {
+                requests: if let Some(ordering) = request.get_ref().order.as_ref() {
+                    results
+                        .into_iter()
+                        .skip(ordering.offset as usize)
+                        .take(if ordering.limit == 0 {
+                            100
+                        } else {
+                            std::cmp::min(ordering.limit, 100)
+                        } as usize)
+                        .collect()
+                } else {
+                    results.into_iter().take(100).collect()
+                },
+            },
+        ))
+    }
+
+    async fn approve_remote_access_request(
+        &self,
+        request: tonic::Request<firm_types::auth::RemoteAccessApproval>,
+    ) -> Result<tonic::Response<firm_types::auth::RemoteAccessRequest>, tonic::Status> {
+        futures::future::ready(
+            request
+                .get_ref()
+                .id
+                .as_ref()
+                .ok_or_else(|| {
+                    tonic::Status::invalid_argument("No Id on remote access approval request")
+                })
+                .map(|id| &id.uuid)
+                .and_then(|uuid| {
+                    uuid::Uuid::parse_str(&uuid).map_err(|e| {
+                        tonic::Status::invalid_argument(format!("Invalid UUID: {}", e))
+                    })
+                }),
+        )
+        .and_then(|uuid| async move {
+            futures::future::ready(
+                self.pending_access_requests
+                    .snapshot_mut()
+                    .await
+                    .get_mut(&uuid)
+                    .ok_or_else(|| {
+                        tonic::Status::not_found(format!(
+                            "Failed to find pending access request with id: {}",
+                            uuid
+                        ))
+                    }),
+            )
+            .and_then(|req| async move {
+                req.approved = request.get_ref().approved;
+                self.access_list
+                    .insert(
+                        req.subject.to_owned(),
+                        (),
+                        Some(
+                            Instant::now()
+                                .checked_add(Duration::from_secs(
+                                    req.expires_at - chrono::Utc::now().timestamp() as u64,
+                                ))
+                                .ok_or_else(|| {
+                                    tonic::Status::internal(
+                                        "Failed to calculate \
+                                             expiry date for pending access request.",
+                                    )
+                                })?,
+                        ),
+                    )
+                    .await;
+                Ok(firm_types::auth::RemoteAccessRequest {
+                    id: Some(firm_types::auth::RemoteAccessRequestId {
+                        uuid: uuid.to_string(),
+                    }),
+                    expires_at: req.expires_at,
+                    subject: req.subject.to_owned(),
+                    approved: req.approved,
+                })
+            })
+            .await
+        })
+        .await
+        .map(tonic::Response::new)
+    }
+
+    async fn get_remote_access_request(
+        &self,
+        request: tonic::Request<firm_types::auth::RemoteAccessRequestId>,
+    ) -> Result<tonic::Response<firm_types::auth::RemoteAccessRequest>, tonic::Status> {
+        futures::future::ready(
+            uuid::Uuid::parse_str(&request.get_ref().uuid)
+                .map_err(|e| tonic::Status::invalid_argument(format!("Invalid UUID: {}", e))),
+        )
+        .and_then(|uuid| async move {
+            self.pending_access_requests
+                .snapshot()
+                .await
+                .get(&uuid)
+                .map(|req| firm_types::auth::RemoteAccessRequest {
+                    id: Some(firm_types::auth::RemoteAccessRequestId {
+                        uuid: uuid.to_string(),
+                    }),
+                    expires_at: req.expires_at,
+                    subject: req.subject.to_owned(),
+                    approved: req.approved,
+                })
+                .ok_or_else(|| {
+                    tonic::Status::not_found(format!(
+                        "Failed to find pending access request with id: {}",
+                        uuid
+                    ))
+                })
+        })
+        .await
+        .map(tonic::Response::new)
     }
 }
 
@@ -693,216 +956,6 @@ mod tests {
         () => {{
             slog::Logger::root(slog::Discard, slog::o!())
         }};
-    }
-
-    struct FakeKeyStore {
-        key_data: Vec<u8>,
-    }
-
-    #[async_trait::async_trait]
-    impl KeyStore for FakeKeyStore {
-        async fn get(&self, _id: &str) -> Result<Vec<u8>, keystore::KeyStoreError> {
-            Ok(self.key_data.clone())
-        }
-
-        async fn set(&self, _id: &str, _key_data: &[u8]) -> Result<(), keystore::KeyStoreError> {
-            Ok(())
-        }
-    }
-
-    #[derive(Serialize)]
-    struct TestClaims {
-        aud: String,
-        exp: u64,
-        sub: String,
-    }
-
-    #[tokio::test]
-    async fn authenticate() {
-        const PRIVATE_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgiuNp+s23UTotSsEXctwtU0HAA7IHvodB8Q+KA7cW5AuhRANCAASFpp3A7q4Zjtnin9pDoSMzppIczS+O5UkeKM6Wr8HghHI/moGdWYkbGqUPnd2JTmz8YbpGoXz2KewpRQ4no4cx
------END PRIVATE KEY-----
-"#;
-        const PUBLIC_KEY: &str = r#"-----BEGIN PUBLIC KEY-----
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEhaadwO6uGY7Z4p/aQ6EjM6aSHM0vjuVJHijOlq/B4IRyP5qBnVmJGxqlD53diU5s/GG6RqF89insKUUOJ6OHMQ==
------END PUBLIC KEY-----"#;
-
-        const BAD_PRIVATE_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgv6FgVg2nDbcAvzC5zkG08ITR0czcjeN/y1g/0ggIdtOhRANCAARgG4M/Bd58ts9rGQHw7oL7SK1DMNNpKiY86tv2GM2Q1SHH9iY+FpQxkYbnuyf05u8+OqD5pv0UcfX9r57luz9+
------END PRIVATE KEY-----"#;
-
-        let key_store = FakeKeyStore {
-            key_data: PUBLIC_KEY.as_bytes().to_vec(),
-        };
-        let mut auth_service = AuthService {
-            logger: null_logger!(),
-            token_store: Arc::new(RwLock::new(TokenStore::default())),
-            key_store: Arc::new(Box::new(key_store)),
-            scope_mappings: Arc::new(HashMap::new()),
-            access_list: Arc::new(HashSet::new()),
-        };
-        let encoding_key = jsonwebtoken::EncodingKey::from_ec_pem(PRIVATE_KEY.as_bytes()).unwrap();
-
-        assert!(
-            matches!(
-            auth_service
-                .authenticate(tonic::Request::new(
-                    firm_types::auth::AuthenticationParameters {
-                        expected_audience: String::from("publiken"),
-                        token: String::from("dgfijjw4iog89e4wjgdj94edg8904"),
-                    },
-                ))
-                .await, Err(e) if e.code() == tonic::Code::InvalidArgument),
-            "invalid token must generate invalid argument error"
-        );
-
-        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
-        header.kid = Some(String::from("key-id"));
-
-        // Test expiry date
-        assert!(
-            matches!(
-            auth_service
-                .authenticate(tonic::Request::new(
-                    firm_types::auth::AuthenticationParameters {
-                        expected_audience: String::from("publiken"),
-                        token: jsonwebtoken::encode(
-                            &header,
-                            &TestClaims {
-                                aud: String::from("publiken"),
-                                exp: 0u64,
-                                sub: String::from("marine"),
-                            },
-                            &encoding_key,
-                        )
-                        .unwrap(),
-                    },
-                ))
-                .await, Err(e) if e.code() == tonic::Code::InvalidArgument),
-            "expired token must generate invalid argument error"
-        );
-
-        // Audience
-        assert!(
-            matches!(
-            auth_service
-                .authenticate(tonic::Request::new(
-                    firm_types::auth::AuthenticationParameters {
-                        expected_audience: String::from("åskådare"),
-                        token: jsonwebtoken::encode(
-                            &header,
-                            &TestClaims {
-                                aud: String::from("läsekrets"),
-                                exp: (Utc::now().timestamp() + 1234) as u64,
-                                sub: String::from("u-boat"),
-                            },
-                            &encoding_key,
-                        )
-                        .unwrap(),
-                    },
-                ))
-                .await, Err(e) if e.code() == tonic::Code::InvalidArgument),
-            "audience mismatch must generate invalid argument error"
-        );
-
-        // Check auth with wrong private key
-        assert!(
-            matches!(
-            auth_service
-                .authenticate(tonic::Request::new(
-                    firm_types::auth::AuthenticationParameters {
-                        expected_audience: String::from("ja"),
-                        token: jsonwebtoken::encode(
-                            &header,
-                            &TestClaims {
-                                aud: String::from("ja"),
-                                exp: (Utc::now().timestamp() + 1234) as u64,
-                                sub: String::from("u-boat"),
-                            },
-                            &jsonwebtoken::EncodingKey::from_ec_pem(BAD_PRIVATE_KEY.as_bytes()).unwrap(),
-                        )
-                        .unwrap(),
-                    },
-                ))
-                .await, Err(e) if e.code() == tonic::Code::InvalidArgument),
-            "signing key mismatch must generate invalid argument error"
-        );
-
-        // Check token permission failure
-        assert!(
-            matches!(auth_service
-            .authenticate(tonic::Request::new(
-                firm_types::auth::AuthenticationParameters {
-                    expected_audience: String::from("publiken"),
-                    token: jsonwebtoken::encode(
-                        &header,
-                        &TestClaims {
-                            aud: String::from("publiken"),
-                            exp: (Utc::now().timestamp() + 1234) as u64,
-                            sub: String::from("system"),
-                        },
-                        &encoding_key,
-                    )
-                    .unwrap(),
-                },
-            ))
-                     .await, Err(e) if e.code() == tonic::Code::PermissionDenied),
-            "Token without access must generate permission denied error"
-        );
-
-        Arc::get_mut(&mut auth_service.access_list)
-            .unwrap()
-            .insert("user@host".to_owned());
-
-        assert!(
-            auth_service
-                .authenticate(tonic::Request::new(
-                    firm_types::auth::AuthenticationParameters {
-                        expected_audience: String::from("publiken"),
-                        token: jsonwebtoken::encode(
-                            &header,
-                            &TestClaims {
-                                aud: String::from("publiken"),
-                                exp: (Utc::now().timestamp() + 1234) as u64,
-                                sub: String::from("user@host"),
-                            },
-                            &encoding_key,
-                        )
-                        .unwrap(),
-                    },
-                ))
-                .await
-                .is_ok(),
-            "Token with subject access must yield an ok response"
-        );
-
-        let token = jsonwebtoken::encode(
-            &header,
-            &TestClaims {
-                aud: String::from("publiken"),
-                exp: (Utc::now().timestamp() + 1234) as u64,
-                sub: String::from("vadsomhelstspelaringenroll"),
-            },
-            &encoding_key,
-        )
-        .unwrap();
-
-        Arc::get_mut(&mut auth_service.access_list)
-            .unwrap()
-            .insert(token.clone());
-
-        assert!(
-            auth_service
-                .authenticate(tonic::Request::new(
-                    firm_types::auth::AuthenticationParameters {
-                        expected_audience: String::from("publiken"),
-                        token,
-                    },
-                ))
-                .await
-                .is_ok(),
-            "Token with token access must yield an ok response"
-        );
     }
 
     #[test]

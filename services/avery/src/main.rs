@@ -53,7 +53,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         log.new(o!("service" => "internal-registry")),
     )?;
 
-    let auth_service = AuthService::new(
+    let auth_service = AuthService::from_config(
         config.oidc_providers,
         config.auth.scopes,
         config.auth.identity,
