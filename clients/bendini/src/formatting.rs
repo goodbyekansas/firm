@@ -4,9 +4,12 @@ use std::{
 };
 
 use ansi_term::Colour::Green;
-use firm_types::functions::{
-    channel::Value, execution_result::Result as FunctionResult, Channel, ChannelSpec, ChannelType,
-    ExecutionResult, Function, Runtime, RuntimeSpec, Stream,
+use firm_types::{
+    auth::RemoteAccessRequest,
+    functions::{
+        channel::Value, execution_result::Result as FunctionResult, Channel, ChannelSpec,
+        ChannelType, ExecutionResult, Function, Runtime, RuntimeSpec, Stream,
+    },
 };
 use futures::{future::join, Future};
 use indicatif::MultiProgress;
@@ -280,5 +283,30 @@ impl Display for Displayer<'_, Runtime> {
             Green.paint(&self.name),
             &self.source
         )
+    }
+}
+
+// impl display of listed auth request
+impl Display for Displayer<'_, RemoteAccessRequest> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(
+            f,
+            "{:40}{:16}{}",
+            self.id
+                .as_ref()
+                .map(|id| id.uuid.as_str())
+                .unwrap_or("missing id"),
+            self.expires_at,
+            self.subject
+        )
+    }
+}
+
+// impl display of listed auth requests
+impl Display for Displayer<'_, &[RemoteAccessRequest]> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{:40}{:16}subject", "id", "expires at")?;
+        writeln!(f, "{}", "-".repeat(70))?;
+        self.iter().try_for_each(|r| write!(f, "{}", r.display()))
     }
 }

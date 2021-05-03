@@ -4,7 +4,7 @@ mod error;
 mod formatting;
 mod manifest;
 
-use std::{ops::Deref, path::PathBuf, str::FromStr};
+use std::{fmt::Display, ops::Deref, path::PathBuf, str::FromStr};
 
 use firm_types::{
     auth::authentication_client::AuthenticationClient,
@@ -105,6 +105,75 @@ struct BendiniArgs {
 }
 
 #[derive(StructOpt, Debug)]
+pub enum Ordering {
+    Subject,
+    ExpiresAt,
+}
+
+impl Default for Ordering {
+    fn default() -> Self {
+        Self::Subject
+    }
+}
+
+impl FromStr for Ordering {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "subject" => Ok(Self::Subject),
+            "expiry" => Ok(Self::ExpiresAt),
+            _ => Err(format!(r#""{}" is not any of "subject" or "expiry""#, s)),
+        }
+    }
+}
+
+impl Display for Ordering {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Subject => "subject",
+                Self::ExpiresAt => "expiry",
+            }
+        )
+    }
+}
+
+#[derive(StructOpt, Debug)]
+enum AuthCommand {
+    /// List incoming remote access requests
+    List {
+        /// Filter on the subject of the remote access request
+        #[structopt(short, long, default_value)]
+        subject_filter: String,
+
+        /// Include  already approved access requests
+        #[structopt(short, long)]
+        include_approved: bool,
+
+        /// Order on subject or expiry date of access request
+        #[structopt(short, long, default_value)]
+        ordering: Ordering,
+    },
+
+    /// Approve incoming remote access request
+    Approve {
+        /// The id of the remote request to approve
+        #[structopt(short, long, default_value)]
+        id: String,
+    },
+
+    /// Decline incoming remote access request
+    Decline {
+        /// The id of the remote request to decline
+        #[structopt(short, long, default_value)]
+        id: String,
+    },
+}
+
+#[derive(StructOpt, Debug)]
 enum Command {
     /// List available functions
     List {
@@ -150,6 +219,13 @@ enum Command {
         /// a colon and a version (my-function:0.4.1)
         function_id: String,
     },
+
+    /// List and approve remote access requests
+    Auth {
+        /// Authentication sub command to run
+        #[structopt(subcommand)]
+        command: AuthCommand,
+    },
 }
 
 fn parse_key_val(s: &str) -> Result<(String, String), Box<dyn std::error::Error>> {
@@ -177,37 +253,36 @@ async fn main() {
     }
 }
 
-async fn connect(endpoint: Endpoint) -> Result<Channel, BendiniError> {
+async fn connect(endpoint: Endpoint) -> Result<(Channel, bool), BendiniError> {
     let uri = endpoint.uri().clone();
     match uri.scheme_str() {
         Some("https") => match endpoint.tls_config(ClientTlsConfig::new()) {
-            Ok(endpoint_tls) => endpoint_tls.connect().await,
+            Ok(endpoint_tls) => endpoint_tls.connect().await.map(|channel| (channel, true)),
             Err(e) => Err(e),
         },
         #[cfg(unix)]
-        Some("unix") => {
-            endpoint
-                .connect_with_connector(service_fn(|uri: Uri| {
-                    println!("using unix socket @ {}", uri.path());
-                    UnixStream::connect(uri.path().to_owned())
-                }))
-                .await
-        }
+        Some("unix") => endpoint
+            .connect_with_connector(service_fn(|uri: Uri| {
+                println!("using unix socket @ {}", uri.path());
+                UnixStream::connect(uri.path().to_owned())
+            }))
+            .await
+            .map(|channel| (channel, false)),
+
         #[cfg(windows)]
-        Some("windows") => {
-            endpoint
-                .connect_with_connector(service_fn(|uri: Uri| {
-                    let pipe_path = format!(
-                        r#"\\{}{}"#,
-                        uri.host().unwrap_or("."),
-                        uri.path().replace("/", "\\")
-                    );
-                    println!("using named pipe @ {}", &pipe_path);
-                    NamedPipe::connect(pipe_path)
-                }))
-                .await
-        }
-        _ => endpoint.connect().await,
+        Some("windows") => endpoint
+            .connect_with_connector(service_fn(|uri: Uri| {
+                let pipe_path = format!(
+                    r#"\\{}{}"#,
+                    uri.host().unwrap_or("."),
+                    uri.path().replace("/", "\\")
+                );
+                println!("using named pipe @ {}", &pipe_path);
+                NamedPipe::connect(pipe_path)
+            }))
+            .await
+            .map(|channel| (channel, false)),
+        _ => endpoint.connect().await.map(|channel| (channel, true)),
     }
     .map_err(|e| BendiniError::ConnectionError(uri.to_string(), e.to_string()))
 }
@@ -218,56 +293,62 @@ async fn run() -> Result<(), error::BendiniError> {
     let endpoint = Endpoint::from_shared(args.host.clone())
         .map_err(|e| BendiniError::InvalidUri(e.to_string()))?;
 
-    let channel = connect(endpoint.clone()).await?;
+    let (channel, acquire_credentials) = connect(endpoint.clone()).await?;
 
-    let bearer = match futures::future::ready(Endpoint::from_shared(args.auth_host.clone()))
+    let mut auth_client = futures::future::ready(Endpoint::from_shared(args.auth_host.clone()))
         .map_err(|e| BendiniError::InvalidUri(e.to_string()))
         .and_then(|endpoint| async {
             if args.host == args.auth_host {
                 Ok(channel.clone())
             } else {
-                connect(endpoint).await
+                connect(endpoint).await.map(|(channel, _)| channel)
             }
         })
         .await
-        .map(AuthenticationClient::new)?
-        .acquire_token(tonic::Request::new(AcquireTokenParameters {
-            scope: endpoint
-                .uri()
-                .authority()
-                .map(|a| a.to_string())
-                .unwrap_or_else(|| "localhost".to_owned()),
-        }))
-        .await
-    {
-        Ok(token) => {
-            let token = token.into_inner();
-            (!token.token.is_empty()).then(|| token.token)
-        }
-        Err(e) => {
-            println!(
-                "{} 🤞",
-                warn!(
-                    r#"Acquiring credentials for scope "{}" \
+        .map(AuthenticationClient::new)?;
+
+    let bearer = if acquire_credentials {
+        match auth_client
+            .acquire_token(tonic::Request::new(AcquireTokenParameters {
+                scope: endpoint
+                    .uri()
+                    .authority()
+                    .map(|a| a.to_string())
+                    .unwrap_or_else(|| "localhost".to_owned()),
+            }))
+            .await
+        {
+            Ok(token) => {
+                let token = token.into_inner();
+                (!token.token.is_empty()).then(|| token.token)
+            }
+            Err(e) => {
+                println!(
+                    "{} 🤞",
+                    warn!(
+                        r#"Acquiring credentials for scope "{}" \
                 failed with error: {}. \
                 Continuing without credentials set.
                 "#,
-                    ansi_term::Style::new().bold().paint(args.host.clone()),
-                    e
-                )
-            );
-            None
+                        ansi_term::Style::new().bold().paint(args.host.clone()),
+                        e
+                    )
+                );
+                None
+            }
         }
-    }
-    .map(|t| {
-        tonic::metadata::MetadataValue::from_str(&format!("bearer {}", t)).map_err(|e| {
-            BendiniError::InvalidOauthToken(format!(
-                "Failed to convert oauth token to metadata value: {}",
-                e
-            ))
+        .map(|t| {
+            tonic::metadata::MetadataValue::from_str(&format!("bearer {}", t)).map_err(|e| {
+                BendiniError::InvalidOauthToken(format!(
+                    "Failed to convert oauth token to metadata value: {}",
+                    e
+                ))
+            })
         })
-    })
-    .transpose()?;
+        .transpose()?
+    } else {
+        None
+    };
 
     // When calling non pure grpc endpoints we may get content that is not application/grpc.
     // Tonic doesn't handle these cases very well. We have to make a wrapper around
@@ -324,5 +405,16 @@ async fn run() -> Result<(), error::BendiniError> {
         Command::ListRuntimes { name } => {
             commands::list_runtimes::run(execution_client, name.unwrap_or_default()).await
         }
+        Command::Auth { command } => match command {
+            AuthCommand::List {
+                subject_filter,
+                include_approved,
+                ordering,
+            } => {
+                commands::auth::list(auth_client, subject_filter, include_approved, ordering).await
+            }
+            AuthCommand::Approve { id } => commands::auth::approval(auth_client, true, id).await,
+            AuthCommand::Decline { id } => commands::auth::approval(auth_client, false, id).await,
+        },
     }
 }
