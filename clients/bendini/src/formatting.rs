@@ -4,6 +4,7 @@ use std::{
 };
 
 use ansi_term::Colour::Green;
+use chrono::{TimeZone, Utc};
 use firm_types::{
     auth::RemoteAccessRequest,
     functions::{
@@ -58,12 +59,14 @@ impl<'a, U> DisplayExt<'a, U> for U {
     }
 }
 
+#[macro_export]
 macro_rules! warn {
     ($($args:tt)*) => {
         ansi_term::Color::Yellow.paint(format!($($args)*))
     };
 }
 
+#[macro_export]
 macro_rules! error {
     ($($args:tt)*) => {
         ansi_term::Color::Red.paint(format!($($args)*))
@@ -291,12 +294,15 @@ impl Display for Displayer<'_, RemoteAccessRequest> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(
             f,
-            "{:40}{:16}{}",
+            "{:<40}{:<22}{:^10}{}",
             self.id
                 .as_ref()
                 .map(|id| id.uuid.as_str())
                 .unwrap_or("missing id"),
-            self.expires_at,
+            Utc.timestamp(self.expires_at as i64, 0)
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S"),
+            if self.approved { "yes" } else { "no" },
             self.subject
         )
     }
@@ -305,8 +311,12 @@ impl Display for Displayer<'_, RemoteAccessRequest> {
 // impl display of listed auth requests
 impl Display for Displayer<'_, &[RemoteAccessRequest]> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "{:40}{:16}subject", "id", "expires at")?;
-        writeln!(f, "{}", "-".repeat(70))?;
+        writeln!(
+            f,
+            "{:<40}{:<22}{:<10}subject",
+            "id", "expires at", "approved"
+        )?;
+        writeln!(f, "{:-<80}", "")?;
         self.iter().try_for_each(|r| write!(f, "{}", r.display()))
     }
 }

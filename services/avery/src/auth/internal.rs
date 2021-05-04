@@ -371,7 +371,7 @@ impl TokenGenerator {
         let now = chrono::Utc::now().timestamp() as u64;
 
         let claims = StandardClaims {
-            sub,
+            sub: sub.clone(),
             exp: match expires {
                 TokenExpiry::ExpiresIn(ein) => now + ein,
                 TokenExpiry::ExpiresAt(eat) => eat,
@@ -382,7 +382,7 @@ impl TokenGenerator {
         };
 
         let mut header = Header::new(Algorithm::ES256);
-        header.kid = Some(audience.clone()); //Key id is not _really_ the audience but that's how we use it
+        header.kid = Some(sub); //Key id is not _really_ the subject but that's how we use it
 
         Ok(JwtToken {
             token: jsonwebtoken::encode(&header, &claims, &self.private_key)
