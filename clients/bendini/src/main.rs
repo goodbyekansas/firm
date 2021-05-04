@@ -1,7 +1,7 @@
-mod commands;
-mod error;
 #[macro_use]
 mod formatting;
+mod commands;
+mod error;
 mod manifest;
 
 use std::{fmt::Display, ops::Deref, path::PathBuf, str::FromStr};
@@ -161,14 +161,12 @@ enum AuthCommand {
     /// Approve incoming remote access request
     Approve {
         /// The id of the remote request to approve
-        #[structopt(short, long, default_value)]
         id: String,
     },
 
     /// Decline incoming remote access request
     Decline {
         /// The id of the remote request to decline
-        #[structopt(short, long, default_value)]
         id: String,
     },
 }
@@ -313,15 +311,16 @@ async fn run() -> Result<(), error::BendiniError> {
                 scope: endpoint
                     .uri()
                     .authority()
-                    .map(|a| a.to_string())
+                    .and_then(|a| match a.port() {
+                        Some(_) => a.as_str().rsplitn(2, ':').nth(1),
+                        None => Some(a.as_str()),
+                    })
+                    .map(|s| s.to_owned())
                     .unwrap_or_else(|| "localhost".to_owned()),
             }))
             .await
         {
-            Ok(token) => {
-                let token = token.into_inner();
-                (!token.token.is_empty()).then(|| token.token)
-            }
+            Ok(token) => Some(token.into_inner().token),
             Err(e) => {
                 println!(
                     "{} 🤞",

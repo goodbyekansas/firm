@@ -1,0 +1,25 @@
+[package]
+name = "lomax"
+version = "0.1.0"
+authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
+edition = "2018"
+
+[dependencies]
+config = "0.11.0"
+futures = "0.3.14"
+hostname = "0.3.1"
+http = "0.2.4"
+hyper = { version = "0.14.7", features = ["full"] }
+serde = { version = "1.0.125", features = ["derive"] }
+slog = "2.7.0"
+slog-async = "2.6.0"
+slog-term = "2.8.0"
+structopt = "0.3.21"
+tokio = { version = "=1.4.0", features = ["rt-multi-thread", "macros", "signal"] }
+tower = "0.4.7"
+firm-types = { version = "0.1", registry = "nix" }
+jsonwebtoken = "7.2.0"
+
+# our own version of tokio 1.4.0 with named pipes
+[patch.crates-io]
+tokio = {  git = "https://github.com/goodbyekansas/tokio.git", branch="named-pipes-1.4.0" }

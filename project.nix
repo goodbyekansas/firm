@@ -58,6 +58,14 @@ nedryland.mkProject {
           defaultTarget = "x86_64-pc-windows-gnu";
         }) ./clients/bendini
         { };
+
+      lomax = callFunction
+        ({ pkgsCross }: lomax.override {
+          stdenv = pkgsCross.mingwW64.stdenv;
+          targets = [ "x86_64-pc-windows-gnu" ];
+          defaultTarget = "x86_64-pc-windows-gnu";
+        }) ./services/lomax
+        { };
     };
 
     averyWithRuntimes = callFile ./services/avery/avery-with-runtimes.nix { };
@@ -81,6 +89,10 @@ nedryland.mkProject {
     };
 
     quinn = callFile ./services/quinn/quinn.nix {
+      types = firmTypes.rust.withServices;
+    };
+
+    lomax = callFile ./services/lomax/lomax.nix {
       types = firmTypes.rust.withServices;
     };
 
