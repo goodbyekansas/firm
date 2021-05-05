@@ -24,7 +24,7 @@ use firm_types::{
 use futures::{channel::mpsc::Receiver, channel::mpsc::Sender, TryFutureExt};
 use rayon::ThreadPool;
 use sha2::{Digest, Sha256};
-use slog::{debug, Logger};
+use slog::{debug, info, Logger};
 use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
@@ -32,6 +32,7 @@ use uuid::Uuid;
 use crate::{
     auth::AuthService,
     auth::AuthenticationSource,
+    runtime::FunctionDirectory,
     runtime::{Runtime, RuntimeParameters, RuntimeSource},
 };
 
@@ -237,83 +238,90 @@ impl ExecutionServiceTrait for ExecutionService {
                 ))
             })?;
 
+        info!(self.logger, "Executing function with id {}", &id.uuid);
+
         let runtime_spec = queued_function.function.runtime.clone().ok_or_else(|| {
             tonic::Status::internal(
                 "Function descriptor did not contain any runtime specification.",
             )
         })?;
 
-        let function_dir = self.root_dir.join(format!(
-            "{name}-{version}{checksum}",
-            name = &queued_function.function.name,
-            version = &queued_function.function.version,
-            checksum = &queued_function
+        let execution_dir = FunctionDirectory::new(
+            &self.root_dir,
+            &queued_function.function.name,
+            &queued_function.function.version,
+            &queued_function
                 .function
                 .code
                 .as_ref()
                 .and_then(|cs| cs.checksums.as_ref())
-                .map(|cs| format!("-{}", &cs.sha256[..16]))
-                .unwrap_or_default()
-        ));
-
-        if !function_dir.exists() {
-            std::fs::create_dir(&function_dir).map_err(|ioe| {
-                tonic::Status::internal(format!("Failed to create function directory: {}", ioe))
-            })?;
-        }
-
-        let execution_dir = function_dir.join(&id.uuid);
-        std::fs::create_dir(&execution_dir).map_err(|ioe| {
+                .map(|cs| &cs.sha256[..16])
+                .unwrap_or("no-code"),
+            &uuid.to_string(),
+        )
+        .map_err(|ioe| {
             tonic::Status::internal(format!(
                 "Failed to create function execution directory: {}",
                 ioe
             ))
         })?;
 
-        self.lookup_runtime(&runtime_spec.name)
-            .await
+        let runtime_name = runtime_spec.name.clone();
+        self.lookup_runtime(&runtime_name)
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Internal,
                     format!("Failed to lookup function runtime: {}", e),
                 )
             })
-            .and_then(|runtime| {
-                let async_runtime = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|e| {
-                        tonic::Status::internal(format!(
-                            "Failed to create async runtime for function execution: {}",
-                            e
-                        ))
-                    })?;
+            .and_then(|runtime| async {
                 let auth_service = self.auth_service.clone();
                 let output_spec = queued_function.function.outputs.clone();
                 let function_name = queued_function.function.name.clone();
                 let function_name2 = function_name.clone();
+                let runtime_name = runtime_name.clone();
 
-                match self.thread_pool.scope(move |_| {
-                    runtime.execute(
-                        RuntimeParameters {
-                            function_name: function_name2,
-                            entrypoint: if runtime_spec.entrypoint.is_empty() {
-                                None
-                            } else {
-                                Some(runtime_spec.entrypoint)
-                            },
-                            code: queued_function.function.code.clone(),
-                            arguments: runtime_spec.arguments,
-                            output_sink: queued_function.output_sender.into(),
-                            root_dir: execution_dir,
-                            auth_service,
-                            async_runtime,
-                        },
-                        queued_function.arguments,
-                        queued_function.function.attachments.clone(),
-                    )
-                }) {
-                    Ok(Ok(r)) => r
+                // Use a oneshot channel to make sure to not block the tokio thread
+                // while waiting for the rayon task to finish
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                self.thread_pool.spawn(move || {
+                    let res = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|e| RuntimeError::RuntimeError {
+                            name: runtime_name,
+                            message: format!(
+                                "Failed to create async runtime for function execution: {}",
+                                e
+                            ),
+                        })
+                        .and_then(|async_runtime| {
+                            runtime.execute(
+                                RuntimeParameters {
+                                    function_name: function_name2,
+                                    entrypoint: if runtime_spec.entrypoint.is_empty() {
+                                        None
+                                    } else {
+                                        Some(runtime_spec.entrypoint)
+                                    },
+                                    code: queued_function.function.code.clone(),
+                                    arguments: runtime_spec.arguments,
+                                    output_sink: queued_function.output_sender.into(),
+                                    function_dir: execution_dir,
+                                    auth_service,
+                                    async_runtime,
+                                },
+                                queued_function.arguments,
+                                queued_function.function.attachments.clone(),
+                            )
+                        });
+
+                    // scream into the unknown...
+                    let _ = tx.send(res);
+                });
+
+                match rx.await {
+                    Ok(Ok(Ok(r))) => r
                         .validate(&output_spec, None)
                         .map(|_| {
                             tonic::Response::new(ExecutionResult {
@@ -322,29 +330,32 @@ impl ExecutionServiceTrait for ExecutionService {
                             })
                         })
                         .map_err(|e| {
-                            tonic::Status::new(
-                                tonic::Code::InvalidArgument,
-                                format!(
-                                    "Function \"{}\" generated invalid result: {}",
-                                    &function_name,
-                                    e.iter()
-                                        .map(|ae| format!("{}", ae))
-                                        .collect::<Vec<String>>()
-                                        .join(", ")
-                                ),
-                            )
+                            tonic::Status::invalid_argument(format!(
+                                r#"Function "{}" generated invalid result: {}"#,
+                                &function_name,
+                                e.iter()
+                                    .map(|ae| format!("{}", ae))
+                                    .collect::<Vec<String>>()
+                                    .join(", ")
+                            ))
                         }),
-                    Ok(Err(e)) => Ok(tonic::Response::new(ExecutionResult {
+                    Ok(Ok(Err(e))) => Ok(tonic::Response::new(ExecutionResult {
                         execution_id: Some(id),
                         result: Some(ProtoResult::Error(ExecutionError { msg: e })),
                     })),
 
-                    Err(e) => Err(tonic::Status::new(
-                        tonic::Code::Internal,
-                        format!("Failed to execute function {}: {}", &function_name, e),
-                    )),
+                    Ok(Err(e)) => Err(tonic::Status::internal(format!(
+                        r#"Failed to execute function "{}": {}"#,
+                        &function_name, e
+                    ))),
+
+                    Err(e) => Err(tonic::Status::internal(format!(
+                        r#"Panic when executing function "{}": {}"#,
+                        &function_name, e
+                    ))),
                 }
             })
+            .await
     }
 
     async fn function_output(
@@ -412,12 +423,47 @@ impl ExecutionServiceTrait for ExecutionService {
 
 #[async_trait::async_trait]
 pub trait AttachmentDownload {
+    async fn download_cached(
+        &self,
+        target_dir: &Path,
+        auth: &dyn AuthenticationSource,
+    ) -> Result<PathBuf, RuntimeError>;
     async fn download(&self, auth: &dyn AuthenticationSource) -> Result<Vec<u8>, RuntimeError>;
 }
 
 /// Download function attachment from the given URL
 #[async_trait::async_trait]
 impl AttachmentDownload for Attachment {
+    async fn download_cached(
+        &self,
+        target_dir: &Path,
+        auth: &dyn AuthenticationSource,
+    ) -> Result<PathBuf, RuntimeError> {
+        let attachment_url = self
+            .url
+            .as_ref()
+            .ok_or_else(|| RuntimeError::InvalidCodeUrl("Attachment missing url.".to_owned()))?;
+
+        let target_path = target_dir
+            .join(&(format!("{:x}", sha2::Sha256::digest(attachment_url.url.as_bytes()))[..16]));
+
+        if target_path.exists() {
+            Ok(target_path)
+        } else {
+            self.download(auth)
+                .and_then(|content| {
+                    tokio::fs::write(&target_path, content).map_err(|e| {
+                        RuntimeError::AttachmentDownloadError(
+                            attachment_url.url.clone(),
+                            format!("Failed to write attachment to cache file: {}", e),
+                        )
+                    })
+                })
+                .await
+                .map(move |_| target_path)
+        }
+    }
+
     async fn download(&self, auth: &dyn AuthenticationSource) -> Result<Vec<u8>, RuntimeError> {
         let attachment_url = self
             .url
@@ -430,14 +476,11 @@ impl AttachmentDownload for Attachment {
 
         let content = match (url.scheme(), auth_method) {
             ("file", _) => {
-                let content =
-                    // The Url parser looses information on file paths. Therefore just take
-                    // The original and skip "file://"
-                    fs::read(&attachment_url.url[7..]).map_err(|e| {
-                        RuntimeError::AttachmentReadError(attachment_url.url.to_owned(), e.to_string())
-                    })?;
-
-                Ok(content)
+                // The Url parser looses information on file paths. Therefore just take
+                // The original and skip "file://"
+                fs::read(&attachment_url.url[7..]).map_err(|e| {
+                    RuntimeError::AttachmentReadError(attachment_url.url.to_owned(), e.to_string())
+                })
             }
             ("https", Some(auth_method)) | ("http", Some(auth_method)) => {
                 let request = reqwest::Client::new().get(url.clone());

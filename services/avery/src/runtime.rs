@@ -12,6 +12,7 @@ use firm_types::{
     stream::StreamExt,
 };
 use slog::{o, Logger};
+use tokio::runtime::Runtime as TokioRuntime;
 
 use crate::{
     auth::AuthService,
@@ -20,25 +21,76 @@ use crate::{
 
 #[derive(Debug)]
 pub struct RuntimeParameters {
-    pub root_dir: PathBuf,
+    pub function_dir: FunctionDirectory,
     pub function_name: String,
     pub entrypoint: Option<String>,
     pub code: Option<Attachment>,
     pub arguments: HashMap<String, String>,
     pub output_sink: FunctionOutputSink,
     pub auth_service: AuthService,
-    pub async_runtime: tokio::runtime::Runtime,
+    pub async_runtime: TokioRuntime,
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionDirectory {
+    root_path: PathBuf,
+    attachments_path: PathBuf,
+    cache_path: PathBuf,
+    execution_path: PathBuf,
+}
+
+impl FunctionDirectory {
+    pub fn new(
+        root: &Path,
+        function_name: &str,
+        function_version: &str,
+        code_checksum: &str,
+        execution_id: &str,
+    ) -> std::io::Result<Self> {
+        let root_path = root.join(format!(
+            "{name}-{version}-{checksum}",
+            name = function_name,
+            version = function_version,
+            checksum = code_checksum
+        ));
+        let attachments_path = root_path.join("attachments");
+        let cache_path = root_path.join("cache");
+        let execution_path = root_path.join(execution_id);
+
+        std::fs::create_dir_all(&attachments_path)?;
+        std::fs::create_dir_all(&cache_path)?;
+        std::fs::create_dir_all(&execution_path)?;
+
+        Ok(Self {
+            root_path,
+            attachments_path,
+            cache_path,
+            execution_path,
+        })
+    }
+
+    pub fn attachments_path(&self) -> &Path {
+        &self.attachments_path
+    }
+
+    pub fn execution_path(&self) -> &Path {
+        &self.execution_path
+    }
+
+    pub fn cache_path(&self) -> &Path {
+        &self.cache_path
+    }
 }
 
 impl RuntimeParameters {
-    pub fn new(function_name: &str, root_dir: &Path) -> Result<Self, String> {
+    pub fn new(function_name: &str, execution_dir: FunctionDirectory) -> Result<Self, String> {
         Ok(Self {
             function_name: function_name.to_owned(),
             entrypoint: None,
             code: None,
             arguments: HashMap::new(),
             output_sink: FunctionOutputSink::null(),
-            root_dir: root_dir.to_owned(),
+            function_dir: execution_dir,
             auth_service: AuthService::default(),
             async_runtime: tokio::runtime::Builder::new_current_thread()
                 .build()

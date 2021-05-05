@@ -11,6 +11,7 @@ use std::{
     sync::Mutex,
 };
 
+use futures::TryFutureExt;
 use output::{NamedFunctionOutputSink, Output};
 use slog::{info, o, Logger};
 
@@ -93,11 +94,16 @@ impl Runtime for WasiRuntime {
             .logger
             .new(o!("function" => runtime_parameters.function_name.to_owned()));
 
-        let sandbox = Sandbox::new(&runtime_parameters.root_dir, Path::new("sandbox"))
-            .map_err(|e| e.to_string())?;
-        let attachment_sandbox =
-            Sandbox::new(&runtime_parameters.root_dir, Path::new("attachments"))
-                .map_err(|e| e.to_string())?;
+        let sandbox = Sandbox::new(
+            &runtime_parameters.function_dir.execution_path(),
+            Path::new("sandbox"),
+        )
+        .map_err(|e| e.to_string())?;
+        let attachment_sandbox = Sandbox::new(
+            &runtime_parameters.function_dir.execution_path(),
+            Path::new("attachments"),
+        )
+        .map_err(|e| e.to_string())?;
 
         info!(
             function_logger,
@@ -109,6 +115,10 @@ impl Runtime for WasiRuntime {
             "using sandbox attachments directory: {}",
             attachment_sandbox.host_path().display()
         );
+
+        let cache_dir = runtime_parameters.function_dir.cache_path().join("wasi");
+        std::fs::create_dir_all(&cache_dir)
+            .map_err(|e| format!("Failed to create wasi cache dir: {}", e))?;
 
         let stdout = Output::new(vec![
             Box::new(
@@ -135,7 +145,7 @@ impl Runtime for WasiRuntime {
             ),
             Box::new(LineWriter::new(NamedFunctionOutputSink::new(
                 "stderr",
-                runtime_parameters.output_sink,
+                runtime_parameters.output_sink.clone(),
                 function_logger.new(o!("output-sink" => "stderr")),
             ))),
         ]);
@@ -160,6 +170,15 @@ impl Runtime for WasiRuntime {
                 })
             })
             .and_then(|state| {
+                state.preopen(|p| {
+                    p.directory(&cache_dir)
+                        .alias("cache")
+                        .read(true)
+                        .write(true)
+                        .create(true)
+                })
+            })
+            .and_then(|state| {
                 self.host_dirs
                     .iter()
                     .try_fold(state, |current_state, (alias, host_path)| {
@@ -178,6 +197,42 @@ impl Runtime for WasiRuntime {
         let results = Arc::new(Mutex::new(Stream::new()));
         let errors = Arc::new(Mutex::new(Vec::new()));
 
+        let store = Store::default();
+        let module = Module::new(
+            &store,
+            std::fs::read(runtime_parameters.async_runtime.block_on({
+                runtime_parameters
+                    .code
+                    .map(|code| {
+                        info!(
+                            function_logger,
+                            "Downloading code from \"{}\"",
+                            code.url
+                                .as_ref()
+                                .map(|url| url.url.as_str())
+                                .unwrap_or("No Url")
+                        );
+                        code
+                    })
+                    .ok_or_else(|| RuntimeError::MissingCode("wasi".to_owned()))?
+                    .download_cached(
+                        runtime_parameters.function_dir.attachments_path(),
+                        &runtime_parameters.auth_service,
+                    )
+                    .map_ok(|content| {
+                        info!(function_logger, "Done downloading code");
+                        content
+                    })
+            })?)
+            .map_err(|e| {
+                RuntimeError::AttachmentReadError(
+                    "code".to_owned(),
+                    format!("Failed to read downloaded code: {}", e),
+                )
+            })?,
+        )
+        .map_err(|e| format!("failed to compile wasm: {}", e))?;
+
         let api_state = ApiState {
             arguments: Arc::new(arguments),
             attachments: Arc::new(attachments),
@@ -190,24 +245,13 @@ impl Runtime for WasiRuntime {
             errors: errors.clone(),
             wasi_env: wasi_env.clone(),
             auth_service: runtime_parameters.auth_service.clone(),
-            async_runtime: runtime_parameters.async_runtime.handle().clone(),
+            async_runtime: Arc::new(runtime_parameters.async_runtime),
+            function_dir: runtime_parameters.function_dir.clone(),
         };
 
         let entrypoint = runtime_parameters
             .entrypoint
             .unwrap_or_else(|| String::from("_start"));
-
-        let store = Store::default();
-        let module = Module::new(
-            &store,
-            runtime_parameters.async_runtime.block_on(
-                runtime_parameters
-                    .code
-                    .ok_or_else(|| RuntimeError::MissingCode("wasi".to_owned()))?
-                    .download(&runtime_parameters.auth_service),
-            )?,
-        )
-        .map_err(|e| format!("failed to compile wasm: {}", e))?;
 
         Instance::new(
             &module,
@@ -226,9 +270,9 @@ impl Runtime for WasiRuntime {
         let results = Arc::try_unwrap(results)
             .map_err(|e| {
                 format!(
-            "Failed to get function results. There are still {} references to the results stream.",
-            Arc::strong_count(&e)
-        )
+                    "Failed to get function results. There are still {} references to the results stream.",
+                    Arc::strong_count(&e)
+                )
             })?
             .into_inner()
             .map_err(|e| format!("Failed to acquire lock for results: {}", e))?;
@@ -253,7 +297,7 @@ impl Runtime for WasiRuntime {
 
 #[cfg(test)]
 mod tests {
-    use crate::{auth::AuthService, executor::FunctionOutputSink};
+    use crate::{auth::AuthService, executor::FunctionOutputSink, runtime::FunctionDirectory};
 
     use super::*;
     use firm_types::{code_file, stream};
@@ -270,7 +314,14 @@ mod tests {
         let executor = WasiRuntime::new(null_logger!());
         let res = executor.execute(
             RuntimeParameters {
-                root_dir: tmp_fold.path().to_owned(),
+                function_dir: FunctionDirectory::new(
+                    tmp_fold.path(),
+                    "hello-world",
+                    "0.1.0",
+                    "checksumma",
+                    "abc123",
+                )
+                .unwrap(),
                 function_name: "hello-world".to_owned(),
                 entrypoint: None, // use default entrypoint _start
                 code: Some(code_file!(include_bytes!("hello.wasm"))),

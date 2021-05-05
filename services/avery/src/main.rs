@@ -95,16 +95,21 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         runtime::InternalRuntimeSource::new(log.new(o!("source" => "internal"))),
     )];
     runtime_sources.extend(directory_sources.into_iter());
-    // TODO Creating a temp directory. In the future this must be configurable.
-    let temp_root_directory = tempfile::Builder::new()
-        .prefix("avery-functions-")
-        .tempdir()?;
+
     let execution_service = ExecutionService::new(
         log.new(o!("service" => "execution")),
         Box::new(proxy_registry.clone()),
         runtime_sources,
         auth_service.clone(),
-        temp_root_directory.path(),
+        // TODO In the future root_directory must be configurable
+        &system::user_cache_path()
+            .map(|p| p.join("functions"))
+            .ok_or_else(|| "Failed to get user cache path.".to_owned())
+            .and_then(|p| {
+                std::fs::create_dir_all(&p)
+                    .map_err(|e| format!("Failed to create Avery cache directory: {}", e))
+                    .map(|_| p)
+            })?,
     )?;
 
     let (incoming, shutdown_cb) =
