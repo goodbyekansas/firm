@@ -1,5 +1,7 @@
 use std::{convert::TryFrom, io, io::Read, io::Write, str::Utf8Error, sync::Arc, sync::Mutex};
 
+use crate::auth::AuthService;
+
 use super::{output::Output, sandbox::Sandbox, WasiError};
 use firm_types::functions::{Attachment, Stream};
 use slog::Logger;
@@ -219,19 +221,23 @@ pub mod attachments {
         path_ptr: WasmPtr<u8, Array>,
         path_buffer_len: u32,
     ) -> u32 {
-        function::map_attachment(
-            &api_state.attachments,
-            &api_state.attachment_sandbox,
-            WasmString::new(WasmBuffer::new(
-                api_state.wasi_env.memory(),
-                attachment_name,
-                attachment_name_len,
-            )),
-            unpack != 0,
-            &mut WasmBuffer::new(api_state.wasi_env.memory(), path_ptr, path_buffer_len),
-            &api_state.logger,
-        )
-        .to_error_code()
+        api_state.async_runtime.block_on(async {
+            function::map_attachment(
+                &api_state.attachments,
+                &api_state.auth_service,
+                &api_state.attachment_sandbox,
+                WasmString::new(WasmBuffer::new(
+                    api_state.wasi_env.memory(),
+                    attachment_name,
+                    attachment_name_len,
+                )),
+                unpack != 0,
+                &mut WasmBuffer::new(api_state.wasi_env.memory(), path_ptr, path_buffer_len),
+                &api_state.logger,
+            )
+            .await
+            .to_error_code()
+        })
     }
 
     pub fn get_path_len_from_descriptor(
@@ -259,18 +265,22 @@ pub mod attachments {
         path_ptr: WasmPtr<u8, Array>,
         path_buffer_len: u32,
     ) -> u32 {
-        function::map_attachment_from_descriptor(
-            &api_state.attachment_sandbox,
-            WasmBuffer::new(
-                api_state.wasi_env.memory(),
-                attachment_descriptor_ptr,
-                attachment_descriptor_len,
-            ),
-            unpack != 0,
-            &mut WasmBuffer::new(api_state.wasi_env.memory(), path_ptr, path_buffer_len),
-            &api_state.logger,
-        )
-        .to_error_code()
+        api_state.async_runtime.block_on(async {
+            function::map_attachment_from_descriptor(
+                &api_state.attachment_sandbox,
+                WasmBuffer::new(
+                    api_state.wasi_env.memory(),
+                    attachment_descriptor_ptr,
+                    attachment_descriptor_len,
+                ),
+                &api_state.auth_service,
+                unpack != 0,
+                &mut WasmBuffer::new(api_state.wasi_env.memory(), path_ptr, path_buffer_len),
+                &api_state.logger,
+            )
+            .await
+            .to_error_code()
+        })
     }
 }
 
@@ -286,6 +296,8 @@ pub struct ApiState {
     pub results: Arc<Mutex<Stream>>,
     pub errors: Arc<Mutex<Vec<String>>>,
     pub wasi_env: WasiEnv,
+    pub auth_service: AuthService,
+    pub async_runtime: tokio::runtime::Handle,
 }
 
 impl WasmerEnv for ApiState {

@@ -21,14 +21,18 @@ use firm_types::{
     stream::StreamExt,
     tonic,
 };
-use futures::{channel::mpsc::Receiver, channel::mpsc::Sender};
+use futures::{channel::mpsc::Receiver, channel::mpsc::Sender, TryFutureExt};
 use sha2::{Digest, Sha256};
 use slog::{debug, Logger};
 use thiserror::Error;
 use url::Url;
 use uuid::Uuid;
 
-use crate::runtime::{Runtime, RuntimeParameters, RuntimeSource};
+use crate::{
+    auth::AuthService,
+    auth::AuthenticationSource,
+    runtime::{Runtime, RuntimeParameters, RuntimeSource},
+};
 
 #[derive(Debug, Clone)]
 pub struct FunctionOutputSink {
@@ -79,6 +83,7 @@ pub struct ExecutionService {
     runtime_sources: Arc<Vec<Box<dyn RuntimeSource>>>,
     execution_queue: Arc<Mutex<HashMap<Uuid, QueuedFunction>>>, // Death row hehurr
     root_dir: PathBuf,
+    auth_service: AuthService,
 }
 
 impl ExecutionService {
@@ -86,6 +91,7 @@ impl ExecutionService {
         log: Logger,
         registry: Box<dyn Registry>,
         runtime_sources: Vec<Box<dyn RuntimeSource>>,
+        auth_service: AuthService,
         root_dir: &Path,
     ) -> Self {
         Self {
@@ -94,6 +100,7 @@ impl ExecutionService {
             runtime_sources: Arc::new(runtime_sources),
             execution_queue: Arc::new(Mutex::new(HashMap::new())),
             root_dir: root_dir.to_owned(),
+            auth_service,
         }
     }
 
@@ -231,12 +238,11 @@ impl ExecutionServiceTrait for ExecutionService {
             )
         })?;
 
-        // TODO: Make the runtime.execute method async. This means we can remove the spawn blocking function.
-        // Right now the spawn_blocking is very neccesary in order to tell tokio it can run other things at the
-        // same time. If not it will block avery completely making it wait for the function to complete.
+        // TODO: Use Rayon to spawn runtime.execute on a thread pool, see: https://ryhl.io/blog/async-what-is-blocking/
         let output_spec = queued_function.function.outputs.clone();
         let function_name = queued_function.function.name.clone();
         let function_name2 = function_name.clone();
+        let auth_service = self.auth_service.clone();
 
         let function_dir = self.root_dir.join(format!(
             "{name}-{version}{checksum}",
@@ -265,6 +271,15 @@ impl ExecutionServiceTrait for ExecutionService {
             ))
         })?;
 
+        let async_runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .map_err(|e| {
+                tonic::Status::internal(format!(
+                    "Failed to create async runtime for function execution: {}",
+                    e
+                ))
+            })?;
+
         let execution_res = tokio::task::spawn_blocking(move || {
             runtime.execute(
                 RuntimeParameters {
@@ -278,6 +293,8 @@ impl ExecutionServiceTrait for ExecutionService {
                     arguments: runtime_spec.arguments,
                     output_sink: queued_function.output_sender.into(),
                     root_dir: execution_dir,
+                    auth_service,
+                    async_runtime,
                 },
                 queued_function.arguments,
                 queued_function.function.attachments.clone(),
@@ -383,69 +400,109 @@ impl ExecutionServiceTrait for ExecutionService {
     }
 }
 
+#[async_trait::async_trait]
 pub trait AttachmentDownload {
-    fn download(&self) -> Result<Vec<u8>, RuntimeError>;
+    async fn download(&self, auth: &dyn AuthenticationSource) -> Result<Vec<u8>, RuntimeError>;
 }
 
 /// Download function attachment from the given URL
-///
-/// TODO: This is a huge security hole ⛳️ and needs to be managed properly (gpg sign 🔏 things?)
+#[async_trait::async_trait]
 impl AttachmentDownload for Attachment {
-    fn download(&self) -> Result<Vec<u8>, RuntimeError> {
-        let url = self
+    async fn download(&self, auth: &dyn AuthenticationSource) -> Result<Vec<u8>, RuntimeError> {
+        let attachment_url = self
             .url
             .as_ref()
-            .ok_or_else(|| RuntimeError::InvalidCodeUrl("Attachment missing url.".to_owned()))
-            .and_then(|u| {
-                Url::parse(&u.url)
-                    .map_err(|e| RuntimeError::InvalidCodeUrl(e.to_string()))
-                    .map(|b| (b, AuthMethod::from_i32(u.auth_method)))
-            })?;
+            .ok_or_else(|| RuntimeError::InvalidCodeUrl("Attachment missing url.".to_owned()))?;
 
-        match (url.0.scheme(), url.1) {
+        let (url, auth_method) = Url::parse(&attachment_url.url)
+            .map_err(|e| RuntimeError::InvalidCodeUrl(e.to_string()))
+            .map(|b| (b, AuthMethod::from_i32(attachment_url.auth_method)))?;
+
+        let content = match (url.scheme(), auth_method) {
             ("file", _) => {
-                let content = self
-                    .url
-                    .as_ref()
-                    .ok_or_else(|| {
-                        RuntimeError::InvalidCodeUrl("Attachment missing url.".to_owned())
-                    })
-                    .and_then(|u| {
-                        // The Url parser looses information on file paths. Therefor just take
-                        // The original and skip "file://"
-                        fs::read(&u.url[7..]).map_err(|e| {
-                            RuntimeError::AttachmentReadError(u.url.to_owned(), e.to_string())
-                        })
-                    })?;
-
-                // TODO: this should be generalized when we
-                // have other transports (like http(s))
-                // validate integrity
-                self.checksums
-                    .as_ref()
-                    .ok_or_else(|| RuntimeError::MissingChecksums(self.name.clone()))
-                    .and_then(|checksums| {
-                        let mut hasher = Sha256::new();
-                        hasher.update(&content);
-
-                        let checksum = hasher.finalize();
-
-                        if &checksum[..] != hex::decode(checksums.sha256.clone())?.as_slice() {
-                            Err(RuntimeError::ChecksumMismatch {
-                                attachment_name: self.name.clone(),
-                                wanted: checksums.sha256.clone(),
-                                got: hex::encode(checksum),
-                            })
-                        } else {
-                            Ok(())
-                        }
+                let content =
+                    // The Url parser looses information on file paths. Therefore just take
+                    // The original and skip "file://"
+                    fs::read(&attachment_url.url[7..]).map_err(|e| {
+                        RuntimeError::AttachmentReadError(attachment_url.url.to_owned(), e.to_string())
                     })?;
 
                 Ok(content)
             }
-            // ("https", Some(auth)) => {}, // TODO: Support Oauth methods for http
+            ("https", Some(auth_method)) | ("http", Some(auth_method)) => {
+                let request = reqwest::Client::new().get(url.clone());
+
+                match auth_method {
+                    AuthMethod::None => Ok(request),
+                    AuthMethod::Oauth2 => {
+                        futures::future::ready(url.host_str().ok_or_else(|| {
+                            RuntimeError::AttachmentDownloadError(
+                                url.to_string(),
+                                "Attachment URL has no host which is needed to acquire credentials"
+                                    .to_owned(),
+                            )
+                        }))
+                        .and_then(|scope| {
+                            auth.acquire_token(scope)
+                                .map_err(|e| {
+                                    RuntimeError::AttachmentDownloadError(
+                                        url.to_string(),
+                                        format!(
+                                            "Failed to acquire credentials for attachment: {}",
+                                            e
+                                        ),
+                                    )
+                                })
+                                .map_ok(|token| request.bearer_auth(token))
+                        })
+                        .await
+                    }
+                    // TODO: Maybe not have support for thiz
+                    AuthMethod::Basic => Err(RuntimeError::UnsupportedTransport(
+                        "Basic auth is not supported when downloading attachments".to_owned(),
+                    )),
+                }?
+                .send()
+                .map_err(|e| {
+                    RuntimeError::AttachmentDownloadError(
+                        url.to_string(),
+                        format!("Transport error: {}", e),
+                    )
+                })
+                .and_then(|resp| {
+                    futures::future::ready(resp.error_for_status().map_err(|e| {
+                        RuntimeError::AttachmentDownloadError(
+                            url.to_string(),
+                            format!("HTTP error: {}", e),
+                        )
+                    }))
+                })
+                .and_then(|resp| {
+                    resp.bytes().map_err(|e| {
+                        RuntimeError::AttachmentReadError(url.to_string(), e.to_string())
+                    })
+                })
+                .await
+                .map(|bytes| bytes.to_vec())
+            }
             (s, _) => Err(RuntimeError::UnsupportedTransport(s.to_owned())),
-        }
+        }?;
+
+        self.checksums
+            .as_ref()
+            .ok_or_else(|| RuntimeError::MissingChecksums(self.name.clone()))
+            .and_then(|checksums| {
+                let checksum = Sha256::digest(&content);
+                if &checksum[..] != hex::decode(checksums.sha256.clone())?.as_slice() {
+                    Err(RuntimeError::ChecksumMismatch {
+                        attachment_name: self.name.clone(),
+                        wanted: checksums.sha256.clone(),
+                        got: hex::encode(checksum),
+                    })
+                } else {
+                    Ok(content)
+                }
+            })
     }
 }
 
@@ -474,6 +531,9 @@ pub enum RuntimeError {
 
     #[error("Invalid code url: {0}")]
     InvalidCodeUrl(String),
+
+    #[error("Failed to donwload attachment \"{0}\": {1}")]
+    AttachmentDownloadError(String, String),
 
     #[error("Failed to read code from {0}: {1}")]
     AttachmentReadError(String, String),
@@ -536,11 +596,11 @@ mod tests {
         }};
     }
 
-    #[test]
-    fn test_download() {
+    #[tokio::test]
+    async fn test_download() {
         // non-existent file
         let attachment = attachment!("file:///this-file-does-not-exist");
-        let r = attachment.download();
+        let r = attachment.download(&AuthService::default()).await;
         assert!(r.is_err());
         assert!(matches!(
             r.unwrap_err(),
@@ -549,13 +609,13 @@ mod tests {
 
         // invalid url
         let attachment = attachment!("this-is-not-url");
-        let r = attachment.download();
+        let r = attachment.download(&AuthService::default()).await;
         assert!(r.is_err());
         assert!(matches!(r.unwrap_err(), RuntimeError::InvalidCodeUrl(..)));
 
         // unsupported scheme
         let attachment = attachment!("unsupported://that-scheme.fabrikam.com");
-        let r = attachment.download();
+        let r = attachment.download(&AuthService::default()).await;
         assert!(r.is_err());
         assert!(matches!(
             r.unwrap_err(),
@@ -565,9 +625,33 @@ mod tests {
         // actual file
         let s = "some data 🖥️";
         let attachment = attachment_file!(s.as_bytes(), "somename");
-        let r = attachment.download();
+        let r = attachment.download(&AuthService::default()).await;
         assert!(r.is_ok());
         assert_eq!(s.as_bytes(), r.unwrap().as_slice());
+
+        // HTTP
+        let data = b"datadatadatdatadatadadt";
+        let checksum = format!("{:x}", sha2::Sha256::digest(data));
+        let attachment = attachment!(mockito::server_url(), "name", &checksum);
+        let mock = mockito::mock("GET", "/").with_body(data).create();
+        let r = attachment.download(&AuthService::default()).await;
+        assert!(r.is_ok());
+        assert_eq!(
+            r.unwrap(),
+            data,
+            "The downloaded data should be the initial data"
+        );
+        assert!(mock.matched(), "The server must have been called");
+
+        // HTTP with bad checksum
+        let data = "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+        let mock = mockito::mock("GET", "/").with_body(data).create();
+        let r = attachment.download(&AuthService::default()).await;
+        assert!(mock.matched());
+        assert!(
+            matches!(r, Err(RuntimeError::ChecksumMismatch { .. })),
+            "Mismatching checksum must return an error"
+        );
     }
 
     #[test]
@@ -581,6 +665,7 @@ mod tests {
             vec![Box::new(runtime::InternalRuntimeSource::new(
                 null_logger!(),
             ))],
+            AuthService::default(),
             root_dir.path(),
         );
 
@@ -607,6 +692,7 @@ mod tests {
             vec![Box::new(runtime::InternalRuntimeSource::new(
                 null_logger!(),
             ))],
+            AuthService::default(),
             root_dir.path(),
         );
 

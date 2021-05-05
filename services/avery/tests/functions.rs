@@ -4,7 +4,8 @@ use futures::StreamExt;
 use slog::o;
 
 use avery::{
-    config::InternalRegistryConfig, executor::ExecutionService, registry::RegistryService,
+    auth::AuthService, config::InternalRegistryConfig, executor::ExecutionService,
+    registry::RegistryService,
 };
 
 use firm_types::{
@@ -90,6 +91,7 @@ macro_rules! register_functions {
                 vec![Box::new(avery::runtime::InternalRuntimeSource::new(
                     null_logger!(),
                 ))],
+                AuthService::default(),
                 temp_root_directory.path(),
             ),
             temp_root_directory,

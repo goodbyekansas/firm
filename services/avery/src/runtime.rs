@@ -13,7 +13,10 @@ use firm_types::{
 };
 use slog::{o, Logger};
 
-use crate::executor::{FunctionOutputSink, RuntimeError};
+use crate::{
+    auth::AuthService,
+    executor::{FunctionOutputSink, RuntimeError},
+};
 
 #[derive(Debug)]
 pub struct RuntimeParameters {
@@ -23,18 +26,24 @@ pub struct RuntimeParameters {
     pub code: Option<Attachment>,
     pub arguments: HashMap<String, String>,
     pub output_sink: FunctionOutputSink,
+    pub auth_service: AuthService,
+    pub async_runtime: tokio::runtime::Runtime,
 }
 
 impl RuntimeParameters {
-    pub fn new(function_name: &str, root_dir: &Path) -> Self {
-        Self {
+    pub fn new(function_name: &str, root_dir: &Path) -> Result<Self, String> {
+        Ok(Self {
             function_name: function_name.to_owned(),
             entrypoint: None,
             code: None,
             arguments: HashMap::new(),
             output_sink: FunctionOutputSink::null(),
             root_dir: root_dir.to_owned(),
-        }
+            auth_service: AuthService::default(),
+            async_runtime: tokio::runtime::Builder::new_current_thread()
+                .build()
+                .map_err(|e| e.to_string())?,
+        })
     }
 
     pub fn entrypoint(mut self, entrypoint: &str) -> Self {
@@ -54,6 +63,11 @@ impl RuntimeParameters {
 
     pub fn output_sink(mut self, output_sink: FunctionOutputSink) -> Self {
         self.output_sink = output_sink;
+        self
+    }
+
+    pub fn auth_service(mut self, auth_service: AuthService) -> Self {
+        self.auth_service = auth_service;
         self
     }
 }
