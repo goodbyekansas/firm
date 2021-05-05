@@ -105,7 +105,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         runtime_sources,
         auth_service.clone(),
         temp_root_directory.path(),
-    );
+    )?;
 
     let (incoming, shutdown_cb) =
         system::create_listener(log.new(o!("scope" => "listener"))).await?;

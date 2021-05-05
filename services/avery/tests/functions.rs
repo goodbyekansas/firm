@@ -93,7 +93,8 @@ macro_rules! register_functions {
                 ))],
                 AuthService::default(),
                 temp_root_directory.path(),
-            ),
+            )
+            .unwrap(),
             temp_root_directory,
         )
     }};
