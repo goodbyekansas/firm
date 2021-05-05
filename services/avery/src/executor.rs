@@ -22,6 +22,7 @@ use firm_types::{
     tonic,
 };
 use futures::{channel::mpsc::Receiver, channel::mpsc::Sender, TryFutureExt};
+use rayon::ThreadPool;
 use sha2::{Digest, Sha256};
 use slog::{debug, Logger};
 use thiserror::Error;
@@ -84,6 +85,7 @@ pub struct ExecutionService {
     execution_queue: Arc<Mutex<HashMap<Uuid, QueuedFunction>>>, // Death row hehurr
     root_dir: PathBuf,
     auth_service: AuthService,
+    thread_pool: Arc<ThreadPool>,
 }
 
 impl ExecutionService {
@@ -93,15 +95,27 @@ impl ExecutionService {
         runtime_sources: Vec<Box<dyn RuntimeSource>>,
         auth_service: AuthService,
         root_dir: &Path,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        Ok(Self {
             logger: log,
             registry: Arc::new(registry),
             runtime_sources: Arc::new(runtime_sources),
             execution_queue: Arc::new(Mutex::new(HashMap::new())),
             root_dir: root_dir.to_owned(),
             auth_service,
-        }
+            thread_pool: Arc::new(
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(num_cpus::get())
+                    .thread_name(|tid| format!("function-execution-thread-{}", tid))
+                    .build()
+                    .map_err(|e| {
+                        format!(
+                            "Failed to create function execution thread pool: {}",
+                            e.to_string()
+                        )
+                    })?,
+            ),
+        })
     }
 
     /// Lookup a runtime for the given `runtime_name`
@@ -229,24 +243,9 @@ impl ExecutionServiceTrait for ExecutionService {
             )
         })?;
 
-        // TODO: Can combine this with runtime.execute as a long chain once
-        // runtime.execute is async.
-        let runtime = self.lookup_runtime(&runtime_spec.name).await.map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("Failed to lookup function runtime: {}", e),
-            )
-        })?;
-
-        // TODO: Use Rayon to spawn runtime.execute on a thread pool, see: https://ryhl.io/blog/async-what-is-blocking/
-        let output_spec = queued_function.function.outputs.clone();
-        let function_name = queued_function.function.name.clone();
-        let function_name2 = function_name.clone();
-        let auth_service = self.auth_service.clone();
-
         let function_dir = self.root_dir.join(format!(
             "{name}-{version}{checksum}",
-            name = &function_name,
+            name = &queued_function.function.name,
             version = &queued_function.function.version,
             checksum = &queued_function
                 .function
@@ -271,70 +270,81 @@ impl ExecutionServiceTrait for ExecutionService {
             ))
         })?;
 
-        let async_runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
+        self.lookup_runtime(&runtime_spec.name)
+            .await
             .map_err(|e| {
-                tonic::Status::internal(format!(
-                    "Failed to create async runtime for function execution: {}",
-                    e
-                ))
-            })?;
+                tonic::Status::new(
+                    tonic::Code::Internal,
+                    format!("Failed to lookup function runtime: {}", e),
+                )
+            })
+            .and_then(|runtime| {
+                let async_runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| {
+                        tonic::Status::internal(format!(
+                            "Failed to create async runtime for function execution: {}",
+                            e
+                        ))
+                    })?;
+                let auth_service = self.auth_service.clone();
+                let output_spec = queued_function.function.outputs.clone();
+                let function_name = queued_function.function.name.clone();
+                let function_name2 = function_name.clone();
 
-        let execution_res = tokio::task::spawn_blocking(move || {
-            runtime.execute(
-                RuntimeParameters {
-                    function_name: function_name2,
-                    entrypoint: if runtime_spec.entrypoint.is_empty() {
-                        None
-                    } else {
-                        Some(runtime_spec.entrypoint)
-                    },
-                    code: queued_function.function.code.clone(),
-                    arguments: runtime_spec.arguments,
-                    output_sink: queued_function.output_sender.into(),
-                    root_dir: execution_dir,
-                    auth_service,
-                    async_runtime,
-                },
-                queued_function.arguments,
-                queued_function.function.attachments.clone(),
-            )
-        })
-        .await
-        .map_err(|e| tonic::Status::internal(format!("Failed to wait for execution: {}", e)))?;
-
-        match execution_res {
-            Ok(Ok(r)) => r
-                .validate(&output_spec, None)
-                .map(|_| {
-                    tonic::Response::new(ExecutionResult {
-                        execution_id: Some(id),
-                        result: Some(ProtoResult::Ok(r)),
-                    })
-                })
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::InvalidArgument,
-                        format!(
-                            "Function \"{}\" generated invalid result: {}",
-                            &function_name,
-                            e.iter()
-                                .map(|ae| format!("{}", ae))
-                                .collect::<Vec<String>>()
-                                .join(", ")
-                        ),
+                match self.thread_pool.scope(move |_| {
+                    runtime.execute(
+                        RuntimeParameters {
+                            function_name: function_name2,
+                            entrypoint: if runtime_spec.entrypoint.is_empty() {
+                                None
+                            } else {
+                                Some(runtime_spec.entrypoint)
+                            },
+                            code: queued_function.function.code.clone(),
+                            arguments: runtime_spec.arguments,
+                            output_sink: queued_function.output_sender.into(),
+                            root_dir: execution_dir,
+                            auth_service,
+                            async_runtime,
+                        },
+                        queued_function.arguments,
+                        queued_function.function.attachments.clone(),
                     )
-                }),
-            Ok(Err(e)) => Ok(tonic::Response::new(ExecutionResult {
-                execution_id: Some(id),
-                result: Some(ProtoResult::Error(ExecutionError { msg: e })),
-            })),
+                }) {
+                    Ok(Ok(r)) => r
+                        .validate(&output_spec, None)
+                        .map(|_| {
+                            tonic::Response::new(ExecutionResult {
+                                execution_id: Some(id),
+                                result: Some(ProtoResult::Ok(r)),
+                            })
+                        })
+                        .map_err(|e| {
+                            tonic::Status::new(
+                                tonic::Code::InvalidArgument,
+                                format!(
+                                    "Function \"{}\" generated invalid result: {}",
+                                    &function_name,
+                                    e.iter()
+                                        .map(|ae| format!("{}", ae))
+                                        .collect::<Vec<String>>()
+                                        .join(", ")
+                                ),
+                            )
+                        }),
+                    Ok(Err(e)) => Ok(tonic::Response::new(ExecutionResult {
+                        execution_id: Some(id),
+                        result: Some(ProtoResult::Error(ExecutionError { msg: e })),
+                    })),
 
-            Err(e) => Err(tonic::Status::new(
-                tonic::Code::Internal,
-                format!("Failed to execute function {}: {}", &function_name, e),
-            )),
-        }
+                    Err(e) => Err(tonic::Status::new(
+                        tonic::Code::Internal,
+                        format!("Failed to execute function {}: {}", &function_name, e),
+                    )),
+                }
+            })
     }
 
     async fn function_output(
@@ -667,7 +677,8 @@ mod tests {
             ))],
             AuthService::default(),
             root_dir.path(),
-        );
+        )
+        .unwrap();
 
         let res = futures::executor::block_on(execution_service.lookup_runtime("wasi"));
         assert!(res.is_ok());
@@ -694,7 +705,8 @@ mod tests {
             ))],
             AuthService::default(),
             root_dir.path(),
-        );
+        )
+        .unwrap();
 
         let res = futures::executor::block_on(execution_service.list_runtimes(
             tonic::Request::new(RuntimeFilters {
