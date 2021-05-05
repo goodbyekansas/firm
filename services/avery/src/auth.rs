@@ -117,11 +117,17 @@ impl TokenStore {
                 );
                 e.into_mut()
             }
-            std::collections::hash_map::Entry::Vacant(e) => e.insert(
-                self.token_providers
-                    .get_token(scope_mappings, scope)
-                    .await?,
-            ),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                debug!(
+                    logger,
+                    "Found no cached token for scope \"{}\", acquiring new token...", scope
+                );
+                e.insert(
+                    self.token_providers
+                        .get_token(scope_mappings, scope)
+                        .await?,
+                )
+            }
         }
         .as_mut()
         // always do refresh, the refresh methods of the providers
@@ -155,11 +161,20 @@ impl Drop for TokenCache {
                         })
                 })
                 .and_then(|file| {
-                    serde_json::to_writer(std::io::BufWriter::new(file), &self.tokens).map_err(
-                        |e| -> Box<dyn FnOnce(&Logger)> {
-                            Box::new(move |logger: &Logger| warn!(logger, "{}", e))
-                        },
+                    serde_json::to_writer(
+                        std::io::BufWriter::new(file),
+                        &self
+                            .tokens
+                            .iter()
+                            .filter(|(_, v)| match v {
+                                TypedToken::Oidc(_) => true,
+                                TypedToken::Internal(_) => false,
+                            })
+                            .collect::<HashMap<&String, &TypedToken>>(),
                     )
+                    .map_err(|e| -> Box<dyn FnOnce(&Logger)> {
+                        Box::new(move |logger: &Logger| warn!(logger, "{}", e))
+                    })
                 })
             {
                 e(&self.logger);
@@ -227,20 +242,26 @@ impl TokenCache {
         }
     }
 
-    fn get(&mut self, key: &str) -> Option<&mut TypedToken> {
-        let empty = vec![key.to_owned()];
-        self.tokens.get_mut(
-            match self.scope_aliases.get(key) {
-                Some(strings) => strings,
-                None => empty.as_slice(),
-            }
-            .iter()
-            .find(|key| self.tokens.contains_key(*key))?,
-        )
+    fn alias(&self, scope: &str) -> Option<String> {
+        match self.scope_aliases.get(scope) {
+            Some(strings) => strings
+                .iter()
+                .find(|key| self.tokens.contains_key(*key))
+                .map(|s| s.to_owned()),
+            None => Some(scope.to_owned()),
+        }
+    }
+
+    fn get(&mut self, scope: &str) -> Option<&mut TypedToken> {
+        self.alias(scope)
+            .and_then(move |alias| self.tokens.get_mut(&alias))
     }
 
     fn entry(&mut self, scope: &str) -> std::collections::hash_map::Entry<String, TypedToken> {
-        self.tokens.entry(scope.to_owned())
+        match self.alias(scope) {
+            Some(alias) => self.tokens.entry(alias),
+            None => self.tokens.entry(scope.to_owned()),
+        }
     }
 
     fn get_as_token(&mut self, key: &str) -> Option<&mut dyn Token> {
