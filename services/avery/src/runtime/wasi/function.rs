@@ -13,7 +13,7 @@ use super::{
     error::{WasiError, WasiResult},
     sandbox::Sandbox,
 };
-use crate::executor::AttachmentDownload;
+use crate::{auth::AuthenticationSource, executor::AttachmentDownload};
 use firm_types::{
     functions::{Attachment, Channel, Stream},
     stream::StreamExt,
@@ -33,15 +33,17 @@ fn native_attachment_path_from_descriptor(
     sandbox.host_path().join(&attachment_data.name)
 }
 
-fn download_and_map_at(
+async fn download_and_map_at(
     attachment_data: &Attachment,
+    auth: &dyn AuthenticationSource,
     path: &Path,
     unpack: bool,
     logger: &Logger,
 ) -> WasiResult<()> {
     if !path.exists() {
         attachment_data
-            .download()
+            .download(auth)
+            .await
             .map_err(|e| {
                 WasiError::FailedToMapAttachment(attachment_data.name.to_owned(), Box::new(e))
             })
@@ -100,8 +102,9 @@ pub fn get_attachment_path_len(
     )
 }
 
-pub fn map_attachment(
+pub async fn map_attachment(
     attachments: &[Attachment],
+    auth: &dyn AuthenticationSource,
     sandbox: &Sandbox,
     attachment_name: WasmString,
     unpack: bool,
@@ -119,10 +122,12 @@ pub fn map_attachment(
 
     download_and_map_at(
         &attachment_data,
+        auth,
         &native_attachment_path_from_descriptor(&attachment_data, &sandbox),
         unpack,
         logger,
-    )?;
+    )
+    .await?;
 
     path_buffer
         .write(&wasi_attachment_path_from_descriptor(&attachment_data).as_bytes())
@@ -140,9 +145,10 @@ pub fn get_attachment_path_len_from_descriptor(
     path_len.set(wasi_attachment_path_from_descriptor(&fa).as_bytes().len() as u32)
 }
 
-pub fn map_attachment_from_descriptor(
+pub async fn map_attachment_from_descriptor(
     sandbox: &Sandbox,
     attachment_descriptor: WasmBuffer,
+    auth: &dyn AuthenticationSource,
     unpack: bool,
     path_buffer: &mut WasmBuffer,
     logger: &Logger,
@@ -152,10 +158,12 @@ pub fn map_attachment_from_descriptor(
 
     download_and_map_at(
         &fa,
+        auth,
         &native_attachment_path_from_descriptor(&fa, &sandbox),
         unpack,
         logger,
-    )?;
+    )
+    .await?;
 
     path_buffer
         .write(&wasi_attachment_path_from_descriptor(&fa).as_bytes())
@@ -212,6 +220,8 @@ pub fn set_error(msg: WasmString) -> WasiResult<String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::auth::AuthService;
+
     use super::*;
 
     use std::convert::TryFrom;
@@ -401,8 +411,8 @@ mod tests {
         assert_eq!(expected_stream, res.unwrap());
     }
 
-    #[test]
-    fn test_map_attachment() {
+    #[tokio::test]
+    async fn test_map_attachment() {
         let file = Builder::new()
             .prefix("my-temporary-note")
             .suffix(".txt")
@@ -428,12 +438,14 @@ mod tests {
         // Test that we get the expected file path
         let res = map_attachment(
             &attachments,
+            &AuthService::default(),
             &sandbox,
             attachment_name,
             false,
             &mut out_path,
             &null_logger!(),
-        );
+        )
+        .await;
         assert!(res.is_ok());
         assert_eq!(
             String::try_from(WasmString::new(out_path)).unwrap(),
@@ -444,12 +456,14 @@ mod tests {
         let mem = create_mem!();
         let res = map_attachment(
             &attachments,
+            &AuthService::default(),
             &sandbox,
             wasm_string!(&mem, 0, "i-am-not-here"),
             false,
             &mut out_buffer!(&mem, 0, 0u32), // no point in having a valid buffer here
             &null_logger!(),
-        );
+        )
+        .await;
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),
@@ -467,12 +481,14 @@ mod tests {
 
         let res = map_attachment(
             &attachments,
+            &AuthService::default(),
             &sandbox,
             wasm_string!(&mem, 0, "sune"),
             false,
             &mut out_buffer!(&mem, 0, 0u32), // no point in having a valid buffer here
             &null_logger!(),
-        );
+        )
+        .await;
         assert!(res.is_err());
         assert!(matches!(
             res.unwrap_err(),

@@ -103,6 +103,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         log.new(o!("service" => "execution")),
         Box::new(proxy_registry.clone()),
         runtime_sources,
+        auth_service.clone(),
         temp_root_directory.path(),
     );
 

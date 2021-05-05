@@ -189,6 +189,8 @@ impl Runtime for WasiRuntime {
             results: results.clone(),
             errors: errors.clone(),
             wasi_env: wasi_env.clone(),
+            auth_service: runtime_parameters.auth_service.clone(),
+            async_runtime: runtime_parameters.async_runtime.handle().clone(),
         };
 
         let entrypoint = runtime_parameters
@@ -198,10 +200,12 @@ impl Runtime for WasiRuntime {
         let store = Store::default();
         let module = Module::new(
             &store,
-            runtime_parameters
-                .code
-                .ok_or_else(|| RuntimeError::MissingCode("wasi".to_owned()))?
-                .download()?,
+            runtime_parameters.async_runtime.block_on(
+                runtime_parameters
+                    .code
+                    .ok_or_else(|| RuntimeError::MissingCode("wasi".to_owned()))?
+                    .download(&runtime_parameters.auth_service),
+            )?,
         )
         .map_err(|e| format!("failed to compile wasm: {}", e))?;
 
@@ -249,7 +253,7 @@ impl Runtime for WasiRuntime {
 
 #[cfg(test)]
 mod tests {
-    use crate::executor::FunctionOutputSink;
+    use crate::{auth::AuthService, executor::FunctionOutputSink};
 
     use super::*;
     use firm_types::{code_file, stream};
@@ -272,6 +276,10 @@ mod tests {
                 code: Some(code_file!(include_bytes!("hello.wasm"))),
                 arguments: std::collections::HashMap::new(),
                 output_sink: FunctionOutputSink::null(),
+                auth_service: AuthService::default(),
+                async_runtime: tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap(),
             },
             stream!(),
             vec![],

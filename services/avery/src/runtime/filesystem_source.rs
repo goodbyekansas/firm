@@ -131,6 +131,8 @@ impl Runtime for NestedWasiRuntime {
                 }),
                 arguments: HashMap::new(), // files on disk can not have arguments
                 root_dir: runtime_parameters.root_dir,
+                auth_service: runtime_parameters.auth_service,
+                async_runtime: runtime_parameters.async_runtime,
             },
             function_arguments,
             function_attachments,
@@ -365,7 +367,7 @@ mod tests {
         ($name:expr) => {{
             let temp_root_dir = tempfile::TempDir::new().unwrap();
             RuntimeParametersWrapper::new(
-                RuntimeParameters::new($name, temp_root_dir.path()),
+                RuntimeParameters::new($name, temp_root_dir.path()).unwrap(),
                 temp_root_dir,
             )
         }};

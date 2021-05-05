@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     collections::HashSet,
+    fmt::Debug,
     hash::Hash,
     hash::Hasher,
     path::{Path, PathBuf},
@@ -56,6 +57,12 @@ pub struct AuthService {
     pending_access_requests: ExpireMap<uuid::Uuid, PendingAccessRequest>,
 }
 
+impl Debug for AuthService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Auth service: {:?}", self.token_store)
+    }
+}
+
 impl Default for AuthService {
     fn default() -> Self {
         Self {
@@ -66,6 +73,23 @@ impl Default for AuthService {
             access_list: ExpireMap::default(),
             pending_access_requests: ExpireMap::default(),
         }
+    }
+}
+
+#[async_trait::async_trait]
+pub trait AuthenticationSource: Send + Sync {
+    async fn acquire_token(&self, scope: &str) -> Result<String, String>;
+}
+
+#[async_trait::async_trait]
+impl AuthenticationSource for AuthService {
+    async fn acquire_token(&self, scope: &str) -> Result<String, String> {
+        self.token_store
+            .write()
+            .await
+            .acquire_token(scope, &self.scope_mappings, &self.logger)
+            .await
+            .map(|t| t.token().to_owned())
     }
 }
 
