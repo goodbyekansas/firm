@@ -476,7 +476,7 @@ impl AttachmentDownload for Attachment {
 
         let content = match (url.scheme(), auth_method) {
             ("file", _) => {
-                // The Url parser looses information on file paths. Therefore just take
+                // The Url parser loses information on file paths. Therefore just take
                 // The original and skip "file://"
                 fs::read(&attachment_url.url[7..]).map_err(|e| {
                     RuntimeError::AttachmentReadError(attachment_url.url.to_owned(), e.to_string())
