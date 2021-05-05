@@ -12,14 +12,14 @@ pub struct Sandbox {
 
 impl Sandbox {
     pub fn new(root_dir: &Path, guest_path: &Path) -> Result<Self, WasiError> {
+        let host_path = root_dir.join(guest_path);
+
+        std::fs::create_dir_all(&host_path).map_err(|e| {
+            WasiError::SandboxError(format!("Failed to create sandbox folder: {}", e))
+        })?;
+
         Ok(Self {
-            host_path: tempfile::Builder::new()
-                .prefix(&guest_path)
-                .tempdir_in(root_dir)
-                .map(|tmp_dir| tmp_dir.into_path())
-                .map_err(|e| {
-                    WasiError::SandboxError(format!("Failed to create sandbox temp folder: {}", e))
-                })?,
+            host_path,
             regex: Regex::new(&format!(r#"(^|[=\s;:"]){}(\b)"#, guest_path.display())).map_err(
                 |e| WasiError::SandboxError(format!("Failed to create regex for sandbox: {}", e)),
             )?,

@@ -130,7 +130,7 @@ impl Runtime for NestedWasiRuntime {
                         .map_or(0, |timestamp| timestamp.as_secs()),
                 }),
                 arguments: HashMap::new(), // files on disk can not have arguments
-                root_dir: runtime_parameters.root_dir,
+                function_dir: runtime_parameters.function_dir,
                 auth_service: runtime_parameters.auth_service,
                 async_runtime: runtime_parameters.async_runtime,
             },
@@ -341,6 +341,8 @@ mod tests {
     use sha2::Digest;
     use tempfile::TempDir;
 
+    use crate::runtime::FunctionDirectory;
+
     struct RuntimeParametersWrapper {
         runtime_parameters: RuntimeParameters,
         _temp_root_dir: tempfile::TempDir,
@@ -367,7 +369,18 @@ mod tests {
         ($name:expr) => {{
             let temp_root_dir = tempfile::TempDir::new().unwrap();
             RuntimeParametersWrapper::new(
-                RuntimeParameters::new($name, temp_root_dir.path()).unwrap(),
+                RuntimeParameters::new(
+                    $name,
+                    FunctionDirectory::new(
+                        temp_root_dir.path(),
+                        $name,
+                        "0.1.0",
+                        "checksum",
+                        "execution-id",
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
                 temp_root_dir,
             )
         }};

@@ -1,6 +1,7 @@
 use std::{
     convert::TryInto,
-    io::{Cursor, Write},
+    fs::File,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -13,7 +14,7 @@ use super::{
     error::{WasiError, WasiResult},
     sandbox::Sandbox,
 };
-use crate::{auth::AuthenticationSource, executor::AttachmentDownload};
+use crate::{auth::AuthenticationSource, executor::AttachmentDownload, runtime::FunctionDirectory};
 use firm_types::{
     functions::{Attachment, Channel, Stream},
     stream::StreamExt,
@@ -33,21 +34,29 @@ fn native_attachment_path_from_descriptor(
     sandbox.host_path().join(&attachment_data.name)
 }
 
+pub struct DownloadAttachmentContext<'a> {
+    pub function_dir: &'a FunctionDirectory,
+    pub auth: &'a dyn AuthenticationSource,
+}
+
 async fn download_and_map_at(
     attachment_data: &Attachment,
-    auth: &dyn AuthenticationSource,
+    download_ctx: DownloadAttachmentContext<'_>,
     path: &Path,
     unpack: bool,
     logger: &Logger,
 ) -> WasiResult<()> {
     if !path.exists() {
         attachment_data
-            .download(auth)
+            .download_cached(
+                download_ctx.function_dir.attachments_path(),
+                download_ctx.auth,
+            )
             .await
             .map_err(|e| {
                 WasiError::FailedToMapAttachment(attachment_data.name.to_owned(), Box::new(e))
             })
-            .and_then(|data| {
+            .and_then(|downloaded_path| {
                 if unpack {
                     info!(
                         logger,
@@ -55,7 +64,14 @@ async fn download_and_map_at(
                         attachment_data.name,
                         path.display()
                     );
-                    let mut ar = Archive::new(GzDecoder::new(Cursor::new(data)));
+                    let mut ar = Archive::new(GzDecoder::new(
+                        File::open(downloaded_path).map_err(|e| {
+                            WasiError::FailedToUnpackAttachment(
+                                attachment_data.name.to_owned(),
+                                Box::new(e),
+                            )
+                        })?,
+                    ));
                     ar.unpack(path).map_err(|e| {
                         WasiError::FailedToUnpackAttachment(
                             attachment_data.name.to_owned(),
@@ -69,7 +85,8 @@ async fn download_and_map_at(
                         attachment_data.name,
                         path.display()
                     );
-                    std::fs::write(path, data).map_err(|e| {
+
+                    std::fs::hard_link(downloaded_path, path).map_err(|e| {
                         WasiError::FailedToMapAttachment(
                             attachment_data.name.to_owned(),
                             Box::new(e),
@@ -104,7 +121,7 @@ pub fn get_attachment_path_len(
 
 pub async fn map_attachment(
     attachments: &[Attachment],
-    auth: &dyn AuthenticationSource,
+    download_ctx: DownloadAttachmentContext<'_>,
     sandbox: &Sandbox,
     attachment_name: WasmString,
     unpack: bool,
@@ -122,7 +139,7 @@ pub async fn map_attachment(
 
     download_and_map_at(
         &attachment_data,
-        auth,
+        download_ctx,
         &native_attachment_path_from_descriptor(&attachment_data, &sandbox),
         unpack,
         logger,
@@ -148,7 +165,7 @@ pub fn get_attachment_path_len_from_descriptor(
 pub async fn map_attachment_from_descriptor(
     sandbox: &Sandbox,
     attachment_descriptor: WasmBuffer,
-    auth: &dyn AuthenticationSource,
+    download_ctx: DownloadAttachmentContext<'_>,
     unpack: bool,
     path_buffer: &mut WasmBuffer,
     logger: &Logger,
@@ -158,7 +175,7 @@ pub async fn map_attachment_from_descriptor(
 
     download_and_map_at(
         &fa,
-        auth,
+        download_ctx,
         &native_attachment_path_from_descriptor(&fa, &sandbox),
         unpack,
         logger,
@@ -262,6 +279,12 @@ mod tests {
     macro_rules! out_buffer {
         ($mem: expr, $offset: expr, $size: expr) => {{
             WasmBuffer::new($mem, WasmPtr::new($offset), $size)
+        }};
+    }
+
+    macro_rules! function_directory {
+        ($dir:expr) => {{
+            FunctionDirectory::new($dir, "function", "0.1.0", "checksum", "execution-id").unwrap()
         }};
     }
 
@@ -434,11 +457,15 @@ mod tests {
         let expected_path_bytes_len = expected_path.as_bytes().len() as u32;
 
         let mut out_path = out_buffer!(&mem, attachment_name.buffer_len(), expected_path_bytes_len);
+        let function_dir = tempfile::tempdir().unwrap();
 
         // Test that we get the expected file path
         let res = map_attachment(
             &attachments,
-            &AuthService::default(),
+            DownloadAttachmentContext {
+                function_dir: &function_directory!(function_dir.path()),
+                auth: &AuthService::default(),
+            },
             &sandbox,
             attachment_name,
             false,
@@ -456,7 +483,10 @@ mod tests {
         let mem = create_mem!();
         let res = map_attachment(
             &attachments,
-            &AuthService::default(),
+            DownloadAttachmentContext {
+                function_dir: &function_directory!(function_dir.path()),
+                auth: &AuthService::default(),
+            },
             &sandbox,
             wasm_string!(&mem, 0, "i-am-not-here"),
             false,
@@ -475,15 +505,18 @@ mod tests {
         let sandbox = Sandbox::new(tmp_dir.path(), Path::new("whatever")).unwrap();
         let attachments = vec![attachment!(
             "fule://din-mamma",
-            "sune",
+            "rune",
             "e7cab684e3eb1b7c4652c363daf2ad88406b1f0e8a079a1cdc760f92b46f9afe"
         )];
 
         let res = map_attachment(
             &attachments,
-            &AuthService::default(),
+            DownloadAttachmentContext {
+                function_dir: &function_directory!(function_dir.path()),
+                auth: &AuthService::default(),
+            },
             &sandbox,
-            wasm_string!(&mem, 0, "sune"),
+            wasm_string!(&mem, 0, "rune"),
             false,
             &mut out_buffer!(&mem, 0, 0u32), // no point in having a valid buffer here
             &null_logger!(),

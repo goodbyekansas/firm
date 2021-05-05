@@ -1,6 +1,6 @@
 use std::{convert::TryFrom, io, io::Read, io::Write, str::Utf8Error, sync::Arc, sync::Mutex};
 
-use crate::auth::AuthService;
+use crate::{auth::AuthService, runtime::FunctionDirectory};
 
 use super::{output::Output, sandbox::Sandbox, WasiError};
 use firm_types::functions::{Attachment, Stream};
@@ -224,7 +224,10 @@ pub mod attachments {
         api_state.async_runtime.block_on(async {
             function::map_attachment(
                 &api_state.attachments,
-                &api_state.auth_service,
+                function::DownloadAttachmentContext {
+                    function_dir: &api_state.function_dir,
+                    auth: &api_state.auth_service,
+                },
                 &api_state.attachment_sandbox,
                 WasmString::new(WasmBuffer::new(
                     api_state.wasi_env.memory(),
@@ -273,7 +276,10 @@ pub mod attachments {
                     attachment_descriptor_ptr,
                     attachment_descriptor_len,
                 ),
-                &api_state.auth_service,
+                function::DownloadAttachmentContext {
+                    function_dir: &api_state.function_dir,
+                    auth: &api_state.auth_service,
+                },
                 unpack != 0,
                 &mut WasmBuffer::new(api_state.wasi_env.memory(), path_ptr, path_buffer_len),
                 &api_state.logger,
@@ -297,7 +303,12 @@ pub struct ApiState {
     pub errors: Arc<Mutex<Vec<String>>>,
     pub wasi_env: WasiEnv,
     pub auth_service: AuthService,
-    pub async_runtime: tokio::runtime::Handle,
+    pub function_dir: FunctionDirectory,
+
+    // TODO: this assumes that all clones of this Arc
+    // actually ends up on the same thread, otherwise
+    // it would not actually work
+    pub async_runtime: Arc<tokio::runtime::Runtime>,
 }
 
 impl WasmerEnv for ApiState {

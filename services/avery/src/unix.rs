@@ -20,6 +20,16 @@ pub fn user() -> Option<String> {
     get_current_username().map(|x| x.to_string_lossy().to_string())
 }
 
+pub fn user_cache_path() -> Option<PathBuf> {
+    match std::env::var("XDG_CACHE_HOME").ok() {
+        Some(p) => Some(PathBuf::from(p)),
+        None => std::env::var("HOME")
+            .ok()
+            .map(|p| PathBuf::from(p).join(".cache")),
+    }
+    .map(|p| p.join("avery"))
+}
+
 pub fn user_data_path() -> Option<PathBuf> {
     match std::env::var("XDG_DATA_HOME").ok() {
         Some(p) => Some(PathBuf::from(p)),
