@@ -27,6 +27,12 @@ pub fn user() -> Option<String> {
     unsafe { get_user() }
 }
 
+pub fn user_config_path() -> Option<PathBuf> {
+    std::env::var("LOCALAPPDATA")
+        .ok()
+        .map(|p| PathBuf::from(p).join("avery").join("config"))
+}
+
 pub fn user_cache_path() -> Option<PathBuf> {
     std::env::var("LOCALAPPDATA")
         .ok()

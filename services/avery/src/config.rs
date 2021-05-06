@@ -142,13 +142,10 @@ impl Config {
         let current_folder_cfg = Path::new(DEFAULT_CFG_FILE_NAME);
         if current_folder_cfg.exists() {
             c.merge(File::from(current_folder_cfg))?;
-        } else {
-            #[cfg(unix)]
-            {
-                let etc_path = Path::new("/etc/avery").join(DEFAULT_CFG_FILE_NAME);
-                if etc_path.exists() {
-                    c.merge(File::from(etc_path))?;
-                }
+        } else if let Some(user_cfg_path) = crate::system::user_config_path() {
+            let path = user_cfg_path.join(DEFAULT_CFG_FILE_NAME);
+            if path.exists() {
+                c.merge(File::from(path))?;
             }
         }
 
