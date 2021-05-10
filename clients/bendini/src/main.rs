@@ -2,9 +2,10 @@
 mod formatting;
 mod commands;
 mod error;
+mod interactive_cert_verifier;
 mod manifest;
 
-use std::{fmt::Display, ops::Deref, path::PathBuf, str::FromStr};
+use std::{fmt::Display, ops::Deref, path::PathBuf, str::FromStr, sync::Arc};
 
 use firm_types::{
     auth::authentication_client::AuthenticationClient,
@@ -29,29 +30,53 @@ use tokio::net::NamedPipe;
 use error::BendiniError;
 
 #[cfg(unix)]
-fn get_local_socket() -> Option<String> {
-    use users::get_current_username;
-    get_current_username().map(|username| {
-        format!(
-            "unix://localhost/tmp/avery-{username}.sock",
-            username = username.to_string_lossy()
-        )
-    })
+mod system {
+    use std::path::PathBuf;
+
+    pub fn get_local_socket() -> Option<String> {
+        use users::get_current_username;
+        get_current_username().map(|username| {
+            format!(
+                "unix://localhost/tmp/avery-{username}.sock",
+                username = username.to_string_lossy()
+            )
+        })
+    }
+
+    pub fn user_data_path() -> Option<PathBuf> {
+        match std::env::var("XDG_DATA_HOME").ok() {
+            Some(p) => Some(PathBuf::from(p)),
+            None => std::env::var("HOME")
+                .ok()
+                .map(|p| PathBuf::from(p).join(".local").join("share")),
+        }
+        .map(|p| p.join("bendini"))
+    }
 }
 
 #[cfg(windows)]
-fn get_local_socket() -> Option<String> {
-    use winapi::um::winbase::GetUserNameW;
-    const CAPACITY: usize = 1024;
-    let mut size = CAPACITY as u32;
-    let mut name: [u16; CAPACITY] = [0; CAPACITY];
-    unsafe {
-        (GetUserNameW(name.as_mut_ptr(), &mut size as *mut u32) != 0).then(|| {
-            format!(
-                r#"windows://./pipe/avery-{user}"#,
-                user = String::from_utf16_lossy(&name[..(size as usize) - 1])
-            )
-        })
+mod system {
+    use std::path::PathBuf;
+
+    pub fn get_local_socket() -> Option<String> {
+        use winapi::um::winbase::GetUserNameW;
+        const CAPACITY: usize = 1024;
+        let mut size = CAPACITY as u32;
+        let mut name: [u16; CAPACITY] = [0; CAPACITY];
+        unsafe {
+            (GetUserNameW(name.as_mut_ptr(), &mut size as *mut u32) != 0).then(|| {
+                format!(
+                    r#"windows://./pipe/avery-{user}"#,
+                    user = String::from_utf16_lossy(&name[..(size as usize) - 1])
+                )
+            })
+        }
+    }
+
+    pub fn user_data_path() -> Option<PathBuf> {
+        std::env::var("LOCALAPPDATA")
+            .ok()
+            .map(|p| PathBuf::from(p).join("bendini"))
     }
 }
 
@@ -59,7 +84,7 @@ fn get_local_socket() -> Option<String> {
 struct BendiniHost(String);
 impl Default for BendiniHost {
     fn default() -> Self {
-        Self(get_local_socket().unwrap_or_default())
+        Self(system::get_local_socket().unwrap_or_default())
     }
 }
 impl ToString for BendiniHost {
@@ -254,14 +279,74 @@ async fn main() {
 async fn connect(endpoint: Endpoint) -> Result<(Channel, bool), BendiniError> {
     let uri = endpoint.uri().clone();
     match uri.scheme_str() {
-        Some("https") => match endpoint.tls_config(ClientTlsConfig::new()) {
-            Ok(endpoint_tls) => endpoint_tls.connect().await.map(|channel| (channel, true)),
-            Err(e) => Err(e),
-        },
+        Some("firm") | None => {
+            let data_path = system::user_data_path()
+                .ok_or_else(|| {
+                    BendiniError::ConnectionError(
+                        uri.to_string(),
+                        "Failed to determine user data path for saving accepted certs".to_owned(),
+                    )
+                })
+                .and_then(|p| {
+                    std::fs::create_dir_all(&p).map_err(|e| {
+                        BendiniError::ConnectionError(
+                            uri.to_string(),
+                            format!(
+                                "Failed to create user data path for saving accepted certs: {}",
+                                e
+                            ),
+                        )
+                    })?;
+                    Ok(p)
+                })?;
+
+            let mut rustls_config = rustls::ClientConfig::new();
+            rustls_config.root_store =
+                rustls_native_certs::load_native_certs().map_err(|(_, e)| {
+                    BendiniError::ConnectionError(
+                        uri.to_string(),
+                        format!("Failed to load system CA roots: {}", e),
+                    )
+                })?;
+            rustls_config.set_protocols(&["h2".as_bytes().to_vec()]);
+            rustls_config.dangerous().set_certificate_verifier(Arc::new(
+                interactive_cert_verifier::InteractiveCertVerifier::new(&data_path).map_err(
+                    |e| {
+                        BendiniError::ConnectionError(
+                            uri.to_string(),
+                            format!("Failed to create internal cert verifier: {}", e),
+                        )
+                    },
+                )?,
+            ));
+
+            // add some defaults for the firm:// protocol (is also the default one, hence None)
+            match Endpoint::from_shared(format!(
+                "https://{}{}{}",
+                uri.authority().map(|a| a.to_string()).unwrap_or_default(),
+                uri.authority()
+                    .and_then(|a| a.port())
+                    .map(|_| "") // port is already in authority
+                    .unwrap_or(":1939"),
+                uri.path_and_query()
+                    .map(|pq| pq.to_string())
+                    .unwrap_or_default(),
+            ))
+            .map_err(|e| {
+                BendiniError::ConnectionError(
+                    uri.to_string(),
+                    format!("Cannot construct firm:// URI: {}", e),
+                )
+            })?
+            .tls_config(ClientTlsConfig::new().rustls_client_config(rustls_config))
+            {
+                Ok(endpoint_tls) => endpoint_tls.connect().await.map(|channel| (channel, true)),
+                Err(e) => Err(e),
+            }
+        }
         #[cfg(unix)]
         Some("unix") => endpoint
             .connect_with_connector(service_fn(|uri: Uri| {
-                println!("using unix socket @ {}", uri.path());
                 UnixStream::connect(uri.path().to_owned())
             }))
             .await
@@ -275,12 +360,15 @@ async fn connect(endpoint: Endpoint) -> Result<(Channel, bool), BendiniError> {
                     uri.host().unwrap_or("."),
                     uri.path().replace("/", "\\")
                 );
-                println!("using named pipe @ {}", &pipe_path);
                 NamedPipe::connect(pipe_path)
             }))
             .await
             .map(|channel| (channel, false)),
-        _ => endpoint.connect().await.map(|channel| (channel, true)),
+        // always use TLS, we are not insane
+        Some(_) => match endpoint.tls_config(ClientTlsConfig::new()) {
+            Ok(endpoint_tls) => endpoint_tls.connect().await.map(|channel| (channel, true)),
+            Err(e) => Err(e),
+        },
     }
     .map_err(|e| BendiniError::ConnectionError(uri.to_string(), e.to_string()))
 }
@@ -306,6 +394,11 @@ async fn run() -> Result<(), error::BendiniError> {
         .map(AuthenticationClient::new)?;
 
     let bearer = if acquire_credentials {
+        println!(
+            "Acquiring credentials for host {} from Avery at {}...",
+            args.host.clone(),
+            args.auth_host.clone()
+        );
         match auth_client
             .acquire_token(tonic::Request::new(AcquireTokenParameters {
                 scope: endpoint
@@ -320,7 +413,10 @@ async fn run() -> Result<(), error::BendiniError> {
             }))
             .await
         {
-            Ok(token) => Some(token.into_inner().token),
+            Ok(token) => {
+                println!("Credentials acquired successfully!");
+                Some(token.into_inner().token)
+            }
             Err(e) => {
                 println!(
                     "{} 🤞",

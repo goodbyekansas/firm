@@ -1,7 +1,4 @@
-use std::{
-    convert::Infallible, net::Ipv6Addr, net::SocketAddr, net::SocketAddrV6, path::PathBuf,
-    str::FromStr, time::Duration,
-};
+use std::{convert::Infallible, path::PathBuf, str::FromStr, time::Duration};
 
 use firm_types::{
     auth::authentication_client::AuthenticationClient,
@@ -11,7 +8,7 @@ use firm_types::{
 use futures::TryFutureExt;
 use http::{Request, Response, Uri};
 use hyper::{
-    server::{conn::AddrStream, Server},
+    server::Server,
     service::{make_service_fn, service_fn},
     Body, Client,
 };
@@ -21,6 +18,7 @@ use structopt::StructOpt;
 use tonic::{body::BoxBody, transport::Endpoint};
 
 mod config;
+mod tls;
 
 #[cfg(windows)]
 mod windows;
@@ -353,25 +351,70 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         config::Config::new()
     }?;
 
-    let addr = SocketAddr::V6(SocketAddrV6::new(
-        Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0),
+    if !config.certificate_locations.key.exists() && config.create_self_signed_certificate {
+        std::fs::create_dir_all(
+            config
+                .certificate_locations
+                .key
+                .parent()
+                .ok_or("Failed to get certificate key parent directory")?,
+        )
+        .map_err(|e| format!("Failed to create certificate directory: {}", e))?;
+
+        info!(log, "Generating self signed certificate.");
+        let cert = rcgen::generate_simple_self_signed(vec![
+            hostname::get()
+                .map_err(|e| format!("Failed to get host name: {}", e))?
+                .to_string_lossy()
+                .to_string(),
+            "localhost".to_string(),
+        ])
+        .map_err(|e| format!("Failed to generate self signed certificate: {}", e))?;
+
+        let (cert, key) = cert
+            .serialize_pem()
+            .map(|pem_cert| (pem_cert, cert.serialize_private_key_pem()))
+            .map_err(|e| format!("Failed to serialize certificate: {}", e))?;
+
+        std::fs::write(&config.certificate_locations.key, key)
+            .map_err(|e| format!("Failed to write certificate key: {}", e))?;
+        std::fs::write(&config.certificate_locations.cert, cert)
+            .map_err(|e| format!("Failed to write certificate: {}", e))?;
+    }
+
+    info!(
+        log,
+        "Using certificate \"{}\" with private key \"{}\".",
+        &config.certificate_locations.cert.display(),
+        &config.certificate_locations.key.display(),
+    );
+
+    let acceptor = tls::TlsAcceptor::new(
+        tls::get_tls_config(
+            &config.certificate_locations.cert,
+            &config.certificate_locations.key,
+        )?,
         args.port.unwrap_or(config.port),
-        0,
-        0,
-    ));
+        log.new(o!("scope" => "tls")),
+    )
+    .await?;
 
-    info!(log, "Listening for requests on port {}", addr.port());
-    Server::bind(&addr)
+    system::drop_privileges(&config.user, &config.group)?;
+
+    Server::builder(acceptor)
         .http2_only(true)
-        .serve(make_service_fn(|context: &AddrStream| {
-            let request_logger = log.new(o!("client" => context.remote_addr().to_string()));
+        .serve(make_service_fn(
+            |context: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>| {
+                let request_logger =
+                    log.new(o!("client" => context.get_ref().0.peer_addr().map(|sa| sa.to_string()).unwrap_or_default()));
 
-            async move {
-                Ok::<_, Infallible>(service_fn(move |request| {
-                    proxy(request, request_logger.new(o!()))
-                }))
-            }
-        }))
+                async move {
+                    Ok::<_, Infallible>(service_fn(move |request| {
+                        proxy(request, request_logger.new(o!()))
+                    }))
+                }
+            },
+        ))
         .with_graceful_shutdown(system::shutdown_signal(log.new(o!("scope" => "shutdown"))))
         .await?;
 

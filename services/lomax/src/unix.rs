@@ -1,9 +1,15 @@
+use std::path::PathBuf;
+
 use futures::{FutureExt, TryFutureExt};
 use slog::{info, Logger};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     signal::unix::{signal, SignalKind},
 };
+
+pub fn get_lomax_cfg_dir() -> Option<PathBuf> {
+    Some(PathBuf::from("/etc/lomax"))
+}
 
 async fn sig_term() {
     match signal(SignalKind::terminate()) {
@@ -24,6 +30,58 @@ pub fn get_local_socket(username: &str) -> String {
         "unix://localhost/tmp/avery-{username}.sock",
         username = username
     )
+}
+
+macro_rules! func_ret_null {
+    ($code:expr, $error_message:expr) => {{
+        let res = $code;
+        (!res.is_null())
+            .then(|| res)
+            .ok_or_else(|| String::from($error_message))
+    }};
+}
+
+macro_rules! func_ret_neg {
+    ($code:expr, $error_message:expr) => {{
+        let res = $code;
+        (res >= 0)
+            .then(|| ())
+            .ok_or_else(|| String::from($error_message))
+    }};
+}
+
+pub fn drop_privileges(username: &str, groupname: &str) -> Result<(), String> {
+    unsafe {
+        let uid = *func_ret_null!(
+            libc::getpwnam(
+                std::ffi::CString::new(username)
+                    .map_err(|_| "Failed to create C-string for username")?
+                    .as_ptr(),
+            ),
+            format!(
+                "Failed to determine unix user id for username \"{}\"",
+                username
+            )
+        )?;
+
+        let gid = *func_ret_null!(
+            libc::getgrnam(
+                std::ffi::CString::new(groupname)
+                    .map_err(|_| "Failed to create C-string for group name")?
+                    .as_ptr(),
+            ),
+            format!(
+                "Failed to determine unix group id for groupname \"{}\"",
+                groupname
+            )
+        )?;
+
+        // The call order here is of the utmost importance.
+        func_ret_neg!(libc::setgid(gid.gr_gid), "Failed to set group id")?;
+        func_ret_neg!(libc::setuid(uid.pw_uid), "Failed to set user id")?;
+    }
+
+    Ok(())
 }
 
 pub struct UnixStream(tokio::net::UnixStream);

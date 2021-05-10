@@ -563,6 +563,7 @@ dependencies = [
 name = "lomax"
 version = "0.1.0"
 dependencies = [
+ "async-stream",
  "config",
  "firm-types",
  "futures",
@@ -570,12 +571,17 @@ dependencies = [
  "http",
  "hyper",
  "jsonwebtoken",
+ "libc",
+ "pem",
+ "rcgen",
+ "rustls",
  "serde 1.0.125",
  "slog",
  "slog-async",
  "slog-term",
  "structopt",
  "tokio",
+ "tokio-rustls",
  "tower",
 ]
 
@@ -864,6 +870,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3190ef7066a446f2e7f42e239d161e905420ccab01eb967c9eb27d21b2322a73"
 dependencies = [
  "rand_core",
+]
+
+[[package]]
+name = "rcgen"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48b4fc1b81d685fcd442a86da2e2c829d9e353142633a8159f42bf28e7e94428"
+dependencies = [
+ "chrono",
+ "pem",
+ "ring",
+ "yasna",
 ]
 
 [[package]]
@@ -1601,4 +1619,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
 dependencies = [
  "linked-hash-map",
+]
+
+[[package]]
+name = "yasna"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e262a29d0e61ccf2b6190d7050d4b237535fc76ce4c1210d9caa316f71dffa75"
+dependencies = [
+ "chrono",
 ]

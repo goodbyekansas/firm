@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use futures::TryFutureExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -7,6 +9,14 @@ pub async fn shutdown_signal(_log: slog::Logger) {
 
 pub fn get_local_socket(username: &str) -> String {
     format!(r#"windows://./pipe/avery-{username}"#, username = username)
+}
+
+pub fn get_lomax_cfg_dir() -> Option<PathBuf> {
+    std::env::var_os("PROGRAMDATA").map(|appdata| PathBuf::from(&appdata))
+}
+
+pub fn drop_privileges(_: &str, _: &str) -> Result<(), String> {
+    Ok(())
 }
 
 pub struct NamedPipe(tokio::net::NamedPipe);
