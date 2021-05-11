@@ -105,6 +105,12 @@ impl Runtime for WasiRuntime {
         )
         .map_err(|e| e.to_string())?;
 
+        let cache_sandbox = Sandbox::new(
+            &runtime_parameters.function_dir.cache_path(),
+            Path::new("cache"),
+        )
+        .map_err(|e| e.to_string())?;
+
         info!(
             function_logger,
             "using sandbox directory: {}",
@@ -115,10 +121,6 @@ impl Runtime for WasiRuntime {
             "using sandbox attachments directory: {}",
             attachment_sandbox.host_path().display()
         );
-
-        let cache_dir = runtime_parameters.function_dir.cache_path().join("wasi");
-        std::fs::create_dir_all(&cache_dir)
-            .map_err(|e| format!("Failed to create wasi cache dir: {}", e))?;
 
         let stdout = Output::new(vec![
             Box::new(
@@ -171,8 +173,8 @@ impl Runtime for WasiRuntime {
             })
             .and_then(|state| {
                 state.preopen(|p| {
-                    p.directory(&cache_dir)
-                        .alias("cache")
+                    p.directory(&cache_sandbox.host_path())
+                        .alias(&cache_sandbox.guest_path().to_string_lossy())
                         .read(true)
                         .write(true)
                         .create(true)
@@ -238,6 +240,7 @@ impl Runtime for WasiRuntime {
             attachments: Arc::new(attachments),
             sandbox,
             attachment_sandbox,
+            cache_sandbox,
             logger: function_logger.new(o!("scope" => "api")),
             stdout,
             stderr,
