@@ -60,6 +60,7 @@ where
                 |_| warn!(logger, "Failed to write \"{}\" to output.", s),
                 |_| (),
             );
+            s.clear();
         }
     }
 }
