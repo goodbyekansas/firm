@@ -66,6 +66,7 @@ pub mod host {
             &[
                 api_state.sandbox.clone(),
                 api_state.attachment_sandbox.clone(),
+                api_state.cache_sandbox.clone(),
             ],
             &api_state.stdout,
             &api_state.stderr,
@@ -86,6 +87,7 @@ pub mod host {
             &[
                 api_state.sandbox.clone(),
                 api_state.attachment_sandbox.clone(),
+                api_state.cache_sandbox.clone(),
             ],
             &api_state.stdout,
             &api_state.stderr,
@@ -296,6 +298,7 @@ pub struct ApiState {
     pub attachments: Arc<Vec<Attachment>>,
     pub sandbox: Sandbox,
     pub attachment_sandbox: Sandbox,
+    pub cache_sandbox: Sandbox,
     pub logger: Logger,
     pub stdout: Output,
     pub stderr: Output,
