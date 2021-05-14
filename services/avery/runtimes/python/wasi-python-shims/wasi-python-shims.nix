@@ -11,7 +11,7 @@ let
     targets = [ "wasm32-wasi" ];
 
     doCrossCheck = true;
-    useNightly = "2021-03-04";
+    useNightly = "2021-05-11";
 
     # llvm is needed for dsymutil which something uses
     # when building in debug

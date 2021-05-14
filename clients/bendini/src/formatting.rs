@@ -40,7 +40,7 @@ pub enum DisplayFormat {
     // Short,
     Long,
     // Full,
-    JSON,
+    Json,
 }
 
 impl<'a, U> DisplayExt<'a, U> for U {
@@ -95,7 +95,7 @@ where
 // impl display of listed functions
 impl Display for Displayer<'_, Function> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.format == DisplayFormat::JSON {
+        if self.format == DisplayFormat::Json {
             // TODO: return write!(f, "{}", self.serialize());
             return Ok(());
         }
@@ -274,7 +274,7 @@ impl Display for Displayer<'_, Channel> {
 
 impl Display for Displayer<'_, Runtime> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.format == DisplayFormat::JSON {
+        if self.format == DisplayFormat::Json {
             // TODO: return write!(f, "{}", self.serialize());
             return Ok(());
         }

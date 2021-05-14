@@ -127,7 +127,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let res = Python::with_gil(|py| -> PyResult<()> {
         socket::load_py_module(py)?;
         let main_module = py.import(&entrypoint.module)?;
-        main_module.call0(&entrypoint.function)?;
+        main_module.getattr(&entrypoint.function)?.call0()?;
 
         Ok(())
     });

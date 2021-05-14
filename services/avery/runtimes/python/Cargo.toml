@@ -16,3 +16,7 @@ pyo3 = { version="0.13", default-features=false, features=["macros"] }
 
 [features]
 mock = ["firm/mock"]
+
+# pyo3 from a good rev on main to not get accidental windows
+[patch.crates-io]
+pyo3 = { git = "https://github.com/PyO3/pyo3.git", rev="85f1055db8d7f13630eec22d14d98a3b92378c05" }
