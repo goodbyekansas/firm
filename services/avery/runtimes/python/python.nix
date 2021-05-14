@@ -73,7 +73,5 @@ base.mkRuntime {
   # Setting it to anything will skip it.
   WASI_PYTHON_SHIMS_SKIP_C_BINDGEN = "Yes";
 
-  # needed for pyo3, not technically correct
-  CARGO_CFG_TARGET_FAMILY = "unix";
   PYO3_CROSS_LIB_DIR = "${wasiPython.package}/lib/";
 }

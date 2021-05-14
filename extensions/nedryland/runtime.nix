@@ -45,12 +45,13 @@ let
         defaultTarget = "wasm32-wasi";
         nativeBuildInputs = [ pkgs.wasmtime ] ++ pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.llvmPackages_11.llvm ++ curatedAttrs.nativeBuildInputs or [ ];
         shellInputs = [ pkgs.wabt pkgs.coreutils bendini.package avery.package runner ] ++ curatedAttrs.shellInputs or [ ];
+        extraCargoConfig = attrs.extraCargoConfig or "";
 
         shellHook = ''
           export CARGO_TARGET_WASM32_WASI_RUNNER=runtime-runner;
         '';
 
-        useNightly = curatedAttrs.useNightly or "2021-03-04";
+        useNightly = curatedAttrs.useNightly or "2021-05-11";
         installPhase = ''
           mkdir -p $out/share/avery/runtimes
           cp target/wasm32-wasi/release/*.wasm $out/share/avery/runtimes/${runtimeName}.wasm

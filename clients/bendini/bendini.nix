@@ -4,6 +4,6 @@ base.languages.rust.mkClient {
   name = "bendini";
   src = ./.;
   buildInputs = [ types.package tonicMiddleware.package ]
-    ++ stdenv.lib.optional stdenv.hostPlatform.isWindows pkgsCross.mingwW64.windows.pthreads;
-  nativeBuildInputs = [ pkgs.pkg-config pkgs.openssl ];
+    ++ stdenv.lib.optional stdenv.hostPlatform.isWindows
+    pkgsCross.mingwW64.windows.pthreads;
 }
