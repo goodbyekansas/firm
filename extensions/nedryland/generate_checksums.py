@@ -5,10 +5,18 @@ import os.path
 import sys
 
 
+def get_path(attachment: dict) -> str:
+    if os.path.isabs(attachment["path"]):
+        return attachment["path"]
+    else:
+        return os.path.join(os.environ["out"], attachment["path"])
+
+
 def generateSha256Checksum(attachment: dict) -> str:
     sha256 = hashlib.sha256()
-    if os.path.exists(attachment["path"]):
-        with open(attachment["path"], "rb") as f:
+    path = get_path(attachment)
+    if os.path.exists(path):
+        with open(path, "rb") as f:
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha256.update(byte_block)
 
@@ -17,8 +25,9 @@ def generateSha256Checksum(attachment: dict) -> str:
 
 def generateSha512Checksum(attachment: dict) -> str:
     sha512 = hashlib.sha512()
-    if os.path.exists(attachment["path"]):
-        with open(attachment["path"], "rb") as f:
+    path = get_path(attachment)
+    if os.path.exists(path):
+        with open(path, "rb") as f:
             for byte_block in iter(lambda: f.read(4096), b""):
                 sha512.update(byte_block)
 
@@ -51,11 +60,6 @@ if __name__ == "__main__":
     parser.add_argument("infile", help="Input json file")
     parser.add_argument("outfile", help="Output json file")
     parser.add_argument("--sha512", action="store_true", default=False)
-    parser.add_argument(
-        "--code-root",
-        help="Path to the folder where the deployed code is relative to.",
-        default=os.environ.get("out", ""),
-    )
 
     args = parser.parse_args()
 
@@ -72,7 +76,7 @@ if __name__ == "__main__":
         json_data.get("attachments", {}), args.sha512
     )
     output["code"] = generateChecksums(
-        {"code": {"path": os.path.join(args.code_root, json_data["code"]["path"])}},
+        {"code": {"path": json_data["code"]["path"]}},
         args.sha512,
     )["code"]
 
