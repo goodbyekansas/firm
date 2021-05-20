@@ -1,5 +1,9 @@
-use std::{convert::Infallible, path::PathBuf, str::FromStr, time::Duration};
+use std::{
+    collections::HashMap, convert::Infallible, path::PathBuf, str::FromStr, sync::Arc,
+    time::Duration,
+};
 
+use chrono::Utc;
 use firm_types::{
     auth::authentication_client::AuthenticationClient,
     auth::RemoteAccessRequestId,
@@ -15,6 +19,7 @@ use hyper::{
 use serde::Deserialize;
 use slog::{debug, error, info, o, warn, Drain, Logger};
 use structopt::StructOpt;
+use tokio::sync::RwLock;
 use tonic::{body::BoxBody, transport::Endpoint};
 
 mod config;
@@ -31,6 +36,8 @@ use windows as system;
 
 #[cfg(unix)]
 use unix as system;
+
+type TokenCache = Arc<RwLock<HashMap<String, (i64, Client<LocalAveryConnector>)>>>;
 
 #[derive(Debug, StructOpt)]
 struct LomaxArgs {
@@ -126,6 +133,7 @@ struct Token(String);
 struct Claims {
     aud: String,
     sub: String,
+    exp: i64,
 }
 
 #[derive(Clone)]
@@ -182,59 +190,12 @@ async fn wait_for_approval(
     }
 }
 
-async fn authenticate(
-    request: &Request<Body>,
+async fn auth_against_avery(
+    endpoint: Endpoint,
+    user_host_pair: UserHostPair,
+    token: String,
     logger: Logger,
 ) -> Option<Client<LocalAveryConnector>> {
-    let (endpoint, user_host_pair, token, logger) = request
-        .headers()
-        .get("Authorization")
-        .or_else(|| {
-            warn!(logger, "Missing authorization header in request");
-            None
-        })
-        .and_then(|hv| {
-            hv.to_str()
-                .map_err(|e| warn!(logger, "Failed to parse authorization header: {}", e))
-                .ok()
-        })
-        .and_then(|auth_header| {
-            auth_header
-                .parse::<Token>()
-                .map_err(|e| {
-                    warn!(
-                        logger,
-                        "Failed to parse bearer token from authorization header: {}", e
-                    )
-                })
-                .ok()
-        })
-        .and_then(|token| {
-            jsonwebtoken::dangerous_insecure_decode_with_validation::<Claims>(
-                &token.0,
-                &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::ES256),
-            )
-            .map_err(|e| warn!(logger, "Failed to parse JWT: {}", e))
-            .ok()
-            .map(|claims| (token.0, claims))
-        })
-        .and_then(|(token, unparsed_claims)| {
-            let logger = logger.new(o!("subject" => unparsed_claims.claims.sub));
-            unparsed_claims
-                .claims
-                .aud
-                .parse::<UserHostPair>()
-                .map_err(|e| warn!(logger, "Failed to parse user and host from claims: {}", e))
-                .ok()
-                .map(|user_host_pair| (token, user_host_pair, logger))
-        })
-        .and_then(|(token, user_host_pair, logger)| {
-            Endpoint::from_shared(system::get_local_socket(&user_host_pair.username))
-                .map_err(|e| warn!(logger, "Invalid local socket uri: {}", e))
-                .ok()
-                .map(|endpoint| (endpoint, user_host_pair, token, logger))
-        })?;
-
     grpc_connect(endpoint, logger.new(o!("scope" => "grpc-connect")))
         .map_ok(AuthenticationClient::new)
         .and_then(|auth_client| {
@@ -319,9 +280,94 @@ async fn authenticate(
         .ok()
 }
 
-async fn proxy(request: Request<Body>, logger: Logger) -> Result<Response<BoxBody>, hyper::Error> {
+async fn authenticate(
+    request: &Request<Body>,
+    cache: TokenCache,
+    logger: Logger,
+) -> Option<Client<LocalAveryConnector>> {
+    let (endpoint, user_host_pair, exp, token, logger) = request
+        .headers()
+        .get("Authorization")
+        .or_else(|| {
+            warn!(logger, "Missing authorization header in request");
+            None
+        })
+        .and_then(|hv| {
+            hv.to_str()
+                .map_err(|e| warn!(logger, "Failed to parse authorization header: {}", e))
+                .ok()
+        })
+        .and_then(|auth_header| {
+            auth_header
+                .parse::<Token>()
+                .map_err(|e| {
+                    warn!(
+                        logger,
+                        "Failed to parse bearer token from authorization header: {}", e
+                    )
+                })
+                .ok()
+        })
+        .and_then(|token| {
+            jsonwebtoken::dangerous_insecure_decode_with_validation::<Claims>(
+                &token.0,
+                &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::ES256),
+            )
+            .map_err(|e| warn!(logger, "Failed to parse JWT: {}", e))
+            .ok()
+            .map(|claims| (token.0, claims))
+        })
+        .and_then(|(token, unparsed_claims)| {
+            let logger = logger.new(o!("subject" => unparsed_claims.claims.sub));
+            let exp = unparsed_claims.claims.exp;
+            unparsed_claims
+                .claims
+                .aud
+                .parse::<UserHostPair>()
+                .map_err(|e| warn!(logger, "Failed to parse user and host from claims: {}", e))
+                .ok()
+                .map(|user_host_pair| (token, user_host_pair, exp, logger))
+        })
+        .and_then(|(token, user_host_pair, exp, logger)| {
+            Endpoint::from_shared(system::get_local_socket(&user_host_pair.username))
+                .map_err(|e| warn!(logger, "Invalid local socket uri: {}", e))
+                .ok()
+                .map(|endpoint| (endpoint, user_host_pair, exp, token, logger))
+        })?;
+
+    let avery_logger = logger.new(o!("scope" => "auth-avery"));
+    match cache.write().await.entry(token.clone()) {
+        std::collections::hash_map::Entry::Occupied(mut e) => {
+            // the expiry of the token is checked elsewhere
+            if Utc::now().timestamp() >= e.get().0 {
+                auth_against_avery(endpoint, user_host_pair, token, avery_logger)
+                    .await
+                    .map(|c| {
+                        e.insert((exp, c.clone()));
+                        c
+                    })
+            } else {
+                Some(e.get().1.clone())
+            }
+        }
+        std::collections::hash_map::Entry::Vacant(e) => {
+            auth_against_avery(endpoint, user_host_pair, token, avery_logger)
+                .await
+                .map(|c| {
+                    e.insert((exp, c.clone()));
+                    c
+                })
+        }
+    }
+}
+
+async fn proxy(
+    request: Request<Body>,
+    cache: TokenCache,
+    logger: Logger,
+) -> Result<Response<BoxBody>, hyper::Error> {
     futures::future::ready(
-        authenticate(&request, logger.new(o!("scope" => "authenticate")))
+        authenticate(&request, cache, logger.new(o!("scope" => "authenticate")))
             .await
             .ok_or_else(|| {
                 ProxyError::GrpcError(Status::permission_denied("Failed to authenticate."))
@@ -401,16 +447,18 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
 
     system::drop_privileges(&config.user, &config.group)?;
 
+    let cache: TokenCache = Arc::new(RwLock::new(HashMap::new()));
     Server::builder(acceptor)
         .http2_only(true)
         .serve(make_service_fn(
             |context: &tokio_rustls::server::TlsStream<tokio::net::TcpStream>| {
                 let request_logger =
-                    log.new(o!("client" => context.get_ref().0.peer_addr().map(|sa| sa.to_string()).unwrap_or_default()));
-
+                    log.new(o!("client" => context.get_ref().0.peer_addr().map(|sa|
+                                                                               sa.to_string()).unwrap_or_default()));
+                let c = Arc::clone(&cache);
                 async move {
                     Ok::<_, Infallible>(service_fn(move |request| {
-                        proxy(request, request_logger.new(o!()))
+                        proxy(request, Arc::clone(&c), request_logger.new(o!()))
                     }))
                 }
             },

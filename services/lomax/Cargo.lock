@@ -564,6 +564,7 @@ name = "lomax"
 version = "0.1.0"
 dependencies = [
  "async-stream",
+ "chrono",
  "config",
  "firm-types",
  "futures",
