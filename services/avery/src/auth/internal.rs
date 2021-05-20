@@ -8,7 +8,7 @@ use jsonwebtoken::{Algorithm, Header};
 use ring::signature::KeyPair;
 use serde::{Deserialize, Serialize};
 use simple_asn1::{ASN1Block, ASN1Class, ASN1EncodeErr, ToASN1, OID};
-use slog::Logger;
+use slog::{info, Logger};
 use thiserror::Error;
 
 use super::Token;
@@ -53,16 +53,24 @@ impl Token for JwtToken {
         &self.token
     }
 
-    async fn refresh(&mut self, _logger: &Logger) -> Result<&mut dyn Token, String> {
-        self.generator
-            .generate(&self.audience)
-            .map_err(|e| e.to_string())
-            .map(move |jwt_token| {
-                self.token = jwt_token.token;
-                self.expires_at = jwt_token.expires_at;
-                self.claims = jwt_token.claims;
-                self as &mut dyn Token
-            })
+    async fn refresh(&mut self, logger: &Logger) -> Result<&mut dyn Token, String> {
+        if chrono::Utc::now().timestamp() as u64 >= self.expires_at {
+            info!(
+                logger,
+                "Refreshing internal auth token by generating a new one..."
+            );
+            self.generator
+                .generate(&self.audience)
+                .map_err(|e| e.to_string())
+                .map(move |jwt_token| {
+                    self.token = jwt_token.token;
+                    self.expires_at = jwt_token.expires_at;
+                    self.claims = jwt_token.claims;
+                    self as &mut dyn Token
+                })
+        } else {
+            Ok(self)
+        }
     }
 
     fn expires_at(&self) -> u64 {
