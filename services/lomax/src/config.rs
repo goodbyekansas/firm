@@ -67,6 +67,9 @@ pub struct Config {
 
     #[serde(default = "default_user_and_group")]
     pub group: String,
+
+    #[serde(default)]
+    pub certificate_alt_names: Vec<String>,
 }
 
 const DEFAULT_CFG_FILE_NAME: &str = "lomax.toml";

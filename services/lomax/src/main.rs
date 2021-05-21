@@ -408,14 +408,16 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("Failed to create certificate directory: {}", e))?;
 
         info!(log, "Generating self signed certificate.");
-        let cert = rcgen::generate_simple_self_signed(vec![
+        let mut alt_names = config.certificate_alt_names;
+        alt_names.extend(vec![
             hostname::get()
                 .map_err(|e| format!("Failed to get host name: {}", e))?
                 .to_string_lossy()
                 .to_string(),
             "localhost".to_string(),
-        ])
-        .map_err(|e| format!("Failed to generate self signed certificate: {}", e))?;
+        ]);
+        let cert = rcgen::generate_simple_self_signed(alt_names)
+            .map_err(|e| format!("Failed to generate self signed certificate: {}", e))?;
 
         let (cert, key) = cert
             .serialize_pem()
