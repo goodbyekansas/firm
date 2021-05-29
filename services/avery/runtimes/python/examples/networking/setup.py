@@ -1,3 +1,4 @@
+""" Networking example """
 from setuptools import setup
 
 setup(

@@ -1,3 +1,4 @@
+""" Setup the yamler """
 from setuptools import setup
 
 setup(
