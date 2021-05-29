@@ -1,3 +1,4 @@
+""" Very basic example """
 from setuptools import setup
 
 setup(

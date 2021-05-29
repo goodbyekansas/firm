@@ -115,6 +115,7 @@ base.extend.mkExtension {
         , dependencies ? (_: [ ])
         }:
         let
+          pythonVersion = pkgs.python38;
           pythonWasiPkgs = pkgs.callPackage ./wasi-python-packages.nix { };
           functionDependencies = dependencies pythonWasiPkgs;
 
@@ -141,18 +142,18 @@ base.extend.mkExtension {
             '';
           };
 
-          package = pkgs.stdenv.mkDerivation {
-            inherit name version;
+          package = base.languages.python.mkPackage {
+            inherit name version pythonVersion;
 
             src = if pkgs.lib.isStorePath src then src else (builtins.path { path = src; inherit name; });
 
             phases = [ "unpackPhase" "installPhase" "generateManifestPhase" ];
-            nativeBuildInputs = [ pkgs.python38.pkgs.setuptools ];
+            nativeBuildInputs = (p: [ p.setuptools ]);
 
             installPhase = ''
               mkdir $out
               runHook preInstall
-              ${pkgs.python38}/bin/python setup.py sdist --dist-dir dist --formats=gztar
+              ${pythonVersion}/bin/python setup.py sdist --dist-dir dist --formats=gztar
               cp dist/*.tar.gz $out/code.tar.gz
               runHook postInstall
             '';

@@ -5,7 +5,7 @@ let
       env = (builtins.mapAttrs
         (n: v: {
           function = v.deployment.function;
-          name = v.package.name;
+          name = v.package.pname;
         })
         examples);
 
@@ -49,6 +49,7 @@ let
 
         shellHook = ''
           export CARGO_TARGET_WASM32_WASI_RUNNER=runtime-runner;
+          ${attrs.shellHook or ""}
         '';
 
         useNightly = curatedAttrs.useNightly or "2021-05-11";

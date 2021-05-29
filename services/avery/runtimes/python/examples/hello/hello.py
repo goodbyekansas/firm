@@ -2,6 +2,7 @@
 The best hello world the world has ever seen
 """
 
+
 def main() -> None:
     """
     prints hello
