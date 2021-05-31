@@ -43,6 +43,9 @@ pub enum BendiniError {
 
     #[error("Invalid arguments supplied to function \"{0}\": {1:#?}")]
     InvalidFunctionArguments(String, Vec<String>),
+
+    #[error("Function failed: \"{0}\"")]
+    FunctionError(String),
 }
 
 impl From<BendiniError> for i32 {
@@ -63,6 +66,7 @@ impl From<BendiniError> for i32 {
             BendiniError::ConnectionError(_, _) => 13i32,
             BendiniError::InvalidOauthToken(_) => 14i32,
             BendiniError::InvalidFunctionArguments(_, _) => 15i32,
+            BendiniError::FunctionError(_) => 16i32,
         }
     }
 }

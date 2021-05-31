@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use firm_types::{
     functions::{
-        execution_client::ExecutionClient, registry_client::RegistryClient, ChannelSpec,
-        ChannelType, ExecutionParameters, Filters, NameFilter, Ordering, OrderingKey, Stream,
-        VersionRequirement,
+        execution_client::ExecutionClient, execution_result::Result as FunctionResult,
+        registry_client::RegistryClient, ChannelSpec, ChannelType, ExecutionParameters, Filters,
+        NameFilter, Ordering, OrderingKey, Stream, VersionRequirement,
     },
     stream::ToChannel,
     tonic,
@@ -227,7 +227,17 @@ pub async fn run(
 
     // Explicit memory drop to ensure that output gets flushed before printing the result.
     std::mem::drop(outputs);
-    res.map(|r| println!("{}", r.into_inner().display()))
+    res.and_then(|r| {
+        let r = r.into_inner();
+        println!("{}", r.display());
+        match r.result.as_ref() {
+            Some(FunctionResult::Ok(_)) => Ok(()),
+            Some(FunctionResult::Error(error)) => {
+                Err(BendiniError::FunctionError(error.msg.clone()))
+            }
+            None => Err(BendiniError::FunctionError("No result set".to_owned())),
+        }
+    })
 }
 
 struct BufferedChannelPrinter {

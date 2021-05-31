@@ -1,19 +1,19 @@
 { base, pkgs, pythonSource, overrideCC, wasiPythonShims }:
 let
   zlib = pkgs.pkgsCross.wasi32.zlib.override {
-    stdenv = pkgs.pkgsCross.wasi32.clang11Stdenv;
+    stdenv = pkgs.pkgsCross.wasi32.clang12Stdenv;
   };
 in
 base.mkComponent {
-  # we need clang 11 for being able to debug and print variables
+  # we need clang 12 for being able to debug and print variables
   name = "wasi-python38";
-  package = pkgs.pkgsCross.wasi32.clang11Stdenv.mkDerivation {
+  package = pkgs.pkgsCross.wasi32.clang12Stdenv.mkDerivation {
     name = "wasi-python38";
     src = pythonSource;
     buildInputs = [ wasiPythonShims.package zlib ];
     nativeBuildInputs = [ pkgs.autoreconfHook pkgs.pkg-config pkgs.python38 ];
     # gdb is needed for JIT debugging with lldb. I know, it's a weird relationship they have together.
-    shellInputs = [ pkgs.bear pkgs.lldb_11 pkgs.gdb pkgs.wasmtime ];
+    shellInputs = [ pkgs.bear pkgs.lldb_12 pkgs.gdb pkgs.wasmtime ];
     configureFlags = [
       "--disable-ipv6"
       "--with-suffix=.wasm"
@@ -25,8 +25,8 @@ base.mkComponent {
 
     preConfigure = ''
       configureFlagsArray=(
-        "CPPFLAGS=-D_WASI_EMULATED_SIGNAL -fPIC"
-        "LDFLAGS=-lwasi-emulated-signal -Wl,--stack-first -z stack-size=2097152" # 2 MiB stack 🥞
+        "CPPFLAGS=-D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_PROCESS_CLOCKS -fPIC"
+        "LDFLAGS=-lwasi-emulated-signal -lwasi-emulated-process-clocks -Wl,--stack-first -z stack-size=2097152" # 2 MiB stack 🥞
       )
     '';
 
@@ -106,6 +106,11 @@ base.mkComponent {
         build
         run
       }
+
+      if [ -d $src ]; then
+        echo "🐍 Changing directory to overridden python sources"
+        cd "$src"
+      fi
     '';
     #wasiLibC = pkgs.wasilibc.outPath; TODO see if we can make this path a variable without having to turn on unsupported systems
   };

@@ -33,7 +33,7 @@ let
           substituteAll ${./runtime-runner.bash} $out/bin/runtime-runner
           chmod +x $out/bin/runtime-runner
         '';
-      mkPackage = base.languages.rust.mkPackage.override { stdenv = pkgs.pkgsCross.wasi32.clang11Stdenv; };
+      mkPackage = base.languages.rust.mkPackage.override { stdenv = pkgs.pkgsCross.wasi32.clang12Stdenv; };
       curatedAttrs = builtins.removeAttrs attrs [ "name" "src" "examples" "fileSystemImage" "runtimeName" ];
       extension = if fileSystemImage == null then ".wasm" else ".tar.gz";
     in
@@ -43,16 +43,18 @@ let
         inherit name src;
         targets = [ "wasm32-wasi" ];
         defaultTarget = "wasm32-wasi";
-        nativeBuildInputs = [ pkgs.wasmtime ] ++ pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.llvmPackages_11.llvm ++ curatedAttrs.nativeBuildInputs or [ ];
+        nativeBuildInputs = [ pkgs.wasmtime ] ++ pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.llvmPackages_12.llvm ++ curatedAttrs.nativeBuildInputs or [ ];
         shellInputs = [ pkgs.wabt pkgs.coreutils bendini.package avery.package runner ] ++ curatedAttrs.shellInputs or [ ];
         extraCargoConfig = attrs.extraCargoConfig or "";
+        checkInputs = pkgs.lib.optional curatedAttrs.exposeRunnerInChecks or false runner ++
+          curatedAttrs.checkInputs or [ ];
 
         shellHook = ''
-          export CARGO_TARGET_WASM32_WASI_RUNNER=runtime-runner;
+          export CARGO_TARGET_WASM32_WASI_RUNNER=runtime-runner
           ${attrs.shellHook or ""}
         '';
 
-        useNightly = curatedAttrs.useNightly or "2021-05-11";
+        useNightly = curatedAttrs.useNightly or "2021-05-30";
         installPhase = ''
           mkdir -p $out/share/avery/runtimes
           cp target/wasm32-wasi/release/*.wasm $out/share/avery/runtimes/${runtimeName}.wasm

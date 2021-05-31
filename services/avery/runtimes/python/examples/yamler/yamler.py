@@ -4,7 +4,7 @@ Tests python dependency packaging
 
 import yaml
 
-import firm
+import firm  # type: ignore # pylint: disable=import-error
 
 
 def main() -> None:
