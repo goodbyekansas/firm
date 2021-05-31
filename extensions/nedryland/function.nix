@@ -135,6 +135,7 @@ base.extend.mkExtension {
                   done
                 fi
               done
+              
             '';
 
             installPhase = ''
@@ -143,17 +144,20 @@ base.extend.mkExtension {
           };
 
           package = base.languages.python.mkPackage {
-            inherit name version pythonVersion;
-
-            src = if pkgs.lib.isStorePath src then src else (builtins.path { path = src; inherit name; });
-
-            phases = [ "unpackPhase" "installPhase" "generateManifestPhase" ];
+            inherit name version pythonVersion src;
+            preDistPhases = [ "generateManifestPhase" ];
             nativeBuildInputs = (p: [ p.setuptools ]);
+            format = "custom";
+
+            buildPhase = ''
+              echo "exclude setup.cfg" > MANIFEST.in
+              python setup.py sdist --dist-dir dist --formats=gztar
+            '';
 
             installPhase = ''
               mkdir $out
               runHook preInstall
-              ${pythonVersion}/bin/python setup.py sdist --dist-dir dist --formats=gztar
+
               cp dist/*.tar.gz $out/code.tar.gz
               runHook postInstall
             '';

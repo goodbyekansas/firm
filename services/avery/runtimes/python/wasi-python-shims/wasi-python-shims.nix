@@ -1,7 +1,7 @@
 { base, pkgs }: # TODO: Make one deriv for the C output and another for rust
 let
   name = "wasi-python-shims";
-  stdenv = pkgs.pkgsCross.wasi32.clang11Stdenv;
+  stdenv = pkgs.pkgsCross.wasi32.clang12Stdenv;
   overriddenMkPackage = (base.languages.rust.mkPackage.override { inherit stdenv; });
 
   package = overriddenMkPackage {
@@ -11,11 +11,7 @@ let
     targets = [ "wasm32-wasi" ];
 
     doCrossCheck = true;
-    useNightly = "2021-05-11";
-
-    # llvm is needed for dsymutil which something uses
-    # when building in debug
-    nativeBuildInputs = pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.llvmPackages_11.llvm;
+    useNightly = "2021-05-30";
 
     checkInputs = [ pkgs.wasmtime ];
     shellInputs = [ pkgs.bear ];
@@ -25,6 +21,7 @@ let
 
   newPackage = libraryPackage.overrideAttrs (
     oldAttrs: {
+      RUSTFLAGS = "${oldAttrs.RUSTFLAGS} -Ctarget-feature=-crt-static";
       installPhase = ''
         ${oldAttrs.installPhase}
         mkdir -p $out/lib $out/include
@@ -32,14 +29,9 @@ let
         cp $(cargo run --release header) $out/include
       '';
 
-      # need the -crt-static to only be used when the library is intended
-      # to be used from other C libraries, not for tests etc.
       buildPhase = ''
-        (
-          export RUSTFLAGS="$RUSTFLAGS -C target-feature=-crt-static"
-          ${oldAttrs.buildPhase}
-          cargo build --release
-        )
+        ${oldAttrs.buildPhase}
+        cargo build --release
       '';
 
       # TODO: remove the "clean" target when

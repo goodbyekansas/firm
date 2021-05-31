@@ -12,7 +12,7 @@ let
     , postInstall ? ""
     , dependencies ? [ ]
     }:
-    pkgs.pkgsCross.wasi32.clang11Stdenv.mkDerivation rec {
+    pkgs.pkgsCross.wasi32.clang12Stdenv.mkDerivation rec {
       pname = name;
       inherit src version;
 

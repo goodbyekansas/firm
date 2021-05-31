@@ -1,7 +1,7 @@
 """ firm networking example """
 import socket
 
-import firm  # noqa
+import firm  # type: ignore # pylint: disable=import-error
 
 
 def main() -> None:

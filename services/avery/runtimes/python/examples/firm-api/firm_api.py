@@ -3,7 +3,7 @@ demonstrate different usages of the firm api
 """
 import os.path
 
-import firm  # noqa
+import firm  # type: ignore # pylint: disable=import-error
 
 
 def main() -> None:
