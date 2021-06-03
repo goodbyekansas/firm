@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{os::unix::io::FromRawFd, path::PathBuf};
 
 use futures::{FutureExt, TryFutureExt};
 use slog::{info, Logger};
@@ -23,6 +23,29 @@ pub async fn shutdown_signal(log: Logger) {
         () = tokio::signal::ctrl_c().map_ok_or_else(|_| (), |_| ()).fuse() => { info!(log, "Recieved Ctrl-C"); },
         () = sig_term().fuse() => { info!(log, "Recieved SIGTERM"); }
     }
+}
+
+// https://www.freedesktop.org/software/systemd/man/sd_listen_fds.html
+fn get_systemd_sockets() -> Vec<std::os::unix::io::RawFd> {
+    std::env::var("LISTEN_FDS")
+        .ok()
+        .and_then(|x| x.parse().ok())
+        .and_then(|offset| {
+            let for_this_pid = match std::env::var("LISTEN_PID").as_ref().map(|x| x.as_str()) {
+                Err(std::env::VarError::NotPresent) | Ok("") => true,
+                Ok(val) if val.parse().ok() == Some(unsafe { libc::getpid() }) => true,
+                _ => false,
+            };
+
+            std::env::remove_var("LISTEN_PID");
+            std::env::remove_var("LISTEN_FDS");
+            for_this_pid.then(|| {
+                (0..offset)
+                    .map(|offset| 3 + offset as std::os::unix::io::RawFd)
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
 }
 
 pub fn get_local_socket(username: &str) -> String {
@@ -139,6 +162,18 @@ impl hyper::service::Service<http::Uri> for super::LocalAveryConnector {
     }
 
     fn call(&mut self, _req: http::Uri) -> Self::Future {
-        Box::pin(tokio::net::UnixStream::connect(self.uri.path().to_owned()).map_ok(UnixStream))
+        // TODO: socket activation can give more than one socket to bind to
+        // this only supports the first one
+        if let Some(sock) = get_systemd_sockets().first() {
+            Box::pin(
+                futures::future::ready(tokio::net::UnixStream::from_std(unsafe {
+                    std::os::unix::net::UnixStream::from_raw_fd(*sock)
+                }))
+                .map_ok(UnixStream),
+            ) as super::LocalConnectorFuture<Self>
+        } else {
+            Box::pin(tokio::net::UnixStream::connect(self.uri.path().to_owned()).map_ok(UnixStream))
+                as super::LocalConnectorFuture<Self>
+        }
     }
 }

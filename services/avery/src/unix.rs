@@ -1,4 +1,5 @@
 use std::{
+    os::unix::io::FromRawFd,
     path::PathBuf,
     pin::Pin,
     task::{Context, Poll},
@@ -50,6 +51,29 @@ pub fn user_data_path() -> Option<PathBuf> {
     .map(|p| p.join("avery"))
 }
 
+// https://www.freedesktop.org/software/systemd/man/sd_listen_fds.html
+fn get_systemd_sockets() -> Vec<std::os::unix::io::RawFd> {
+    std::env::var("LISTEN_FDS")
+        .ok()
+        .and_then(|x| x.parse().ok())
+        .and_then(|offset| {
+            let for_this_pid = match std::env::var("LISTEN_PID").as_ref().map(|x| x.as_str()) {
+                Err(std::env::VarError::NotPresent) | Ok("") => true,
+                Ok(val) if val.parse().ok() == Some(unsafe { libc::getpid() }) => true,
+                _ => false,
+            };
+
+            std::env::remove_var("LISTEN_PID");
+            std::env::remove_var("LISTEN_FDS");
+            for_this_pid.then(|| {
+                (0..offset)
+                    .map(|offset| 3 + offset as std::os::unix::io::RawFd)
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
 pub async fn create_listener(
     log: Logger,
 ) -> Result<
@@ -62,29 +86,48 @@ pub async fn create_listener(
     ),
     String,
 > {
-    let socket_path = format!(
-        "/tmp/avery-{username}.sock",
-        username = get_current_username()
-            .ok_or_else(|| "Failed to determine current unix user name.".to_owned())?
-            .to_string_lossy()
-    );
+    // TODO: socket activation can give more than one socket to bind to
+    // this only supports the first one
+    let (uds, cleanup) = if let Some(sock) = get_systemd_sockets().first() {
+        info!(
+            log,
+            "🧦 The Firm is listening for requests on socket fd (started with socket activation) {}", &sock
+        );
 
-    info!(
-        log,
-        "👨‍⚖️ The Firm is listening for requests on socket {}", &socket_path
-    );
+        UnixListener::from_std(unsafe { std::os::unix::net::UnixListener::from_raw_fd(*sock) })
+            .map_err(|e| format!("Failed to convert Unix listener from std: {}", e))
+            .map(|uds| (uds, None))
+    } else {
+        let socket_path = format!(
+            "/tmp/avery-{username}.sock",
+            username = get_current_username()
+                .ok_or_else(|| "Failed to determine current unix user name.".to_owned())?
+                .to_string_lossy()
+        );
+
+        info!(
+            log,
+            "👨⚖️ The Firm is listening for requests on socket {}", &socket_path
+        );
+
+        UnixListener::bind(&socket_path)
+            .map_err(|e| e.to_string())
+            .map(|uds| {
+                (
+                    uds,
+                    Some(Box::new(|| std::fs::remove_file(socket_path).unwrap_or(()))
+                        as Box<dyn FnOnce()>),
+                )
+            })
+    }?;
 
     Ok((
-        {
-            let uds = UnixListener::bind(&socket_path).map_err(|e| e.to_string())?;
-
-            async_stream::stream! {
-                while let item = uds.accept().map_ok(|(st, _)| UnixStream(st)).await {
-                    yield item;
-                }
+        async_stream::stream! {
+            while let item = uds.accept().map_ok(|(st, _)| UnixStream(st)).await {
+                yield item;
             }
         },
-        Some(Box::new(|| std::fs::remove_file(socket_path).unwrap_or(()))),
+        cleanup,
     ))
 }
 
