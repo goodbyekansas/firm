@@ -18,6 +18,10 @@ fn default_user_and_group() -> String {
     String::from("firm")
 }
 
+fn default_user_socket_url() -> String {
+    String::from(crate::system::DEFAULT_SOCKET_URL)
+}
+
 #[derive(Deserialize)]
 struct MaybeCertificateLocations {
     #[serde(default)]
@@ -27,7 +31,7 @@ struct MaybeCertificateLocations {
     pub certificate_key_location: Option<PathBuf>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(try_from = "MaybeCertificateLocations")]
 pub struct CertificateLocations {
     pub cert: PathBuf,
@@ -51,7 +55,7 @@ impl TryFrom<MaybeCertificateLocations> for CertificateLocations {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Config {
     #[serde(default = "default_port")]
     pub port: u16,
@@ -70,6 +74,9 @@ pub struct Config {
 
     #[serde(default)]
     pub certificate_alt_names: Vec<String>,
+
+    #[serde(default = "default_user_socket_url")]
+    pub user_socket_url: String,
 }
 
 const DEFAULT_CFG_FILE_NAME: &str = "lomax.toml";

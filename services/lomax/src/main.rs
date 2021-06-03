@@ -173,6 +173,10 @@ impl FromStr for UserHostPair {
     }
 }
 
+fn get_user_socket(template: &str, username: &str) -> String {
+    template.replace("{username}", username)
+}
+
 async fn wait_for_approval(
     auth_client: &mut AuthenticationClient<Channel>,
     id: RemoteAccessRequestId,
@@ -194,6 +198,7 @@ async fn auth_against_avery(
     endpoint: Endpoint,
     user_host_pair: UserHostPair,
     token: String,
+    config: Arc<config::Config>,
     logger: Logger,
 ) -> Option<Client<LocalAveryConnector>> {
     grpc_connect(endpoint, logger.new(o!("scope" => "grpc-connect")))
@@ -258,9 +263,9 @@ async fn auth_against_avery(
         })
         .await
         .and_then(|_| {
-            let sock = Uri::from_maybe_shared(system::get_local_socket(&user_host_pair.username))
-                .map_err(|e| {
-                tonic::Status::internal(format!("Invalid local socket URI: {}", e))
+            let uri = get_user_socket(&config.user_socket_url, &user_host_pair.username);
+            let sock = Uri::from_maybe_shared(uri.clone()).map_err(|e| {
+                tonic::Status::internal(format!("Invalid local socket URI \"{}\": {}", uri, e))
             })?;
             get_connector(&sock).ok_or_else(|| {
                 tonic::Status::aborted(format!(
@@ -283,6 +288,7 @@ async fn auth_against_avery(
 async fn authenticate(
     request: &Request<Body>,
     cache: TokenCache,
+    config: Arc<config::Config>,
     logger: Logger,
 ) -> Option<Client<LocalAveryConnector>> {
     let (endpoint, user_host_pair, exp, token, logger) = request
@@ -329,8 +335,9 @@ async fn authenticate(
                 .map(|user_host_pair| (token, user_host_pair, exp, logger))
         })
         .and_then(|(token, user_host_pair, exp, logger)| {
-            Endpoint::from_shared(system::get_local_socket(&user_host_pair.username))
-                .map_err(|e| warn!(logger, "Invalid local socket uri: {}", e))
+            let uri = get_user_socket(&config.user_socket_url, &user_host_pair.username);
+            Endpoint::from_shared(uri.clone())
+                .map_err(|e| warn!(logger, "Invalid local socket uri \"{}\": {}", uri, e))
                 .ok()
                 .map(|endpoint| (endpoint, user_host_pair, exp, token, logger))
         })?;
@@ -340,7 +347,7 @@ async fn authenticate(
         std::collections::hash_map::Entry::Occupied(mut e) => {
             // the expiry of the token is checked elsewhere
             if Utc::now().timestamp() >= e.get().0 {
-                auth_against_avery(endpoint, user_host_pair, token, avery_logger)
+                auth_against_avery(endpoint, user_host_pair, token, config, avery_logger)
                     .await
                     .map(|c| {
                         e.insert((exp, c.clone()));
@@ -351,7 +358,7 @@ async fn authenticate(
             }
         }
         std::collections::hash_map::Entry::Vacant(e) => {
-            auth_against_avery(endpoint, user_host_pair, token, avery_logger)
+            auth_against_avery(endpoint, user_host_pair, token, config, avery_logger)
                 .await
                 .map(|c| {
                     e.insert((exp, c.clone()));
@@ -364,14 +371,18 @@ async fn authenticate(
 async fn proxy(
     request: Request<Body>,
     cache: TokenCache,
+    config: Arc<config::Config>,
     logger: Logger,
 ) -> Result<Response<BoxBody>, hyper::Error> {
     futures::future::ready(
-        authenticate(&request, cache, logger.new(o!("scope" => "authenticate")))
-            .await
-            .ok_or_else(|| {
-                ProxyError::GrpcError(Status::permission_denied("Failed to authenticate."))
-            }),
+        authenticate(
+            &request,
+            cache,
+            config,
+            logger.new(o!("scope" => "authenticate")),
+        )
+        .await
+        .ok_or_else(|| ProxyError::GrpcError(Status::permission_denied("Failed to authenticate."))),
     )
     .and_then(|client| {
         client
@@ -408,7 +419,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("Failed to create certificate directory: {}", e))?;
 
         info!(log, "Generating self signed certificate.");
-        let mut alt_names = config.certificate_alt_names;
+        let mut alt_names = config.certificate_alt_names.clone();
         alt_names.extend(vec![
             hostname::get()
                 .map_err(|e| format!("Failed to get host name: {}", e))?
@@ -450,6 +461,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
     system::drop_privileges(&config.user, &config.group)?;
 
     let cache: TokenCache = Arc::new(RwLock::new(HashMap::new()));
+    let config = Arc::new(config);
     Server::builder(acceptor)
         .http2_only(true)
         .serve(make_service_fn(
@@ -458,9 +470,10 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
                     log.new(o!("client" => context.get_ref().0.peer_addr().map(|sa|
                                                                                sa.to_string()).unwrap_or_default()));
                 let c = Arc::clone(&cache);
+                let config = Arc::clone(&config);
                 async move {
                     Ok::<_, Infallible>(service_fn(move |request| {
-                        proxy(request, Arc::clone(&c), request_logger.new(o!()))
+                        proxy(request, Arc::clone(&c), Arc::clone(&config), request_logger.new(o!()))
                     }))
                 }
             },
