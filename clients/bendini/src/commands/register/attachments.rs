@@ -7,11 +7,12 @@ use std::{
 };
 
 use firm_types::{
+    auth::{authentication_client::AuthenticationClient, AcquireTokenParameters},
     functions::AttachmentUrl,
     functions::{registry_client::RegistryClient, AttachmentId, AttachmentStreamUpload},
-    tonic,
+    tonic::{self, transport::Channel},
 };
-use futures::{FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, TryFutureExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -24,6 +25,7 @@ const CHUNK_SIZE: usize = 8192;
 pub async fn register_and_upload_attachment(
     attachment: &AttachmentInfo,
     mut client: RegistryClient<HttpStatusInterceptor>,
+    auth_client: AuthenticationClient<Channel>,
     progressbar: ProgressBar,
 ) -> Result<AttachmentId, String> {
     const VEHICLES: [&str; 12] = [
@@ -97,6 +99,7 @@ pub async fn register_and_upload_attachment(
         .boxed(),
 
         "https" => upload_via_http(
+            auth_client,
             &upload_url,
             progressbar,
             attachment.request.name.clone(),
@@ -116,24 +119,53 @@ pub async fn register_and_upload_attachment(
     .map(|_| attachment_id)
 }
 
+#[async_trait::async_trait]
 trait AuthBuilder {
-    fn build_auth(self, upload_info: &AttachmentUrl) -> reqwest::RequestBuilder;
+    async fn build_auth(
+        self,
+        upload_info: &AttachmentUrl,
+        auth_client: AuthenticationClient<Channel>,
+    ) -> reqwest::RequestBuilder;
 }
 
+#[async_trait::async_trait]
 impl AuthBuilder for reqwest::RequestBuilder {
-    fn build_auth(self, upload_url: &AttachmentUrl) -> reqwest::RequestBuilder {
+    async fn build_auth(
+        self,
+        upload_url: &AttachmentUrl,
+        mut auth_client: AuthenticationClient<Channel>,
+    ) -> reqwest::RequestBuilder {
         match firm_types::functions::AuthMethod::from_i32(upload_url.auth_method) {
-            Some(firm_types::functions::AuthMethod::Oauth2) => self.bearer_auth(
-                std::env::var_os("OAUTH_TOKEN")
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default(),
-            ),
+            Some(firm_types::functions::AuthMethod::Oauth2) => {
+                match futures::future::ready(url::Url::parse(&upload_url.url).map_err(|_| ()))
+                    .and_then(|url| {
+                        auth_client
+                            .acquire_token(tonic::Request::new(AcquireTokenParameters {
+                                scope: url.host_str().unwrap_or("localhost").to_owned(),
+                            }))
+                            .map_err(|e| {
+                                println!(
+                                    "{}",
+                                    warn!(
+                                        "Failed to acquire a token for uploading attachment: {}",
+                                        e
+                                    )
+                                )
+                            })
+                    })
+                    .await
+                {
+                    Ok(token_response) => self.bearer_auth(token_response.into_inner().token),
+                    Err(_) => self,
+                }
+            }
             _ => self,
         }
     }
 }
 
 async fn upload_via_http(
+    auth_client: AuthenticationClient<Channel>,
     upload_url: &AttachmentUrl,
     progressbar: ProgressBar,
     attachment_name: String,
@@ -155,7 +187,8 @@ async fn upload_via_http(
     progressbar.set_position(0);
     reqwest::Client::new()
         .post(&upload_url.url)
-        .build_auth(&upload_url)
+        .build_auth(&upload_url, auth_client)
+        .await
         .body(buf)
         .send()
         .await

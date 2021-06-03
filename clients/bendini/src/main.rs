@@ -480,7 +480,9 @@ async fn run() -> Result<(), error::BendiniError> {
     match args.cmd {
         Command::List { .. } => commands::list::run(registry_client).await,
 
-        Command::Register { manifest } => commands::register::run(registry_client, &manifest).await,
+        Command::Register { manifest } => {
+            commands::register::run(registry_client, auth_client, &manifest).await
+        }
 
         Command::Run {
             function_id,
