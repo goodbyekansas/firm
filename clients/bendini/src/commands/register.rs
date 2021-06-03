@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use firm_types::{
+    auth::authentication_client::AuthenticationClient,
     functions::{registry_client::RegistryClient, FunctionData},
-    tonic,
+    tonic::{self, transport::Channel},
 };
 use futures::future::try_join_all;
 use indicatif::ProgressBar;
@@ -15,6 +16,7 @@ mod attachments;
 
 pub async fn run(
     mut client: RegistryClient<HttpStatusInterceptor>,
+    auth_client: AuthenticationClient<Channel>,
     manifest: &Path,
 ) -> Result<(), BendiniError> {
     let manifest_path = if manifest.is_dir() {
@@ -40,6 +42,7 @@ pub async fn run(
             attachments::register_and_upload_attachment(
                 &code,
                 client.clone(),
+                auth_client.clone(),
                 mpb.add(ProgressBar::new(128)),
             )
         })
@@ -55,6 +58,7 @@ pub async fn run(
             attachments::register_and_upload_attachment(
                 a,
                 client_clone,
+                auth_client.clone(),
                 mpb.add(ProgressBar::new(128)),
             )
         }))

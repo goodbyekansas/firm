@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 ansi_term = "0.12"
 async-stream = "0.3"
+async-trait = "0.1.50"
 atty = "0.2"
 chrono = "0.4.19"
 der-parser = "5.1.0"
