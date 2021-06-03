@@ -7,6 +7,8 @@ use tokio::{
     signal::unix::{signal, SignalKind},
 };
 
+pub const DEFAULT_SOCKET_URL: &str = "unix://localhost/tmp/avery-{username}.sock";
+
 pub fn get_lomax_cfg_dir() -> Option<PathBuf> {
     Some(PathBuf::from("/etc/lomax"))
 }
@@ -46,13 +48,6 @@ fn get_systemd_sockets() -> Vec<std::os::unix::io::RawFd> {
             })
         })
         .unwrap_or_default()
-}
-
-pub fn get_local_socket(username: &str) -> String {
-    format!(
-        "unix://localhost/tmp/avery-{username}.sock",
-        username = username
-    )
 }
 
 macro_rules! func_ret_null {

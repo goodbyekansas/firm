@@ -3,12 +3,10 @@ use std::path::PathBuf;
 use futures::TryFutureExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+pub const DEFAULT_SOCKET_URL: &str = r#"windows://./pipe/avery-{username}"#;
+
 pub async fn shutdown_signal(_log: slog::Logger) {
     tokio::signal::ctrl_c().await.map_or_else(|_| (), |_| ())
-}
-
-pub fn get_local_socket(username: &str) -> String {
-    format!(r#"windows://./pipe/avery-{username}"#, username = username)
 }
 
 pub fn get_lomax_cfg_dir() -> Option<PathBuf> {
