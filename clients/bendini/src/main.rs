@@ -249,6 +249,10 @@ enum Command {
         #[structopt(subcommand)]
         command: AuthCommand,
     },
+
+    /// Start a text user interface (TUI)
+    #[cfg(feature = "tui")]
+    Ui,
 }
 
 fn parse_key_val(s: &str) -> Result<(String, String), Box<dyn std::error::Error>> {
@@ -513,5 +517,8 @@ async fn run() -> Result<(), error::BendiniError> {
             AuthCommand::Approve { id } => commands::auth::approval(auth_client, true, id).await,
             AuthCommand::Decline { id } => commands::auth::approval(auth_client, false, id).await,
         },
+
+        #[cfg(feature = "tui")]
+        Command::Ui => commands::ui::run(registry_client).await,
     }
 }

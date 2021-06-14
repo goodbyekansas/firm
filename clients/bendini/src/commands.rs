@@ -4,3 +4,6 @@ pub mod list;
 pub mod list_runtimes;
 pub mod register;
 pub mod run;
+
+#[cfg(feature = "tui")]
+pub mod ui;

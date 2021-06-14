@@ -46,6 +46,20 @@ users = "0.11"
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3"
 
+[features]
+default = ["tui"] # TODO: remove thiz or ded
+tui = ["cursive", "cursive_tree_view"]
+
+[dependencies.cursive]
+version = "0.16"
+optional = true
+default-features = false
+features = [ "crossterm-backend", "toml" ]
+
+[dependencies.cursive_tree_view]
+version = "0.7"
+optional = true
+
 # our own version of tokio 1.4.0 with named pipes
 [patch.crates-io]
 tokio = {  git = "https://github.com/goodbyekansas/tokio.git", branch="named-pipes-1.4.0" }
