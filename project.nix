@@ -42,34 +42,6 @@ nedryland.mkProject {
     avery = callFile ./services/avery/avery.nix {
       types = firmTypes.rust.withServices;
     };
-    windows = {
-      avery = callFunction
-        ({ pkgsCross }: avery.override {
-          stdenv = pkgsCross.mingwW64.stdenv;
-          targets = [ "x86_64-pc-windows-gnu" ];
-          defaultTarget = "x86_64-pc-windows-gnu";
-        }) ./services/avery
-        { };
-
-      bendini = callFunction
-        ({ pkgsCross }: bendini.override {
-          stdenv = pkgsCross.mingwW64.stdenv;
-          targets = [ "x86_64-pc-windows-gnu" ];
-          defaultTarget = "x86_64-pc-windows-gnu";
-        }) ./clients/bendini
-        { };
-
-      lomax = callFunction
-        ({ pkgsCross }: lomax.override {
-          stdenv = pkgsCross.mingwW64.stdenv;
-          targets = [ "x86_64-pc-windows-gnu" ];
-          defaultTarget = "x86_64-pc-windows-gnu";
-        }) ./services/lomax
-        { };
-    };
-
-    averyWithRuntimes = callFile ./services/avery/avery-with-runtimes.nix { };
-    averyWithDefaultRuntimes = (callFile ./services/avery/avery-with-runtimes.nix { }) { };
 
     bendini = callFile ./clients/bendini/bendini.nix {
       types = firmTypes.rust.withServices;
@@ -77,15 +49,6 @@ nedryland.mkProject {
 
     firmRust = callFile ./libraries/rust/firm-rust/firm-rust.nix {
       types = firmTypes.rust.withoutServices;
-    };
-
-    osPackaging = callFile ./deployment/os-packaging.nix {
-      linuxPackages = [
-        avery
-        bendini
-      ];
-
-      windowsPackages = [ ];
     };
 
     quinn = callFile ./services/quinn/quinn.nix {

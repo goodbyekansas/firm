@@ -1,9 +1,12 @@
-{ pkgs, base, types, tonicMiddleware, stdenv, targets ? [ ], defaultTarget ? "", pkgsCross ? null }:
-base.languages.rust.mkClient {
-  inherit stdenv targets defaultTarget;
+{ base, types, tonicMiddleware, pkgsCross ? null }:
+base.languages.rust.mkClient rec {
   name = "bendini";
   src = ./.;
-  buildInputs = [ types.package tonicMiddleware.package ]
-    ++ stdenv.lib.optional stdenv.hostPlatform.isWindows
-    pkgsCross.mingwW64.windows.pthreads;
+  buildInputs = [ types.package tonicMiddleware.package ];
+
+  crossTargets = {
+    windows = {
+      buildInputs = buildInputs ++ [ pkgsCross.mingwW64.windows.pthreads ];
+    };
+  };
 }

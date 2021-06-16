@@ -1,16 +1,13 @@
-{ stdenv
-, base
+{ base
 , types
 , tonicMiddleware
-, targets ? [ ]
-, defaultTarget ? ""
-, darwin ? null
 , xcbuild ? null
 , pkgsCross ? null
 , pkg-config
+, lib
+, stdenv
 }:
-base.languages.rust.mkService {
-  inherit stdenv targets defaultTarget;
+(base.languages.rust.mkService rec {
   name = "avery";
   src = ./.;
   srcExclude = [
@@ -18,7 +15,21 @@ base.languages.rust.mkService {
     (path: type: (type == "regular" && baseNameOf path == "avery-with-runtimes.nix"))
   ];
 
-  buildInputs = [ types.package tonicMiddleware.package ]
-    ++ stdenv.lib.optional stdenv.hostPlatform.isWindows pkgsCross.mingwW64.windows.pthreads;
-  nativeBuildInputs = [ pkg-config ] ++ stdenv.lib.optional stdenv.hostPlatform.isDarwin xcbuild;
-}
+  buildInputs = [ types.package tonicMiddleware.package ];
+  nativeBuildInputs = [ pkg-config ]
+    ++ lib.optional stdenv.hostPlatform.isDarwin xcbuild;
+
+  crossTargets = {
+    windows = {
+      buildInputs = buildInputs ++ [ pkgsCross.mingwW64.windows.pthreads ];
+    };
+  };
+
+}).overrideAttrs (attrs: {
+  withRuntimes = base.callFile ./avery-with-runtimes.nix {
+    avery = attrs.package;
+  };
+  withDefaultRuntimes = (base.callFile ./avery-with-runtimes.nix {
+    avery = attrs.package;
+  }) { };
+})
