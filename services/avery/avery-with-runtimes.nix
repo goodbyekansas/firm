@@ -1,4 +1,4 @@
-{ stdenv, base, runtimes, avery, makeWrapper }:
+{ stdenv, base, runtimes, avery, makeWrapper, generateConfig ? true }:
 let
   flattenAttrs = attrs: builtins.map (value: value.package) (builtins.attrValues attrs);
   flattenedRuntimes = flattenAttrs runtimes;
@@ -14,9 +14,9 @@ in
 base.mkComponent {
   name = "avery-bundle";
   package = stdenv.mkDerivation {
+    inherit avery;
     name = "avery-bundle";
     runtimes = flattenedRuntimes ++ flattenedAdditionalRuntimes;
-    avery = avery.package;
     nativeBuildInputs = [ makeWrapper ];
 
     builder = builtins.toFile "builder.sh" ''
@@ -38,9 +38,11 @@ base.mkComponent {
         cat $runtime/share/avery/runtimes/.checksums.toml >> $out/share/avery/runtimes/.checksums.toml
       done
 
-      mkdir -p $out/etc/avery
-      echo "{\"runtime_directories\": [\"$out/share/avery/runtimes\"]}" >$out/etc/avery/avery.json
-      wrapProgram $out/bin/avery --set AVERY_CONFIG $out/etc/avery/avery.json;
+      ${if generateConfig then ''
+        mkdir -p $out/etc/avery
+        echo "{\"runtime_directories\": [\"$out/share/avery/runtimes\"]}" >$out/etc/avery/avery.json
+        wrapProgram $out/bin/avery --set AVERY_CONFIG $out/etc/avery/avery.json;
+      '' else ""}
     '';
   };
 }
