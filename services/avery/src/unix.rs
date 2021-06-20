@@ -21,6 +21,10 @@ pub fn user() -> Option<String> {
     get_current_username().map(|x| x.to_string_lossy().to_string())
 }
 
+pub fn global_config_path() -> Option<PathBuf> {
+    Some(PathBuf::from("/etc/avery"))
+}
+
 pub fn user_config_path() -> Option<PathBuf> {
     match std::env::var("XDG_CONFIG_HOME").ok() {
         Some(p) => Some(PathBuf::from(p)),
