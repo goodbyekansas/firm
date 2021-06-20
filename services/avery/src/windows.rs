@@ -27,6 +27,10 @@ pub fn user() -> Option<String> {
     unsafe { get_user() }
 }
 
+pub fn global_config_path() -> Option<PathBuf> {
+    std::env::var_os("PROGRAMDATA").map(|appdata| PathBuf::from(&appdata).join("avery"))
+}
+
 pub fn user_config_path() -> Option<PathBuf> {
     std::env::var("LOCALAPPDATA")
         .ok()

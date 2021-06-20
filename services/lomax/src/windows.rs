@@ -10,7 +10,7 @@ pub async fn shutdown_signal(_log: slog::Logger) {
 }
 
 pub fn get_lomax_cfg_dir() -> Option<PathBuf> {
-    std::env::var_os("PROGRAMDATA").map(|appdata| PathBuf::from(&appdata))
+    std::env::var_os("PROGRAMDATA").map(|appdata| PathBuf::from(&appdata).join("lomax"))
 }
 
 pub fn drop_privileges(_: &str, _: &str) -> Result<(), String> {

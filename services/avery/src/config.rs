@@ -139,13 +139,25 @@ impl Config {
         let mut c = config::Config::new();
 
         // try some default config file locations
+
         let current_folder_cfg = Path::new(DEFAULT_CFG_FILE_NAME);
         if current_folder_cfg.exists() {
             c.merge(File::from(current_folder_cfg))?;
-        } else if let Some(user_cfg_path) = crate::system::user_config_path() {
-            let path = user_cfg_path.join(DEFAULT_CFG_FILE_NAME);
-            if path.exists() {
-                c.merge(File::from(path))?;
+        } else {
+            // first, a global config file
+            if let Some(global_cfg_path) = crate::system::global_config_path() {
+                let path = global_cfg_path.join(DEFAULT_CFG_FILE_NAME);
+                if path.exists() {
+                    c.merge(File::from(path))?;
+                }
+            }
+
+            // overridden by a local one
+            if let Some(user_cfg_path) = crate::system::user_config_path() {
+                let path = user_cfg_path.join(DEFAULT_CFG_FILE_NAME);
+                if path.exists() {
+                    c.merge(File::from(path))?;
+                }
             }
         }
 
