@@ -6,6 +6,7 @@
 , pkg-config
 , lib
 , stdenv
+, systemd
 }:
 (base.languages.rust.mkService rec {
   name = "avery";
@@ -24,6 +25,10 @@
       buildInputs = buildInputs ++ [ pkgsCross.mingwW64.windows.pthreads ];
     };
   };
+
+  shellInputs = [
+    systemd
+  ];
 
 }).overrideAttrs (attrs: {
   withRuntimes = base.callFile ./avery-with-runtimes.nix {
