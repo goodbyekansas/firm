@@ -129,11 +129,14 @@ impl<'a> TlsAcceptor<'a> {
                 // TODO: socket activation can give more than one socket to bind to
                 // this only supports the first one
                 if let Some(sock) = get_systemd_sockets().first() {
-                    tokio::net::TcpListener::from_std(unsafe {
-                        <std::net::TcpListener as std::os::unix::prelude::FromRawFd>::from_raw_fd(
-                            *sock,
-                        )
-                    })
+                    unsafe {
+                        let sl =
+                            <std::net::TcpListener as std::os::unix::io::FromRawFd>::from_raw_fd(
+                                *sock,
+                            );
+                        sl.set_nonblocking(true).map(|_| sl)
+                    }
+                    .and_then(tokio::net::TcpListener::from_std)
                     .map(|l| {
                         info!(log, "Listening for requests on systemd socket {}", sock);
                         l

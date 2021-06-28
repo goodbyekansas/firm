@@ -30,6 +30,13 @@
     systemd
   ];
 
+  shellHook = ''
+    testSocketActivation() {
+      cargo build
+      systemd-socket-activate -l "/tmp/avery-dev.sock" "target/debug/avery"
+    }
+  '';
+
 }).overrideAttrs (attrs: {
   withRuntimes = base.callFile ./avery-with-runtimes.nix {
     avery = attrs.package;
