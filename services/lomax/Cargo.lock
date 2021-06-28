@@ -572,6 +572,7 @@ dependencies = [
  "http",
  "hyper",
  "jsonwebtoken",
+ "lazy_static",
  "libc",
  "pem",
  "rcgen",

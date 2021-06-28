@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{os::linux::fs::MetadataExt, path::PathBuf};
 
 use futures::{FutureExt, TryFutureExt};
 use slog::{info, Logger};
@@ -45,6 +45,43 @@ macro_rules! func_ret_neg {
     }};
 }
 
+fn get_process_owner() -> (u32, u32) {
+    unsafe { (libc::geteuid(), libc::getegid()) }
+}
+
+lazy_static::lazy_static! {
+    static ref SOCKET_GROUP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+}
+
+async fn set_group(group_id: u32, path: &str) -> Result<(), String> {
+    let _ = SOCKET_GROUP_LOCK.lock().await;
+    unsafe {
+        let (uid, gid) = get_process_owner();
+
+        // Switch to root (0 is root)
+        set_privileges(0, 0)?;
+
+        func_ret_neg!(
+            // You can give chown a -1 for user or group id to
+            // make it not change it. The definition of this
+            // function only takes u32 however, hence the u32::MAX.
+            libc::chown(path.as_ptr() as *const i8, std::u32::MAX, group_id),
+            format!("Failed to set group id for file {}", path)
+        )?;
+
+        set_privileges(uid, gid)
+    }
+}
+
+unsafe fn set_privileges(uid: u32, gid: u32) -> Result<(), String> {
+    // The call order here is of the utmost importance, need to set
+    // group before user or else 💥
+    func_ret_neg!(libc::setegid(gid), "Failed to set group id")?;
+    func_ret_neg!(libc::seteuid(uid), "Failed to set user id")?;
+
+    Ok(())
+}
+
 pub fn drop_privileges(username: &str, groupname: &str) -> Result<(), String> {
     unsafe {
         let uid = *func_ret_null!(
@@ -71,12 +108,8 @@ pub fn drop_privileges(username: &str, groupname: &str) -> Result<(), String> {
             )
         )?;
 
-        // The call order here is of the utmost importance.
-        func_ret_neg!(libc::setgid(gid.gr_gid), "Failed to set group id")?;
-        func_ret_neg!(libc::setuid(uid.pw_uid), "Failed to set user id")?;
+        set_privileges(uid.pw_uid, gid.gr_gid)
     }
-
-    Ok(())
 }
 
 pub struct UnixStream(tokio::net::UnixStream);
@@ -134,7 +167,26 @@ impl hyper::service::Service<http::Uri> for super::LocalAveryConnector {
     }
 
     fn call(&mut self, _req: http::Uri) -> Self::Future {
-        Box::pin(tokio::net::UnixStream::connect(self.uri.path().to_owned()).map_ok(UnixStream))
-            as super::LocalConnectorFuture<Self>
+        let path = self.uri.path().to_owned();
+        let log = self.log.clone();
+        Box::pin(
+            futures::future::ready(std::fs::metadata(&path))
+                .and_then(|metadata| async move {
+                    let (_, egid) = get_process_owner();
+                    if metadata.st_gid() != egid && egid != 0 {
+                        info!(
+                            log,
+                            "Changing group ownership of unix socket to gid {}", egid
+                        );
+                        set_group(egid, &path)
+                            .await
+                            .map(|_| path)
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                    } else {
+                        Ok(path)
+                    }
+                })
+                .and_then(|path| tokio::net::UnixStream::connect(path).map_ok(UnixStream)),
+        ) as super::LocalConnectorFuture<Self>
     }
 }
