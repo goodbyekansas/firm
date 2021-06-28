@@ -75,11 +75,15 @@ impl IntoHyperResult for Result<Response<BoxBody>, ProxyError> {
 #[derive(Clone)]
 struct LocalAveryConnector {
     uri: Uri,
+    log: Logger,
 }
 
 impl LocalAveryConnector {
-    pub fn new(uri: &Uri) -> Self {
-        Self { uri: uri.clone() }
+    pub fn new(uri: &Uri, log: Logger) -> Self {
+        Self {
+            uri: uri.clone(),
+            log,
+        }
     }
 }
 
@@ -94,21 +98,25 @@ type LocalConnectorFuture<C> = std::pin::Pin<
     >,
 >;
 
-fn get_connector(uri: &Uri) -> Option<LocalAveryConnector> {
+fn get_connector(uri: &Uri, log: Logger) -> Option<LocalAveryConnector> {
     match uri.scheme_str() {
         #[cfg(unix)]
-        Some("unix") => Some(LocalAveryConnector::new(uri)),
+        Some("unix") => Some(LocalAveryConnector::new(uri, log)),
 
         #[cfg(windows)]
-        Some("windows") => Some(LocalAveryConnector::new(uri)),
+        Some("windows") => Some(LocalAveryConnector::new(uri, log)),
 
         _ => None,
     }
 }
 
-async fn grpc_connect(endpoint: Endpoint, _logger: Logger) -> Result<Channel, tonic::Status> {
+async fn grpc_connect(endpoint: Endpoint, logger: Logger) -> Result<Channel, tonic::Status> {
     let uri = endpoint.uri().clone();
-    let connector = get_connector(&uri).ok_or_else(|| {
+    let connector = get_connector(
+        &uri,
+        logger.new(o!("scope" => "connector", "uri" => uri.to_string())),
+    )
+    .ok_or_else(|| {
         tonic::Status::aborted(format!(
             "Unsupported uri scheme, expected windows or unix, got \"{}\"",
             uri.scheme_str().unwrap_or_default()
@@ -267,12 +275,14 @@ async fn auth_against_avery(
             let sock = Uri::from_maybe_shared(uri.clone()).map_err(|e| {
                 tonic::Status::internal(format!("Invalid local socket URI \"{}\": {}", uri, e))
             })?;
-            get_connector(&sock).ok_or_else(|| {
-                tonic::Status::aborted(format!(
-                    "Unsupported uri scheme, expected windows or unix, got \"{}\"",
-                    sock.scheme_str().unwrap_or_default()
-                ))
-            })
+            get_connector(&sock, logger.new(o!("scope" => "connector", "uri" => uri))).ok_or_else(
+                || {
+                    tonic::Status::aborted(format!(
+                        "Unsupported uri scheme, expected windows or unix, got \"{}\"",
+                        sock.scheme_str().unwrap_or_default()
+                    ))
+                },
+            )
         })
         .map(|connector| {
             debug!(logger, "Using backend uri \"{}\"", connector.uri);
