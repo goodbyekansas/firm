@@ -98,9 +98,13 @@ pub async fn create_listener(
             "🧦 The Firm is listening for requests on socket fd (started with socket activation) {}", &sock
         );
 
-        UnixListener::from_std(unsafe { std::os::unix::net::UnixListener::from_raw_fd(*sock) })
-            .map_err(|e| format!("Failed to convert Unix listener from std: {}", e))
-            .map(|uds| (uds, None))
+        unsafe {
+            let sl = std::os::unix::net::UnixListener::from_raw_fd(*sock);
+            sl.set_nonblocking(true).map(|_| sl)
+        }
+        .and_then(UnixListener::from_std)
+        .map_err(|e| format!("Failed to convert Unix listener from std: {}", e))
+        .map(|uds| (uds, None))
     } else {
         let socket_path = format!(
             "/tmp/avery-{username}.sock",
