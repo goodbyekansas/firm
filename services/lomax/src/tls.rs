@@ -87,6 +87,30 @@ pub struct TlsAcceptor<'a> {
     acceptor: Pin<Box<dyn Stream<Item = Result<TlsStream<TcpStream>, io::Error>> + 'a>>,
 }
 
+// https://www.freedesktop.org/software/systemd/man/sd_listen_fds.html
+#[cfg(unix)]
+fn get_systemd_sockets() -> Vec<std::os::unix::io::RawFd> {
+    std::env::var("LISTEN_FDS")
+        .ok()
+        .and_then(|x| x.parse().ok())
+        .and_then(|offset| {
+            let for_this_pid = match std::env::var("LISTEN_PID").as_ref().map(|x| x.as_str()) {
+                Err(std::env::VarError::NotPresent) | Ok("") => true,
+                Ok(val) if val.parse().ok() == Some(unsafe { libc::getpid() }) => true,
+                _ => false,
+            };
+
+            std::env::remove_var("LISTEN_PID");
+            std::env::remove_var("LISTEN_FDS");
+            for_this_pid.then(|| {
+                (0..offset)
+                    .map(|offset| 3 + offset as std::os::unix::io::RawFd)
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
 impl<'a> TlsAcceptor<'a> {
     pub async fn new(
         config: ServerConfig,
@@ -99,12 +123,46 @@ impl<'a> TlsAcceptor<'a> {
             0,
             0,
         ));
-        let tcp = TcpListener::bind(&addr)
-            .await
-            .map_err(|e| format!("Failed to bind TCP listener: {}", e))?;
+        let tcp = {
+            #[cfg(unix)]
+            {
+                // TODO: socket activation can give more than one socket to bind to
+                // this only supports the first one
+                if let Some(sock) = get_systemd_sockets().first() {
+                    tokio::net::TcpListener::from_std(unsafe {
+                        <std::net::TcpListener as std::os::unix::prelude::FromRawFd>::from_raw_fd(
+                            *sock,
+                        )
+                    })
+                    .map(|l| {
+                        info!(log, "Listening for requests on systemd socket {}", sock);
+                        l
+                    })
+                    .map_err(|e| {
+                        format!("Failed to create TCP listener from systemd socket: {}", e)
+                    })?
+                } else {
+                    TcpListener::bind(&addr)
+                        .await
+                        .map(|l| {
+                            info!(log, "Listening for requests on port {}", addr.port());
+                            l
+                        })
+                        .map_err(|e| format!("Failed to bind TCP listener: {}", e))?
+                }
+            }
+            #[cfg(windows)]
+            {
+                TcpListener::bind(&addr)
+                    .await
+                    .map(|l| {
+                        info!(log, "Listening for requests on port {}", addr.port());
+                        l
+                    })
+                    .map_err(|e| format!("Failed to bind TCP listener: {}", e))?
+            }
+        };
         let acceptor = TlsAcceptorTokio::from(Arc::new(config));
-
-        info!(log, "Listening for requests on port {}", addr.port());
 
         Ok(Self {
             acceptor: Box::pin(async_stream::stream! {
