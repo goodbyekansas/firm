@@ -15,7 +15,9 @@ use tokio::{
 };
 use users::get_current_username;
 
-pub const DEFAULT_RUNTIME_DIR: &str = "/usr/share/avery/runtimes";
+pub fn default_runtime_dir() -> PathBuf {
+    PathBuf::from("/usr/share/avery/runtimes")
+}
 
 pub fn user() -> Option<String> {
     get_current_username().map(|x| x.to_string_lossy().to_string())

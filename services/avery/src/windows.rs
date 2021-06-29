@@ -13,7 +13,12 @@ use tokio::{
 };
 use winapi::um::{errhandlingapi::GetLastError, winbase::GetUserNameW};
 
-pub const DEFAULT_RUNTIME_DIR: &str = r#"%PROGRAMDATA%\Avery\runtimes"#;
+pub fn default_runtime_dir() -> PathBuf {
+    PathBuf::from(
+        std::env::var_os("PROGRAMDATA").unwrap_or_else(|| std::ffi::OsString::from(r#"C:\ProgramData"#)),
+    )
+    .join(r#"avery\runtimes"#)
+}
 
 unsafe fn get_user() -> Option<String> {
     const CAPACITY: usize = 1024;

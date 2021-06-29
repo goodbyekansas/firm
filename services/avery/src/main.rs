@@ -73,7 +73,7 @@ async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     let mut runtime_directories = config.runtime_directories.clone();
-    runtime_directories.push(PathBuf::from(system::DEFAULT_RUNTIME_DIR));
+    runtime_directories.push(system::default_runtime_dir());
     let directory_sources = runtime_directories
         .into_iter()
         .filter_map(|d| {
