@@ -25,7 +25,7 @@ let
       # deploy is a "magic" target on all components
       # so do not override it
       attrs = builtins.removeAttrs attrs_ [ "deploy" ];
-      manifestGenerator = pkgs.callPackage ./manifest.nix {
+      manifestGenerator = pkgs.callPackage ./function/manifest.nix {
         inherit name;
         manifest = manifest // {
           code = {
@@ -39,8 +39,12 @@ let
       });
     in
     base.mkComponent (
+      { nedrylandType = "function"; } //
       attrs // {
         package = packageWithManifest;
+        docs = attrs.docs or { } // {
+          generated = import ./function/function-doc.nix pkgs base.parseConfig manifest;
+        };
       } // (
         if deploy then {
           deployment = {
@@ -109,6 +113,7 @@ base.extend.mkExtension {
         { name
         , src
         , version
+        , description ? ""
         , packageAttrs ? { }
         , componentAttrs ? { }
         , entrypoint ? "main:main"
@@ -120,7 +125,7 @@ base.extend.mkExtension {
         }:
         let
           pythonVersion = pkgs.python38;
-          pythonWasiPkgs = pkgs.callPackage ./wasi-python-packages.nix { };
+          pythonWasiPkgs = pkgs.callPackage ./function/wasi-python-packages.nix { };
           functionDependencies = dependencies pythonWasiPkgs;
 
           packagedPythonDependencies = pkgs.stdenv.mkDerivation {
@@ -167,7 +172,7 @@ base.extend.mkExtension {
             '';
           };
           manifest = {
-            inherit name version inputs outputs metadata;
+            inherit name version inputs outputs metadata description;
             attachments = attachments // (
               if functionDependencies != [ ] then { dependencies = builtins.toString packagedPythonDependencies; }
               else { }
