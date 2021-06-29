@@ -28,7 +28,9 @@ pub trait ToChannel {
     // TODO: fix below clippy error
     // the trait should be called IntoChannel
     // and the method into_channel since it
-    // consumes (rightfully) the value
+    // consumes (rightfully) the value.
+    // When doing so, also remove clippy allows
+    // below
     #[allow(clippy::wrong_self_convention)]
     fn to_channel(self) -> Channel;
 }
@@ -162,6 +164,7 @@ macro_rules! to_channel_impl {
         }
 
         impl ToChannel for $for_type {
+            #[allow(clippy::wrong_self_convention)]
             fn to_channel(self) -> Channel {
                 Channel {
                     value: Some($channel_type($channel_inner_type {
@@ -174,6 +177,7 @@ macro_rules! to_channel_impl {
 }
 
 impl<T: ToChannel> ToChannel for Option<T> {
+    #[allow(clippy::wrong_self_convention)]
     fn to_channel(self) -> Channel {
         match self {
             Some(value) => value.to_channel(),
