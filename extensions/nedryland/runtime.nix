@@ -30,7 +30,7 @@ let
         }
         ''
           mkdir -p $out/bin
-          substituteAll ${./runtime-runner.bash} $out/bin/runtime-runner
+          substituteAll ${./runtime/runtime-runner.bash} $out/bin/runtime-runner
           chmod +x $out/bin/runtime-runner
         '';
       mkPackage = base.languages.rust.mkPackage.override { stdenv = pkgs.pkgsCross.wasi32.clang12Stdenv; };

@@ -1,0 +1,51 @@
+body {
+    background-color: #121212;
+}
+p {
+    color: #d6d6d6;
+}
+.content {
+    margin: auto;
+    background-color: #333333;
+    min-width: 40em;
+    width: 50%;
+    padding: 0.5em;
+    height: 1000px;
+}
+tr.common_info, tr:nth-child(even).common_info {
+    background-color:#333333;
+}
+.name, .version, .runtime {
+    text-align: left;
+}
+h1 {
+    text-align: center;
+    color: #F0810F;
+    font-family: monospace;
+    font-size: 3.5em;
+}
+h2 {
+    color: #F0810F;
+    font-family: monospace;
+    font-size: 2em;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+table td:last-child {
+    width: 75%;
+}
+th, td {
+    color: #d6d6d6;
+}
+tr {
+    background-color: #151D21;
+}
+tr:nth-child(even) {
+    background-color: #202F35;
+}
+td {
+    text-align: left;
+    padding: 0.2em 1em;
+}

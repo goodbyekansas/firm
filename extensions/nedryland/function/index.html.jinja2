@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<head>
+    <title>{% block page_title %}{{manifest.title}}{% endblock %}</title>
+    {% block style %}
+    <link rel="stylesheet" href="styles.css">
+    {% endblock%}
+</head>
+<body>
+    {% block header %}
+    {% endblock%}
+    <div class="content">
+        <div class="title">
+            {% block title %}
+            <h1>{{manifest.title}}</h1>
+            {% endblock %}
+        </div>
+        {% block common_info %}
+        <table class="common_info">
+            <tr class="common_info">
+                <th class="name">Name</th>
+                <td class="name">{{manifest.name}}</td>
+            </tr>
+            <tr class="common_info">
+                <th class="version">Version</th>
+                <td class="version">{{manifest.version}}</td>
+            </tr>
+            <tr class="common_info">
+                <th class="runtime">Runtime</th>
+                <td class="runtime">{{manifest.runtime}}</td>
+            </tr>
+        </table>
+        {% endblock %}
+        {% if "description" in manifest%}
+        {% block description %}
+        <div class="description">
+            <p>{{manifest.get("description", "")}}</p>
+        </div>
+        {% endblock %}
+        {% endif %}
+        {% if "required_inputs" in manifest or "optional_inputs" in manifest or "outputs" in manifest %}
+        <div id="inputs_outputs">
+            {% if "required_inputs" in manifest or "optional_inputs" in manifest %}
+            <div class="inputs">
+                {% if "required_inputs" in manifest and manifest.required_inputs != {} %}
+                <div class="required_inputs">
+                    {% block required_inputs %}
+                    <h2>Required Inputs</h2>
+                    <table>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                        {% for name, input in manifest.required_inputs.items() %}
+                        <tr>
+                            <td>{{name}}</th>
+                            <td>{{input.type}}</td>
+                            <td>{{input.get("description", "")}}</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                    {% endblock %}
+                </div>
+                {% endif %}
+                {% if "optional_inputs" in manifest and manifest.optional_inputs != {} %}
+                <div class="optional_inputs">
+                    {% block optional_inputs %}
+                    <h2>Optional Inputs</h2>
+                    <table>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Description</th>
+                        </tr>
+                        {% for name, input in manifest.optional_inputs.items() %}
+                        <tr>
+                            <td>{{name}}</th>
+                            <td>{{input.type}}</td>
+                            <td>{{input.get("description", "")}}</td>
+                        </tr>
+                        {% endfor %}
+                    </table>
+                    {% endblock %}
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+            {% if "outputs" in manifest and manifest.outputs != {} %}
+            <div class="outputs">
+                {% block outputs %}
+                <h2>Outputs</h2>
+                <table>
+                    <tr>
+                        <th>Name</th>
+                        <th>Type</th>
+                        <th>Description</th>
+                    </tr>
+                    {% for name, output in manifest.outputs.items() %}
+                    <tr>
+                        <td>{{name}}</th>
+                        <td>{{output.type}}</td>
+                        <td>{{output.get("description", "")}}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+                {% endblock %}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+        {% if "metadata" in manifest and manifest.metadata != {} %}
+        <div class="metadata">
+            {% block metadata %}
+            <h2>Metadata</h2>
+            <table>
+            {% for key, value in manifest.metadata.items() %}
+            <tr>
+                <th>{{key}}</td>
+                <td>{{value}}</td>
+            </tr>
+            {% endfor %}
+            </table>
+            {% endblock %}
+        </div>
+        {% endif %}
+    </div>
+    {% block footer %}
+    {% endblock%}
+</body>
