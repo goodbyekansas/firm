@@ -266,6 +266,10 @@ impl Runtime for WasiRuntime {
         .map_err(|e| format!("failed to instantiate WASI module: {}", e))?
         .exports
         .get_function(&entrypoint)
+        .map(|a| {
+            info!(function_logger, "Calling entrypoint {}", &entrypoint);
+            a
+        })
         .map_err(|e| format!("Failed to resolve entrypoint {}: {}", &entrypoint, e))?
         .call(&[])
         .map_err(|e| format!("Failed to call entrypoint function {}: {}", &entrypoint, e))?;
