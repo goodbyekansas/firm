@@ -104,6 +104,32 @@ impl Runtime for NestedWasiRuntime {
                 message: e.to_string(),
             })?;
 
+        let runtime_timestamp = self
+            .runtime_executable
+            .metadata()
+            .and_then(|meta| meta.created())
+            .map_err(|_| ())
+            .and_then(|created| {
+                created
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| ())
+            })
+            .map_or(0, |timestamp| timestamp.as_secs());
+
+        let mut runtime_url = url::Url::from_file_path(&self.runtime_executable).map_err(|_| {
+            RuntimeError::RuntimeError {
+                name: String::from("nested-wasi"),
+                message: format!(
+                    "URL of runtime executable at \"{}\" is invalid",
+                    self.runtime_executable.display()
+                ),
+            }
+        })?;
+
+        // set a query string to prevent negative caching of the
+        // attachment we create below
+        runtime_url.set_query(Some(&format!("checksum={}", self.runtime_checksums.sha256)));
+
         self.wasi_runtime.execute(
             RuntimeParameters {
                 function_name: runtime_parameters.function_name.to_owned(),
@@ -112,22 +138,12 @@ impl Runtime for NestedWasiRuntime {
                 code: Some(Attachment {
                     name: format!("{}-runtime-code", self.runtime_name),
                     url: Some(AttachmentUrl {
-                        url: format!("file://{}", self.runtime_executable.display()),
+                        url: runtime_url.to_string(),
                         auth_method: AuthMethod::None as i32,
                     }),
                     metadata: HashMap::new(),
                     checksums: Some(self.runtime_checksums.clone()),
-                    created_at: self
-                        .runtime_executable
-                        .metadata()
-                        .and_then(|meta| meta.created())
-                        .map_err(|_| ())
-                        .and_then(|created| {
-                            created
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map_err(|_| ())
-                        })
-                        .map_or(0, |timestamp| timestamp.as_secs()),
+                    created_at: runtime_timestamp,
                 }),
                 arguments: HashMap::new(), // files on disk can not have arguments
                 function_dir: runtime_parameters.function_dir,

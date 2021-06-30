@@ -455,8 +455,15 @@ fn test_attachments() {
     assert!(code_url.is_ok());
     let code_url = code_url.unwrap();
     assert_eq!(code_url.scheme(), "file");
-    assert!(std::path::Path::new(&code.url.unwrap().url[7..])
+    // Verify that the registry created a directory for holding attachments. Note that
+    // we haven't actually uploaded any attachment content therefore the _file_ will not
+    // exist.
+    assert!(code_url
+        .to_file_path()
+        .unwrap()
         .parent()
+        .unwrap()
+        .canonicalize()
         .unwrap()
         .exists());
 
@@ -467,8 +474,13 @@ fn test_attachments() {
         .find(|a| a.name == "attachment2");
     assert!(attach.is_some());
 
-    let file_path = &attach.as_ref().unwrap().url.as_ref().unwrap().url[7..];
-    let file_content = std::fs::read(file_path).unwrap();
+    let file_path = Url::parse(&attach.unwrap().url.as_ref().unwrap().url)
+        .unwrap()
+        .to_file_path()
+        .unwrap()
+        .canonicalize()
+        .unwrap();
+    let file_content = std::fs::read(&file_path).unwrap();
     assert_eq!(file_content, b"sunesunesunesunesune");
 
     // non-registered attachment

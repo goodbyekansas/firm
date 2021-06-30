@@ -44,14 +44,14 @@ impl FunctionDirectory {
         root: &Path,
         function_name: &str,
         function_version: &str,
-        code_checksum: &str,
+        checksum: &str,
         execution_id: &str,
     ) -> std::io::Result<Self> {
         let root_path = root.join(format!(
             "{name}-{version}-{checksum}",
             name = function_name,
             version = function_version,
-            checksum = code_checksum
+            checksum = checksum
         ));
         let attachments_path = root_path.join("attachments");
         let cache_path = root_path.join("cache");

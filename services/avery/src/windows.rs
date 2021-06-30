@@ -15,7 +15,8 @@ use winapi::um::{errhandlingapi::GetLastError, winbase::GetUserNameW};
 
 pub fn default_runtime_dir() -> PathBuf {
     PathBuf::from(
-        std::env::var_os("PROGRAMDATA").unwrap_or_else(|| std::ffi::OsString::from(r#"C:\ProgramData"#)),
+        std::env::var_os("PROGRAMDATA")
+            .unwrap_or_else(|| std::ffi::OsString::from(r#"C:\ProgramData"#)),
     )
     .join(r#"avery\runtimes"#)
 }
