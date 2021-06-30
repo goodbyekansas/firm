@@ -10,7 +10,11 @@ let
         base.deployment.mkDeployment {
           name = "deploy-${package.name}";
           deployPhase = ''
-            ${bendini.package}/bin/bendini ${host'} register ${package}/manifest.toml
+            bendiniCommand=${bendini.package}/bin/bendini
+            if [ -n "$(which bendini)" ] && [ -z "$BENDINI_DEV" ]; then
+              bendiniCommand=bendini
+            fi
+            $bendiniCommand ${host'} register ${package}/manifest.toml
           '';
         }
       )
