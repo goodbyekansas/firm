@@ -252,11 +252,18 @@ impl ExecutionServiceTrait for ExecutionService {
             &queued_function.function.version,
             &queued_function
                 .function
-                .code
-                .as_ref()
-                .and_then(|cs| cs.checksums.as_ref())
-                .map(|cs| &cs.sha256[..16])
-                .unwrap_or("no-code"),
+                .metadata
+                .get("_dev-checksum")
+                .or_else(|| {
+                    queued_function
+                        .function
+                        .code
+                        .as_ref()
+                        .and_then(|cs| cs.checksums.as_ref())
+                        .map(|cs| &cs.sha256)
+                })
+                .map(|cs| &cs[..16])
+                .unwrap_or("no-checksum"),
             &uuid.to_string(),
         )
         .map_err(|ioe| {
@@ -475,13 +482,37 @@ impl AttachmentDownload for Attachment {
             .map(|b| (b, AuthMethod::from_i32(attachment_url.auth_method)))?;
 
         let content = match (url.scheme(), auth_method) {
-            ("file", _) => {
-                // The Url parser loses information on file paths. Therefore just take
-                // The original and skip "file://"
-                fs::read(&attachment_url.url[7..]).map_err(|e| {
-                    RuntimeError::AttachmentReadError(attachment_url.url.to_owned(), e.to_string())
+            ("file", _) => url
+                .to_file_path()
+                .map_err(|_| {
+                    RuntimeError::InvalidCodeUrl(format!(
+                        "Attachment URL {} is not a valid file path",
+                        url
+                    ))
                 })
-            }
+                .and_then(|path| {
+                    // we need to canonicalize again since on Windows the
+                    // path -> url -> path dance removes the verbatim prefix (\\?\)
+                    // canonicalize adds it back
+                    path.canonicalize().map_err(|e| {
+                        RuntimeError::AttachmentReadError(
+                            attachment_url.url.to_owned(),
+                            format!(
+                                "Failed to canonicalize attachment file path \"{}\": {}",
+                                path.display(),
+                                e
+                            ),
+                        )
+                    })
+                })
+                .and_then(|path| {
+                    fs::read(path).map_err(|e| {
+                        RuntimeError::AttachmentReadError(
+                            attachment_url.url.to_owned(),
+                            e.to_string(),
+                        )
+                    })
+                }),
             ("https", Some(auth_method)) | ("http", Some(auth_method)) => {
                 let request = reqwest::Client::new().get(url.clone());
 
@@ -652,7 +683,12 @@ mod tests {
     #[tokio::test]
     async fn test_download() {
         // non-existent file
-        let attachment = attachment!("file:///this-file-does-not-exist");
+        #[cfg(unix)]
+        let filepath = "file:///this-file-does-not-exist";
+        #[cfg(windows)]
+        let filepath = r#"file://C:\this-file-does-not-exist"#;
+
+        let attachment = attachment!(filepath);
         let r = attachment.download(&AuthService::default()).await;
         assert!(r.is_err());
         assert!(matches!(

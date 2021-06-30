@@ -382,7 +382,7 @@ impl Registry for RegistryService {
         &self,
         register_request: tonic::Request<FunctionData>,
     ) -> Result<tonic::Response<ProtoFunction>, tonic::Status> {
-        let payload = register_request.into_inner();
+        let mut payload = register_request.into_inner();
 
         validate_name(&payload.name).map_err(|e| {
             tonic::Status::new(
@@ -424,16 +424,20 @@ impl Registry for RegistryService {
         })?;
 
         // validate attachments
-        payload
+        let combined_checksum = payload
             .attachment_ids
             .iter()
             .chain(payload.code_attachment_id.iter())
-            .fold(Ok(()), |r, id| match self.get_attachment(id) {
-                Ok(_) => r,
-                Err(e) => match r {
-                    Ok(_) => Err(format!("{} ({})", id.uuid, e.message())),
-                    Err(e2) => Err(format!("{}, {} ({})", e2, id.uuid, e.message())),
-                },
+            .fold(Ok(Sha256::new()), |r, id| {
+                match (r, self.get_attachment(id)) {
+                    (Ok(mut cs), Ok(a)) => {
+                        cs.update(a.checksums.unwrap_or_default().sha256);
+                        Ok(cs)
+                    }
+                    (Ok(_), Err(e)) => Err(format!("{} ({})", id.uuid, e.message())),
+                    (Err(e), Ok(_)) => Err(e),
+                    (Err(e1), Err(e2)) => Err(format!("{}, {} ({})", e1, id.uuid, e2.message())),
+                }
             })
             .map_err(|msg| {
                 tonic::Status::new(
@@ -441,6 +445,11 @@ impl Registry for RegistryService {
                     format!("Failed to get attachment for ids: [{}]", msg),
                 )
             })?;
+
+        payload.metadata.insert(
+            String::from("_dev-checksum"),
+            format!("{:x}", combined_checksum.finalize()),
+        );
 
         let function = Function {
             name: payload.name,
@@ -501,12 +510,41 @@ impl Registry for RegistryService {
             auth_method: AuthMethod::None as i32,
         });
 
+        fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&path)
+            .map_err(|e| {
+                tonic::Status::internal(format!(
+                    "Failed to create attachment file {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?;
+
         function_attachments.insert(
             id,
             Attachment {
                 name: payload.name,
                 url: Some(AttachmentUrl {
-                    url: format!("file://{}", path.display()),
+                    url: path
+                        .canonicalize()
+                        .map_err(|e| {
+                            tonic::Status::internal(format!(
+                                r#"Failed to canonicalize attachment path "{}": {}"#,
+                                path.display(),
+                                e
+                            ))
+                        })
+                        .and_then(|p| {
+                            url::Url::from_file_path(&p).map_err(|_| {
+                                tonic::Status::internal(format!(
+                                    r#"Attachment path "{}" could not be made into a valid url"#,
+                                    p.display()
+                                ))
+                            })
+                        })?
+                        .to_string(),
                     auth_method: AuthMethod::None as i32,
                 }),
                 metadata: payload.metadata,
