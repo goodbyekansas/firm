@@ -1,14 +1,14 @@
 [package]
 name = "python"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
 [dependencies]
-firm = { version = "0.1", registry="nix", features=["net", "runtime"] }
-firm-types = {version="0.1", registry="nix"}
+firm = { version = "1.0.0", registry="nix", features=["net", "runtime"] }
+firm-types = {version="1.0.0", registry="nix"}
 
-wasi-python-shims = { version = "0.1", registry="nix" }
+wasi-python-shims = { version = "1.0.0", registry="nix" }
 
 zip = "0.5"
 

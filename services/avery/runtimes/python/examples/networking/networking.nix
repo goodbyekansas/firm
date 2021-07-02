@@ -1,7 +1,7 @@
 { base, pkgs }:
 base.languages.python.mkFunction {
   name = "networking";
-  version = "0.1.0";
+  version = "1.0.0";
   src = ./.;
   entrypoint = "networking:main";
 

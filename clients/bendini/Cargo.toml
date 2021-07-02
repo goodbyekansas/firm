@@ -1,6 +1,6 @@
 [package]
 name = "bendini"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
@@ -37,8 +37,8 @@ toml = "0.5"
 tower = "0.4"
 url = "2"
 
-firm-types = { version = "0.1", registry = "nix" }
-tonic-middleware = { version = "0.1", registry = "nix" }
+firm-types = { version = "1.0.0", registry = "nix" }
+tonic-middleware = { version = "1.0.0", registry = "nix" }
 
 [target.'cfg(unix)'.dependencies]
 users = "0.11"

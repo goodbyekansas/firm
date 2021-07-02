@@ -1,10 +1,10 @@
 [package]
 name = "firm-types"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
 [dependencies]
 thiserror = "1"
 prost = "0.7"
-firm-protocols = { version = "0.1", registry = "nix" }
+firm-protocols = { version = "1.0.0", registry = "nix" }

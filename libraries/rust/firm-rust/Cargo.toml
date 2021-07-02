@@ -1,6 +1,6 @@
 [package]
 name = "firm"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
@@ -9,7 +9,7 @@ lazy_static = { version = "1", optional = true }
 prost = "0.7"
 thiserror = "1"
 
-firm-types = { version="0.1", registry = "nix" }
+firm-types = { version="1.0.0", registry = "nix" }
 
 [dev-dependencies]
 lazy_static = "1"

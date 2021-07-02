@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="firm-types",
-    version="0.1.0",
+    version="1.0.0",
     url="https://github.com/goodbyekansas/firm",
     author="GBK Pipeline Team",
     author_email="pipeline@goodbyekansas.com",

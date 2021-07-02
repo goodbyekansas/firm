@@ -1,6 +1,6 @@
 [package]
 name = "avery"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
@@ -45,8 +45,8 @@ warp = { version = "0.3", default_features = false, features = ["tokio-rustls"] 
 wasmer = "1"
 wasmer-wasi = "1"
 
-firm-types = { version = "0.1", registry = "nix" }
-tonic-middleware = { version = "0.1", registry = "nix" }
+firm-types = { version = "1.0.0", registry = "nix" }
+tonic-middleware = { version = "1.0.0", registry = "nix" }
 
 [dev-dependencies]
 mockito = "0.30.0"
