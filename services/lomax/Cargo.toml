@@ -1,6 +1,6 @@
 [package]
 name = "lomax"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
@@ -24,9 +24,10 @@ structopt = "0.3.21"
 tokio = { version = "=1.4.0", features = ["rt-multi-thread", "macros", "signal"] }
 tokio-rustls = "0.22"
 tower = "0.4.7"
-firm-types = { version = "0.1", registry = "nix" }
 jsonwebtoken = "7.2.0"
 lazy_static = "1"
+
+firm-types = { version = "1.0.0", registry = "nix" }
 
 # our own version of tokio 1.4.0 with named pipes
 [patch.crates-io]

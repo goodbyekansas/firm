@@ -1,7 +1,7 @@
 { base, pkgs }:
 base.languages.python.mkFunction {
   name = "firm-api";
-  version = "0.1.0";
+  version = "1.0.0";
   src = ./.;
   entrypoint = "firm_api:main";
 
