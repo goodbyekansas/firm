@@ -3,7 +3,7 @@ let
   sources = import ./nix/sources.nix;
   nedryland = (if nedrylandOverride == null then (import sources.nedryland) else nedrylandOverride);
 in
-nedryland.mkProject {
+nedryland.mkProject rec{
   name = "firm";
   baseExtensions = [
     ./extensions/nedryland/function.nix
@@ -62,5 +62,9 @@ nedryland.mkProject {
     tonicMiddleware = callFile ./libraries/rust/tonic-middleware/tonic-middleware.nix {
       protocols = protocols.withServices.rust; # This brings tonic which we will need. A bit hard to see.
     };
+  };
+
+  extraShells = { callFile }: {
+    release = callFile ./extensions/shells/release.nix { inherit components; };
   };
 }
