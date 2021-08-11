@@ -98,7 +98,7 @@ checksum = "904dfeac50f3cdaba28fc6f57fdcddb75f49ed61346676a78c4ffe55877802fd"
 
 [[package]]
 name = "bendini"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "ansi_term 0.12.1",
  "async-stream",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "firm-protocols"
-version = "0.1.0"
+version = "1.0.0"
 source = "registry+https://fake-nix-registry/not-really-an-index"
 dependencies = [
  "bytes",
@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "firm-types"
-version = "0.1.0"
+version = "1.0.0"
 source = "registry+https://fake-nix-registry/not-really-an-index"
 dependencies = [
  "firm-protocols",
@@ -1484,7 +1484,7 @@ dependencies = [
 
 [[package]]
 name = "tonic-middleware"
-version = "0.1.0"
+version = "1.0.0"
 source = "registry+https://fake-nix-registry/not-really-an-index"
 dependencies = [
  "firm-protocols",

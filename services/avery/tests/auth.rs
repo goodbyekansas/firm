@@ -386,7 +386,7 @@ async fn list() {
         String::from("user@host"),
         "Expected to grant approval for the subject coupled with the remote access request id."
     );
-    assert_eq!(approval.approved, true, "Expected approval to approve.");
+    assert!(approval.approved, "Expected approval to approve.");
 
     // Test if aproved requests are filtered out.
     let requests = auth_service
@@ -449,7 +449,7 @@ async fn list() {
         String::from("nobody@host"),
         "Expected to deny the subject coupled with the remote access request id."
     );
-    assert_eq!(denial.approved, false, "Expected denial to deny.");
+    assert!(!denial.approved, "Expected denial to deny.");
 
     let requests = auth_service
         .list_remote_access_requests(tonic::Request::new(

@@ -15,6 +15,7 @@ futures = "0.3"
 hex = "0.4"
 hostname = "0.3.1"
 jsonwebtoken = "7.2.0"
+lazy_static = "1.4"
 num_cpus = "1.13.0"
 open = "1.6"
 prost = "0.7"
@@ -32,6 +33,7 @@ slog = "2"
 slog-async = "2"
 slog-term = "2"
 structopt = "0.3"
+sudo = "0.6.0"
 tar = "0.4"
 tempfile = "3"
 thiserror = "1"
@@ -58,7 +60,10 @@ users = "0.11"
 libc = "0.2.95"
 
 [target.'cfg(windows)'.dependencies]
+triggered = "0.1"
 winapi = "0.3"
+windows-service = "0.3"
+windows-acl = "0.3"
 
 # our own version of tokio 1.4.0 with named pipes
 [patch.crates-io]
