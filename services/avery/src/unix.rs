@@ -7,13 +7,28 @@ use std::{
 
 use firm_types::tonic::transport::server::Connected;
 use futures::{FutureExt, TryFutureExt};
-use slog::{info, Logger};
+use slog::{error, info, o, Logger};
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::UnixListener,
     signal::unix::{signal, SignalKind},
 };
 use users::get_current_username;
+
+use crate::run;
+
+pub fn bootstrap(args: run::AveryArgs) -> Result<(), i32> {
+    let exit_log = run::create_logger().new(o!("scope" => "unhandled_error"));
+
+    if sudo::check() == sudo::RunningAs::Root {
+        error!(exit_log, "Avery can not be run as root! Exiting");
+        return Err(1i32);
+    }
+    run::run_with_tokio(args).map_err(|e| {
+        error!(exit_log, "Unhandled error: {}. Exiting", e);
+        1i32
+    })
+}
 
 pub fn default_runtime_dir() -> PathBuf {
     PathBuf::from("/usr/share/avery/runtimes")
@@ -150,8 +165,8 @@ async fn sig_term() {
 
 pub async fn shutdown_signal(log: Logger) {
     futures::select! {
-        () = tokio::signal::ctrl_c().map_ok_or_else(|_| (), |_| ()).fuse() => { info!(log, "Recieved Ctrl-C"); },
-        () = sig_term().fuse() => { info!(log, "Recieved SIGTERM"); }
+        () = tokio::signal::ctrl_c().map_ok_or_else(|_| (), |_| ()).fuse() => { info!(log, "Received Ctrl-C"); },
+        () = sig_term().fuse() => { info!(log, "Received SIGTERM"); }
     }
 }
 

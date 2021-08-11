@@ -6,11 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Avery can now be run as a user service on windows.
+- As a windows service avery writes to the event log.
 ## [1.0.0] - 2021-07-03
 
 ### Added
-- Authentication service
-- Registry service
-- Execution service
-- Wasi runtime
-- Python runtime
+- Authentication service.
+- Registry service.
+- Execution service.
+- Wasi runtime.
+- Python runtime.
