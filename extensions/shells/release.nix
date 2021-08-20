@@ -1,4 +1,4 @@
-{ base, mkShell, linkFarm, python38, lib, components, fetchFromGitHub, github-release, avery, bendini }:
+{ base, mkShell, linkFarm, python38, lib, components, fetchFromGitHub, github-release }:
 let
   components' = components { inherit (base) callFile callFunction; };
   allChangelogs =
