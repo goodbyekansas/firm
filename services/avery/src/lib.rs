@@ -17,3 +17,7 @@ pub mod windows;
 pub use windows as system;
 #[cfg(windows)]
 pub mod windows_event_log;
+
+// Please check note about winlog in Cargo.toml
+#[cfg(windows)]
+mod winlog_hack;
