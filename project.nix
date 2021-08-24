@@ -62,6 +62,8 @@ nedryland.mkProject rec{
     tonicMiddleware = callFile ./libraries/rust/tonic-middleware/tonic-middleware.nix {
       protocols = protocols.withServices.rust; # This brings tonic which we will need. A bit hard to see.
     };
+
+    windowsInstaller = callFile ./clients/windows-installer/windows-installer.nix { };
   };
 
   extraShells = { callFile }: {
