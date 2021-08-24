@@ -17,8 +17,13 @@
   ];
 
   buildInputs = [ types.package tonicMiddleware.package ];
+
   nativeBuildInputs = [ pkg-config ]
     ++ lib.optional stdenv.hostPlatform.isDarwin xcbuild;
+
+  shellInputs = [
+    systemd
+  ];
 
   crossTargets = {
     windows = {
@@ -26,21 +31,17 @@
     };
   };
 
-  shellInputs = [
-    systemd
-  ];
-
   shellHook = ''
     testSocketActivation() {
       cargo build
       systemd-socket-activate -l "/tmp/avery-dev.sock" "target/debug/avery"
     }
   '';
-
 }).overrideAttrs (attrs: {
   withRuntimes = base.callFile ./avery-with-runtimes.nix {
     avery = attrs.package;
   };
+
   withDefaultRuntimes = (base.callFile ./avery-with-runtimes.nix {
     avery = attrs.package;
   }) { };

@@ -21,6 +21,14 @@ impl WinRecord {
     fn from_record(info: &Record, level: Level, logger_values: &OwnedKVList) -> Option<Self> {
         (info.level() <= level)
             .then(|| match info.level() {
+                // These hex valuese depend on the winlog crate version 0.2.6.
+                // The winlog crate generates a bunch of enums from the windows message and resource compiler
+                // These enums are not public and relies on the behaviour of the message and resource compiler
+                // together with the resource files in the winlog repository. Depending on this crate also
+                // ensures we get these message resources compiled into our executable which is a requirement
+                // for windows to parse events in the event logger correctly (this is why windows locks a bunch
+                // of executables if you are in the event viewer)
+                // TODO: Generate our own resources for our executable.
                 Level::Critical => (0xC0000001, EVENTLOG_ERROR_TYPE),
                 Level::Error => (0xC0000001, EVENTLOG_ERROR_TYPE),
                 Level::Warning => (0x80000002, EVENTLOG_WARNING_TYPE),
