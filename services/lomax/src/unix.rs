@@ -1,11 +1,13 @@
 use std::{os::linux::fs::MetadataExt, path::PathBuf};
 
 use futures::{FutureExt, TryFutureExt};
-use slog::{info, Logger};
+use slog::{error, info, o, Logger};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     signal::unix::{signal, SignalKind},
 };
+
+use crate::run::{self, LocalAveryConnector, LocalConnectorFuture};
 
 pub const DEFAULT_SOCKET_URL: &str = "unix://localhost/tmp/avery-{username}.sock";
 
@@ -154,10 +156,10 @@ impl hyper::client::connect::Connection for UnixStream {
     }
 }
 
-impl hyper::service::Service<http::Uri> for super::LocalAveryConnector {
+impl hyper::service::Service<http::Uri> for LocalAveryConnector {
     type Response = UnixStream;
     type Error = std::io::Error;
-    type Future = super::LocalConnectorFuture<Self>;
+    type Future = LocalConnectorFuture<Self>;
 
     fn poll_ready(
         &mut self,
@@ -187,6 +189,14 @@ impl hyper::service::Service<http::Uri> for super::LocalAveryConnector {
                     }
                 })
                 .and_then(|path| tokio::net::UnixStream::connect(path).map_ok(UnixStream)),
-        ) as super::LocalConnectorFuture<Self>
+        ) as LocalConnectorFuture<Self>
     }
+}
+
+pub fn bootstrap(args: run::LomaxArgs) -> Result<(), i32> {
+    let exit_log = run::create_logger().new(o!("scope" => "unhandled_error"));
+    run::run_with_tokio(args).map_err(|e| {
+        error!(exit_log, "Unhandled error: {}. Exiting", e);
+        1i32
+    })
 }
