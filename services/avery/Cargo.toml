@@ -64,6 +64,7 @@ triggered = "0.1"
 winapi = "0.3"
 windows-service = "0.3"
 windows-acl = "0.3"
+windows_events = { version = "0.1.0", registry = "nix" }
 
 # We currently depend on this specific version.
 # This crate uses the windows message and resource compiler to link in messages

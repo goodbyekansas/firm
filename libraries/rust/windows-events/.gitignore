@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+Cargo.lock
+/res/*.bin
+/res/*.h
+/res/*.rc
+.idea
+/message_source
+/build.rs
