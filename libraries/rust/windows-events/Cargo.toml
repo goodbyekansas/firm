@@ -1,0 +1,27 @@
+[package]
+name = "windows_events"
+version = "0.1.0"
+authors = ["Jeroen C. van Gelderen <jeroen@vangelderen.org>", "GBK Pipeline Team <pipeline@goodbyekansas.com>"]
+build = "build.rs"
+categories = [ "development-tools::debugging", "os::windows-apis" ]
+description = "A simple Rust slog backend to send messages to the Windows event log."
+keywords = [ "eventlog", "logging", "windows", "slog" ]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+edition = "2018"
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+
+[build-dependencies]
+regex = { version = "1.0", features = ["std", "unicode-perl"], default-features = false }
+sha2 = "0.8.0"
+
+[dependencies]
+slog = "2"
+thiserror = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-acl = "0.3"
+winapi = { version = "0.3", features = [ "winbase" ] }
+winreg = "0.9"

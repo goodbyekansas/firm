@@ -7,6 +7,7 @@
 , lib
 , stdenv
 , systemd
+, windowsEvents
 }:
 (base.languages.rust.mkService rec {
   name = "avery";
@@ -16,7 +17,7 @@
     (path: type: (type == "regular" && baseNameOf path == "avery-with-runtimes.nix"))
   ];
 
-  buildInputs = [ types.package tonicMiddleware.package ];
+  buildInputs = [ types.package tonicMiddleware.package windowsEvents.package ];
 
   nativeBuildInputs = [ pkg-config ]
     ++ lib.optional stdenv.hostPlatform.isDarwin xcbuild;

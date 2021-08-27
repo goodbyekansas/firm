@@ -7,7 +7,6 @@ use std::{
 };
 
 use crate::run::{self, AveryArgs};
-use crate::windows_event_log::WinEvent;
 use firm_types::tonic::transport::server::Connected;
 use futures::{FutureExt, TryFutureExt};
 use lazy_static::lazy_static;
@@ -19,6 +18,7 @@ use tokio::{
 };
 use triggered::{Listener, Trigger};
 use winapi::um::{errhandlingapi::GetLastError, winbase::GetUserNameW};
+use windows_events::WinLogger;
 use windows_service::{
     define_windows_service,
     service::{
@@ -60,13 +60,17 @@ fn service_main(_: Vec<OsString>) {
     // again, we need args both before and after this point so there's no good way
     // around it.
     let args = run::AveryArgs::from_args();
-
     let log = Logger::root(
-        slog_async::Async::new(WinEvent::new("Avery").ignore_res())
-            .build()
-            .fuse(),
+        slog_async::Async::new(
+            WinLogger::try_new("Avery")
+                .expect("Failed to create windows event logger for Avery")
+                .ignore_res(),
+        )
+        .build()
+        .fuse(),
         o!(),
     );
+
     let exit_log = log.new(o!("scope" => "unhandled_error"));
 
     let started_callback = |status_handle: ServiceStatusHandle| {
