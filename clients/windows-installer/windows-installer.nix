@@ -1,10 +1,29 @@
-{ base, symlinkJoin, writeScript, stdenv, pkgsCross, lib, avery, bendini, lomax, configFiles ? null, extraRuntimes ? null }:
+{ base
+, symlinkJoin
+, writeScript
+, stdenv
+, pkgsCross
+, lib
+, version
+, windowsEvents
+, avery
+, bendini
+, lomax
+, configFiles ? null
+, extraRuntimes ? null
+}:
 let
   bundle = symlinkJoin {
     name = "firm-install-bundle";
     paths = [ avery.windows lomax.windows bendini.windows ]
-      ++ (lib.optional (configFiles != null) configFiles)
-      ++ (lib.optional (extraRuntimes != null) extraRuntimes);
+      ++ (lib.optional (configFiles != null) configFiles);
+    postBuild =
+      if extraRuntimes != null then ''
+        mkdir -p $out/avery/runtimes
+        shopt -s dotglob
+        cp --symbolic-link ${extraRuntimes}/* $out/avery/runtimes
+        shopt -u dotglob
+      '' else "";
   };
   archive = stdenv.mkDerivation {
     name = "firm-install-archive.tar.gz";
@@ -17,10 +36,11 @@ in
 (base.languages.rust.mkClient {
   name = "firm-installer";
   src = ./.;
+  inherit version;
 
   crossTargets = {
     windows = {
-      buildInputs = [ pkgsCross.mingwW64.windows.pthreads ];
+      buildInputs = [ pkgsCross.mingwW64.windows.pthreads windowsEvents.package ];
     };
   };
 
