@@ -29,6 +29,13 @@ lazy_static = "1"
 
 firm-types = { version = "1.0.0", registry = "nix" }
 
+[target.'cfg(windows)'.dependencies]
+triggered = "0.1"
+winapi = "0.3"
+windows-acl = "0.3"
+windows-service = "0.3"
+windows_events = { version = "0.1.0", registry = "nix" }
+
 # our own version of tokio 1.4.0 with named pipes
 [patch.crates-io]
 tokio = {  git = "https://github.com/goodbyekansas/tokio.git", branch="named-pipes-1.4.0" }
