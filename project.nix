@@ -2,6 +2,7 @@
 let
   sources = import ./nix/sources.nix;
   nedryland = (if nedrylandOverride == null then (import sources.nedryland) else nedrylandOverride);
+  version = "1.0.0";
 in
 nedryland.mkProject rec{
   name = "firm";
@@ -63,7 +64,7 @@ nedryland.mkProject rec{
       protocols = protocols.withServices.rust; # This brings tonic which we will need. A bit hard to see.
     };
 
-    windowsInstaller = callFile ./clients/windows-installer/windows-installer.nix { };
+    windowsInstaller = callFile ./clients/windows-installer/windows-installer.nix { inherit version; };
 
     windowsEvents = callFile ./libraries/rust/windows-events/windows-events.nix { };
   };

@@ -92,10 +92,7 @@ pub fn try_deregister(name: &str) -> Result<(), EventError> {
         .and_then(
             |current_version| match current_version.delete_subkey(name) {
                 Ok(_) => Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    println!(r#"Found no event named "{}" to deregister"#, name);
-                    Ok(())
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
                 Err(e) => Err(e),
             },
         )
