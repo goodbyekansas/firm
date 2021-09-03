@@ -21,7 +21,7 @@ use crate::run::{self, LomaxArgs};
 pub const DEFAULT_SOCKET_URL: &str = r#"windows://./pipe/avery-{username}"#;
 
 pub fn get_lomax_cfg_dir() -> Option<PathBuf> {
-    std::env::var_os("PROGRAMDATA").map(|appdata| PathBuf::from(&appdata).join("lomax"))
+    std::env::var_os("PROGRAMDATA").map(|appdata| PathBuf::from(&appdata).join("Firm"))
 }
 
 pub fn drop_privileges(_: &str, _: &str) -> Result<(), String> {
@@ -163,7 +163,7 @@ fn service_main(_: Vec<OsString>) {
         }
     };
 
-    service_control_handler::register("avery", event_handler)
+    service_control_handler::register("lomax", event_handler)
         .map_err(|e| {
             error!(exit_log, "Could not register event handler: {}", e);
         })
@@ -212,7 +212,7 @@ pub fn bootstrap(args: LomaxArgs) -> Result<(), i32> {
     match args.service {
         true => {
             let exit_log = run::create_logger().new(o!("scope" => "unhandled_error"));
-            service_dispatcher::start("avery", ffi_service_main).map_err(|e| {
+            service_dispatcher::start("lomax", ffi_service_main).map_err(|e| {
                 error!(
                     exit_log,
                     "Failed to dispatch service: {}: {}",
