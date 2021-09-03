@@ -168,7 +168,9 @@ pub fn default_runtime_dir() -> PathBuf {
         std::env::var_os("PROGRAMDATA")
             .unwrap_or_else(|| std::ffi::OsString::from(r#"C:\ProgramData"#)),
     )
-    .join(r#"avery\runtimes"#)
+    .join("Firm")
+    .join("avery")
+    .join("runtimes")
 }
 
 unsafe fn get_user() -> Option<String> {
@@ -184,7 +186,7 @@ pub fn user() -> Option<String> {
 }
 
 pub fn global_config_path() -> Option<PathBuf> {
-    std::env::var_os("PROGRAMDATA").map(|appdata| PathBuf::from(&appdata).join("avery"))
+    std::env::var_os("PROGRAMDATA").map(|appdata| PathBuf::from(&appdata).join("Firm"))
 }
 
 pub fn user_config_path() -> Option<PathBuf> {
