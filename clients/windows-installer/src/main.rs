@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs, io,
     path::{Path, PathBuf},
 };
@@ -15,6 +16,8 @@ use winapi::um::{
 };
 mod registry;
 mod service;
+
+use registry::RegistryEditor;
 
 const AVERY: &str = "Avery";
 const LOMAX: &str = "Lomax";
@@ -95,6 +98,41 @@ macro_rules! pass_result {
             debug!($logger, "{}: {}", $error_message, e)
         }
     }};
+}
+
+const DEFAULT_FIRM_BIN_PATH: &str = r#"C:\Program Files\Firm"#;
+const DEFAULT_FIRM_DATA_PATH: &str = r#"C:\ProgramData\Firm"#;
+
+pub fn find_firm<F: Fn() -> PathBuf, G: Fn() -> PathBuf>(
+    reg_edit: &RegistryEditor,
+    logger: &Logger,
+    default_program_files: F,
+    default_program_data: G,
+) -> (PathBuf, PathBuf) {
+    reg_edit.find_application("Firm").map(|entries| {
+        (
+            entries.get("InstallPath")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    debug!(logger, "Failed to find install path for Firm in registry. Getting default.");
+                    default_program_files()
+                }),
+            entries.get("DataPath")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    debug!(logger, "Failed to find data path for Firm in registry. Getting default.");
+                    default_program_data()
+                }),
+        )
+    }).unwrap_or_else(|e| {
+        debug!(
+            logger,
+            "Failed to find firm application. Falling back to use default data and install paths: {}", e);
+        (
+            default_program_files(),
+            default_program_data()
+        )
+    })
 }
 
 fn default_path_from_env(logger: &Logger, key: &str, default: &str) -> PathBuf {
@@ -222,7 +260,13 @@ fn get_config_arg(path: &Path, name: &str) -> String {
 
 fn upgrade(logger: Logger) -> Result<(), InstallerError> {
     info!(logger, "☝️ Upgrading...");
-    let (exe_path, data_path) = registry::find_firm(logger.new(o!()));
+    let reg_edit = registry::RegistryEditor::new();
+    let (exe_path, data_path) = find_firm(
+        &reg_edit,
+        &logger,
+        || default_path_from_env(&logger, "PROGRAMFILES", DEFAULT_FIRM_BIN_PATH),
+        || default_path_from_env(&logger, "PROGRAMDATA", DEFAULT_FIRM_DATA_PATH),
+    );
     uninstall(logger.new(o!("scope" => "uninstall")));
 
     install(logger.new(o!("scope" => "install")), &exe_path, &data_path)
@@ -242,7 +286,8 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
         data_path.to_string_lossy()
     );
     info!(logger, "💾 Installing...");
-    pass_result!(logger, registry::cancel_pending_deletions(install_path));
+    let reg_edit = registry::RegistryEditor::new();
+    pass_result!(logger, reg_edit.cancel_pending_deletions(install_path));
 
     copy_files(&logger, install_path, data_path)
         .and_then(|_| {
@@ -282,9 +327,45 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
                 .and_then(|lomax| service::start_service(&lomax))
                 .map_err(Into::into)
         })
-        .and_then(|_| registry::add_to_path(&install_path).map_err(Into::into))
-        .and_then(|_| registry::register_firm(install_path, data_path).map_err(Into::into))
-        .and_then(|_| registry::register_uninstaller(&install_path).map_err(Into::into))
+        .and_then(|_| reg_edit.add_to_path(&install_path).map_err(Into::into))
+        .and_then(|_| {
+            let mut additional_data = HashMap::new();
+            additional_data.insert(
+                String::from("DataPath"),
+                data_path.to_string_lossy().into_owned(),
+            );
+            additional_data.insert(String::from("Version"), String::from(std::env!("version")));
+            reg_edit
+                .register_application("Firm", install_path, additional_data)
+                .map_err(Into::into)
+        })
+        .and_then(|_| {
+            let mut extra_info = HashMap::new();
+            extra_info.insert(
+                String::from("InstallLocation"),
+                install_path.to_string_lossy().into_owned(),
+            );
+            extra_info.insert(
+                String::from("DisplayVersion"),
+                std::env!("version").to_owned(),
+            );
+            extra_info.insert(
+                String::from("URLInfoAbout"),
+                String::from("https://github.com/goodbyekansas/firm"),
+            );
+            reg_edit
+                .register_uninstaller(
+                    "Firm",
+                    "Firm",
+                    format!(
+                        r#"{}\install.exe uninstall"#,
+                        &install_path.to_string_lossy()
+                    )
+                    .as_str(),
+                    &extra_info,
+                )
+                .map_err(Into::into)
+        })
         .map_err(|e| {
             error!(logger, "🧹 Install failed, cleaning up...");
             uninstall(logger.new(o!("scope" => "cleanup")));
@@ -307,7 +388,7 @@ fn uninstall(logger: Logger) {
                 user_services
                     .iter()
                     .try_for_each(|handle| {
-                        debug!(logger, "Stopping: {:#?}", handle);
+                        debug!(logger, "Stopping: {}", handle);
                         service::stop_service(handle)
                     })
                     .map(|_| manager_handle)
@@ -332,13 +413,18 @@ fn uninstall(logger: Logger) {
             }),
         "😭 Failed to stop services"
     );
-
+    let reg_edit = registry::RegistryEditor::new();
     pass_result!(logger, windows_events::try_deregister(AVERY));
     pass_result!(logger, windows_events::try_deregister(LOMAX));
 
-    let (exe_path, data_path) = registry::find_firm(logger.new(o!()));
-    pass_result!(logger, registry::remove_from_path(&exe_path));
-    pass_result!(logger, registry::remove_from_path(&data_path));
+    let (exe_path, data_path) = find_firm(
+        &reg_edit,
+        &logger,
+        || default_path_from_env(&logger, "PROGRAMFILES", DEFAULT_FIRM_BIN_PATH),
+        || default_path_from_env(&logger, "PROGRAMDATA", DEFAULT_FIRM_DATA_PATH),
+    );
+    pass_result!(logger, reg_edit.remove_from_path(&exe_path));
+    pass_result!(logger, reg_edit.remove_from_path(&data_path));
 
     debug!(logger, "Marking folders for deletion");
     registry::mark_folder_for_deletion(&exe_path)
@@ -346,8 +432,8 @@ fn uninstall(logger: Logger) {
         .for_each(|e| debug!(logger, "{}", e));
 
     pass_result!(logger, remove_directory(&data_path));
-    pass_result!(logger, registry::deregister_firm());
-    pass_result!(logger, registry::deregister_uninstaller());
+    pass_result!(logger, reg_edit.deregister_application("Firm"));
+    pass_result!(logger, reg_edit.deregister_uninstaller("Firm"));
 }
 
 fn main() -> Result<(), u32> {
@@ -374,11 +460,13 @@ fn main() -> Result<(), u32> {
         } => install(
             log.new(o!("scope" => "install")),
             &install_path.unwrap_or_else(|| {
-                default_path_from_env(&log, "PROGRAMFILES", r#"C:\Program Files"#)
+                default_path_from_env(&log, "PROGRAMFILES", DEFAULT_FIRM_BIN_PATH)
             }),
-            &data_path
-                .unwrap_or_else(|| default_path_from_env(&log, "PROGRAMDATA", r#"C:\ProgramData"#)),
-        ),
+            &data_path.unwrap_or_else(|| {
+                default_path_from_env(&log, "PROGRAMDATA", DEFAULT_FIRM_DATA_PATH)
+            }),
+        )
+        .map(|_| info!(log, "Avery user service will start on next log in.")),
         InstallOperation::Upgrade => upgrade(log.new(o!("scope" => "upgrade"))),
         InstallOperation::Uninstall => {
             uninstall(log.new(o!("scope" => "uninstall")));
@@ -390,4 +478,43 @@ fn main() -> Result<(), u32> {
         e.into()
     })
     .map(|_| info!(log, "💪 Done!"))
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::*;
+    use crate::populate_fake_registry;
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
+
+    macro_rules! null_logger {
+        () => {{
+            slog::Logger::root(slog::Discard, slog::o!())
+        }};
+    }
+
+    #[test]
+    fn finding_firm() {
+        let registry_keys = Arc::new(RwLock::new(HashMap::new()));
+        let root = populate_fake_registry!(registry_keys, {r#"SOFTWARE\Firm"#.to_string() => {"InstallPath" => "🍊", "DataPath" => "🥭", "Version" => "🕳️"}});
+        let editor = RegistryEditor::new_with_registry(root);
+        let log = null_logger!();
+        let (exe, data) = find_firm(&editor, &log, PathBuf::new, PathBuf::new);
+        assert_eq!(exe, PathBuf::from("🍊"));
+        assert_eq!(data, PathBuf::from("🥭"));
+
+        // Test when we have not put in the data
+        let registry_keys = Arc::new(RwLock::new(HashMap::new()));
+        let root = populate_fake_registry!(registry_keys, [String::from(r#"SOFTWARE\Firm"#)]);
+        let editor = registry::RegistryEditor::new_with_registry(root);
+        let (exe, data) = find_firm(
+            &editor,
+            &log,
+            || PathBuf::from("🔮"),
+            || PathBuf::from("🪕"),
+        );
+        assert_eq!(exe, PathBuf::from("🔮"));
+        assert_eq!(data, PathBuf::from("🪕"));
+    }
 }
