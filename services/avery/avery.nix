@@ -40,10 +40,10 @@
   '';
 }).overrideAttrs (attrs: {
   withRuntimes = base.callFile ./avery-with-runtimes.nix {
-    avery = attrs.package;
+    avery = attrs;
   };
 
   withDefaultRuntimes = (base.callFile ./avery-with-runtimes.nix {
-    avery = attrs.package;
+    avery = attrs;
   }) { };
 })
