@@ -10,20 +10,14 @@
 , bendini
 , lomax
 , configFiles ? null
-, extraRuntimes ? null
+, additionalRuntimes ? { }
 }:
 let
+  avery' = (avery.withRuntimes.override { generateConfig = false; }) { inherit additionalRuntimes; };
   bundle = symlinkJoin {
     name = "firm-install-bundle";
-    paths = [ avery.windows lomax.windows bendini.windows ]
+    paths = [ avery'.windows lomax.windows bendini.windows ]
       ++ (lib.optional (configFiles != null) configFiles);
-    postBuild =
-      if extraRuntimes != null then ''
-        mkdir -p $out/avery/runtimes
-        shopt -s dotglob
-        cp --symbolic-link ${extraRuntimes}/* $out/avery/runtimes
-        shopt -u dotglob
-      '' else "";
   };
   archive = stdenv.mkDerivation {
     name = "firm-install-archive.tar.gz";
