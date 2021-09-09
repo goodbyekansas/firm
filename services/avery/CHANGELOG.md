@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2021-09-09
+
 ### Added
 - Avery can now be run as a user service on windows.
 - As a windows service avery writes to the event log.
