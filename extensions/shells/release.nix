@@ -19,10 +19,14 @@ let
                 (
                   names: comp:
                     if comp ? path && (builtins.readDir (builtins.dirOf comp.path)) ? "CHANGELOG.md" then
-                      { component = builtins.concatStringsSep "-" names; changelog = (builtins.dirOf comp.path) + /CHANGELOG.md; }
+                      {
+                        component = builtins.concatStringsSep "-" names;
+                        changelog = builtins.toString ((builtins.dirOf comp.path) + /CHANGELOG.md);
+                      }
                     else null
                 )
                 components')))));
+
       uniqueChangelogs =
         lib.mapAttrsToList
           (changelog: component: { name = component; path = changelog; })
@@ -34,7 +38,7 @@ let
                 acc // { "${cur.changelog}" = cur.component; }
             )
             { }
-            (builtins.trace allComponentChangelogs allComponentChangelogs));
+            allComponentChangelogs);
     in
     linkFarm
       "firm-changelogs"
