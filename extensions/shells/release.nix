@@ -69,26 +69,29 @@ mkShell {
     }
 
     makeRelease() {
-        git checkout main
-        git pull
-        version=$(python ${./release/changelog.py} version)
-        description=$(python ${./release/changelog.py} description)
-        old_tags=$(git tag)
-        if [[ "$version" =~ $old_tags ]]; then
-          echo "$version is already tagged"
-        else
-          git tag -a "$version" -m "🔖 Firm $version"
-          git push origin "$version"
-        fi
-        if [ -z "$GITHUB_TOKEN" ]; then
-          if [ -n "$1" ]; then
-            github_token="--security-token \"$1\""
+        (
+          set -e
+          git checkout main
+          git pull
+          version=$(python ${./release/changelog.py} version)
+          description=$(python ${./release/changelog.py} description)
+          old_tags=$(git tag)
+          if [[ $old_tags =~ "$version" ]]; then
+            echo "$version is already tagged"
           else
-            echo "No access token found, can not make a github release remotely!"
-            exit 1
+            git tag -a "$version" -m "🔖 Firm $version"
+            git push origin "$version"
           fi
-        fi
-        github-release release --tag "$version" --description "$description" "$github_token"
+          if [ -z "$GITHUB_TOKEN" ]; then
+            if [ -n "$1" ]; then
+              GITHUB_TOKEN=$(cat $1)
+            else
+              echo "No access token found and GITHUB_TOKEN was not set, can not make a github release remotely!"
+              exit 1
+            fi
+          fi
+          github-release release --tag "$version" --description "$description"
+        )
     }
 
     export GITHUB_USER="goodbyekansas"
@@ -103,7 +106,7 @@ mkShell {
     echo "  Updates and gathers all changelogs for all components and put them in the main CHANGELOG.md."
     echo "  Use updateChangelogs --help for more info."
     echo
-    echo -e "\033[1;96mmakeRelease\033[0m <access token>"
+    echo -e "\033[1;96mmakeRelease\033[0m <access token path>"
     echo "  Creates a tag at the current commit on main, pushes it and makes a github release."
     echo '  Requires a personal access token to be entered or $GITHUB_TOKEN to be set'
     echo
