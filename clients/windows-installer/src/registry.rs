@@ -4,14 +4,9 @@ use std::{
 };
 
 use regex::Regex;
+use std::path::PathBuf;
 use thiserror::Error;
-use winapi::{
-    shared::ntdef::{LPCWSTR, NULL},
-    um::{
-        winbase::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT},
-        winreg::REGSAM,
-    },
-};
+use winapi::um::winreg::REGSAM;
 use winreg::{
     enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE},
     types::FromRegValue,
@@ -42,9 +37,6 @@ pub enum RegistryError {
 
     #[error("Failed to deregister uninstaller: {0}")]
     FailedToDeregisterUninstaller(IoError),
-
-    #[error("Failed to mark file for reboot deletion: {0}")]
-    FailedToMarkFileForRebootDeletion(String),
 
     #[error(r#"Failed to mark folder "{0}" for deletion: {1}"#)]
     FailedToMarkDirectoryForRebootDeletion(String, IoError),
@@ -138,101 +130,59 @@ impl From<RegistryError> for u32 {
             RegistryError::FailedToRemoveFromPath(_) => 13,
             RegistryError::FailedToRegisterUninstaller(_) => 14,
             RegistryError::FailedToDeregisterUninstaller(_) => 15,
-            RegistryError::FailedToMarkFileForRebootDeletion(_) => 16,
-            RegistryError::FailedToMarkDirectoryForRebootDeletion(_, _) => 17,
-            RegistryError::FailedToCancelFileDeletion(_) => 18,
-            RegistryError::RegistryKeyError(_) => 19,
-            RegistryError::FailedToRegisterApplication(_, _) => 20,
-            RegistryError::FailedToDeregisterApplication(_, _) => 21,
+            RegistryError::FailedToMarkDirectoryForRebootDeletion(_, _) => 16,
+            RegistryError::FailedToCancelFileDeletion(_) => 17,
+            RegistryError::RegistryKeyError(_) => 18,
+            RegistryError::FailedToRegisterApplication(_, _) => 19,
+            RegistryError::FailedToDeregisterApplication(_, _) => 20,
         }
     }
 }
 
-fn remove_pending_file_deletions(path: &Path, data: &str) -> Result<String, regex::Error> {
-    /*While there is a way to add to this registry value through the winapi with
-    MoveFileEx we haven't found any way to remove entries from it. The problem is
-    if an uninstall is done then certain folders are marked for deletion but if
-    someone installs it again these folders will still be located in the registry
-    which means the newly installed app will get deleted on reboot. The solution
-    here is to manually edit the registry key to remove the files for deletion.
-
-    Windows expects the format to have one entry separated with two new lines.
-    This just ensures we keep the expected format. If not, windows will become
-    confused and just not delete the files on reboot.
-    */
-    Regex::new(&format!(
-        r#"(?m)^\\\?\?\\{}.*\n\n"#,
-        path.to_string_lossy().into_owned().escape_default()
-    ))
-    .map(|regex| regex.replace_all(data, "").into_owned())
-}
-
-fn mark_file_for_reboot_delete(path: &Path) -> Option<RegistryError> {
-    let win_path = crate::service::win_string(&path.to_string_lossy());
-    (unsafe {
-        MoveFileExW(
-            win_path.as_ptr(),
-            NULL as LPCWSTR,
-            MOVEFILE_DELAY_UNTIL_REBOOT,
-        )
-    } == 0)
-        .then(|| {
-            RegistryError::FailedToMarkFileForRebootDeletion(path.to_string_lossy().into_owned())
-        })
-}
-
-fn recursively_mark_for_delete(path: &Path) -> Vec<RegistryError> {
-    std::fs::read_dir(path)
-        .map(|entries| {
-            entries
-                .filter_map(|entry| {
-                    if let Ok(p) = entry {
-                        if p.path().is_dir() {
-                            Some(recursively_mark_for_delete(&p.path()))
-                        } else {
-                            mark_file_for_reboot_delete(&p.path()).map(|v| vec![v])
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .flatten()
-                .collect::<Vec<RegistryError>>()
-        })
-        .unwrap_or_else(|e| {
-            vec![RegistryError::FailedToMarkDirectoryForRebootDeletion(
-                path.to_string_lossy().into_owned(),
-                e,
-            )]
-        })
-}
-
-pub fn mark_folder_for_deletion(path: &Path) -> Vec<RegistryError> {
-    if path.is_dir() {
-        recursively_mark_for_delete(&path)
-    } else {
-        vec![]
-    }
-    .into_iter()
-    .chain(mark_file_for_reboot_delete(path).into_iter())
-    .collect()
-}
-
 pub struct RegistryEditor<'a> {
     registry: Box<dyn RegistryKey + 'a>,
+    get_folder_paths: Box<dyn Fn(&Path) -> Result<Vec<PathBuf>, IoError> + 'a>,
+}
+
+fn get_folder_paths(path: &Path) -> Result<Vec<PathBuf>, IoError> {
+    std::fs::read_dir(path).and_then(|entries| {
+        entries
+            .map(|entry| {
+                entry.and_then(|de| {
+                    if de.path().is_dir() {
+                        get_folder_paths(&de.path())
+                    } else {
+                        Ok(vec![de.path()])
+                    }
+                })
+            })
+            .collect::<Result<Vec<Vec<_>>, IoError>>()
+            .map(|r| {
+                r.into_iter()
+                    .flatten()
+                    .chain(vec![PathBuf::from(path)])
+                    .collect()
+            })
+    })
 }
 
 impl<'a> RegistryEditor<'a> {
     pub fn new() -> Self {
         Self {
             registry: Box::new(RegKey::predef(HKEY_LOCAL_MACHINE)) as Box<dyn RegistryKey>,
+            get_folder_paths: Box::new(get_folder_paths),
         }
     }
 
     #[cfg(test)]
-    pub fn new_with_registry<T: RegistryKey + 'a>(registry: T) -> Self {
+    pub fn new_with_registry<T, F>(registry: T, lambda: F) -> Self
+    where
+        T: RegistryKey + 'a,
+        F: Fn(&Path) -> Result<Vec<PathBuf>, IoError> + 'a,
+    {
         Self {
             registry: Box::new(registry),
+            get_folder_paths: Box::new(lambda),
         }
     }
 
@@ -355,25 +305,91 @@ impl<'a> RegistryEditor<'a> {
     }
 
     pub fn cancel_pending_deletions(&self, path: &Path) -> Result<(), RegistryError> {
+        Regex::new(&format!(
+            r#"^\\\?\?\\{}.*"#,
+            path.to_string_lossy().into_owned().escape_default()
+        ))
+        .map_err(|e| {
+            RegistryError::FailedToCancelFileDeletion(format!(
+                "Failed to create regex: {}",
+                e.to_string()
+            ))
+        })
+        .and_then(|regex| {
+            self.get_pending_deletions().map(|paths| {
+                paths
+                    .into_iter()
+                    .filter(|path| !regex.is_match(path))
+                    .collect::<Vec<String>>()
+            })
+        })
+        .and_then(|new_deletions| self.set_pending_deletions(&new_deletions))
+    }
+
+    fn get_pending_deletions(&self) -> Result<Vec<String>, RegistryError> {
+        // There is an expected format to this string.
+        // Path, two new lines, another path two new lines etc.
+
+        // Keyboard cowboys are using the registry which means we need to make sure
+        // that the format is expected since anyone can edit this string.
+
+        // We've noticed that even when using the winapi to add paths the format
+        // is ruined due to others presumably editing and inserting bad things.
+
         self.registry
             .open_subkey_with_flags(PENDING_REMOVAL_KEY, KEY_READ | KEY_WRITE)
             .map_err(|e| RegistryError::FailedToCancelFileDeletion(format!("{}", e)))
             .and_then(|key| {
                 key.get_value(PENDING_OPERATIONS)
                     .map_err(|e| RegistryError::FailedToCancelFileDeletion(format!("{}", e)))
-                    .and_then(|v| {
-                        // Technically someone could add another key to this registry value
-                        // during this time but... https://www.youtube.com/watch?v=tpD00Q4N6Jk
-                        remove_pending_file_deletions(path, &v)
-                            .map_err(|e| {
-                                RegistryError::FailedToCancelFileDeletion(format!("{}", e))
-                            })
-                            .and_then(|s| {
-                                key.set_value(PENDING_OPERATIONS, &s).map_err(|e| {
-                                    RegistryError::FailedToCancelFileDeletion(format!("{}", e))
-                                })
-                            })
-                    })
+            })
+            .map(|remove_entry| {
+                remove_entry
+                    .lines()
+                    .filter_map(|entry| (!entry.is_empty()).then(|| entry.to_owned()))
+                    .collect()
+            })
+    }
+
+    fn set_pending_deletions(&self, pending_deletions: &[String]) -> Result<(), RegistryError> {
+        self.registry
+            .open_subkey_with_flags(PENDING_REMOVAL_KEY, KEY_READ | KEY_WRITE)
+            .map_err(|e| RegistryError::FailedToCancelFileDeletion(format!("{}", e)))
+            .and_then(|key| {
+                key.set_value(
+                    PENDING_OPERATIONS,
+                    &pending_deletions.iter().fold(String::new(), |acc, entry| {
+                        format!("{}{}\n\n", acc, entry.to_owned())
+                    }),
+                )
+                .map_err(|e| RegistryError::FailedToCancelFileDeletion(format!("{}", e)))
+            })
+    }
+
+    pub fn mark_for_delete(&self, path: &Path) -> Result<(), RegistryError> {
+        (self.get_folder_paths)(path)
+            .map_err(|e| {
+                RegistryError::FailedToMarkDirectoryForRebootDeletion(
+                    format!(
+                        "Failed to get files and folders for \"{}\"",
+                        path.to_string_lossy().into_owned()
+                    ),
+                    e,
+                )
+            })
+            .and_then(|paths| self.mark_paths_for_delete(&paths))
+    }
+
+    fn mark_paths_for_delete(&self, paths: &[PathBuf]) -> Result<(), RegistryError> {
+        // TODO: Add transaction layer around this.
+        self.get_pending_deletions()
+            .and_then(|mut deletion_content| {
+                deletion_content.extend(
+                    paths
+                        .iter()
+                        .map(|p| format!(r#"\??\{}"#, p.to_string_lossy().into_owned())),
+                );
+                self.set_pending_deletions(deletion_content.as_slice())
             })
     }
 }
@@ -561,58 +577,187 @@ pub mod test {
         }
     }
 
+    fn get_test_folder_paths(_path: &Path) -> Result<Vec<PathBuf>, IoError> {
+        Ok(vec![
+            PathBuf::from(r#"B:\hus\matbord.mp3"#),
+            PathBuf::from(r#"B:\hus\bullar.wav"#),
+            PathBuf::from(r#"B:\hus\garage\verktyg.zip"#),
+            PathBuf::from(r#"B:\hus\garage\bilar.txt"#),
+            PathBuf::from(r#"B:\hus\garage"#),
+            PathBuf::from(r#"B:\hus"#),
+        ])
+    }
+
     #[test]
-    fn test_remove_pending_file_operations() {
-        let data = r#"\??\C:\Program Files\Firm\avery.exe
+    fn get_deletions_formatting() {
+        let pending_file_deletions = r#"bune
 
-\??\C:\Program Files\Firm\bendini.exe
 
-\??\C:\Program Files\Firm\install.exe
+rune
 
-\??\C:\Program Files\Firm\lomax.exe
-
-\??\C:\Program Files\Firm
-
-\??\D:\Program Files\Firm
-"#;
-        let new_data =
-            remove_pending_file_deletions(Path::new(r#"C:\Program Files\Firm"#), data).unwrap();
-        assert!(new_data.contains(r#"\??\D:\Program Files\Firm"#));
-        assert!(!new_data.contains(r#"\??\C:\Program Files\Firm"#));
-        assert!(!new_data.contains(r#"\??\C:\Program Files\Firm\bendini.exe"#));
-
-        let data = r#"\??\C:\Windows\Temp\4548b014-cc8b-4de6-b305-1afb8991f0ad.tmp
-
-\??\C:\Program Files\Firm\avery.exe
-
-\??\C:\Program Files\Firm\bendini.exe
-
-\??\C:\Program Diles\Dirm\dendini.dexe
-
-\??\C:\Program Files\Firm\install.exe
-
-\??\C:\Program Files\Firm\lomax.exe
-
-\??\C:\Program Files\Firm
-
-\??\D:\Program Files\Firm
-"#;
-        let new_data =
-            remove_pending_file_deletions(Path::new(r#"C:\Program Files\Firm"#), data).unwrap();
-        assert!(new_data.contains(r#"\??\D:\Program Files\Firm"#));
-        assert!(new_data.contains(r#"\??\C:\Program Diles\Dirm\dendini.dexe"#));
-        assert!(
-            new_data.contains(r#"\??\C:\Windows\Temp\4548b014-cc8b-4de6-b305-1afb8991f0ad.tmp"#)
+kune
+lune"#;
+        let registry_keys = Arc::new(RwLock::new(HashMap::new()));
+        let root = populate_fake_registry!(
+            registry_keys,
+            {
+                PENDING_REMOVAL_KEY.to_string() => {PENDING_OPERATIONS.to_string() => pending_file_deletions}
+            }
         );
-        assert!(!new_data.contains(r#"\??\C:\Program Files\Firm"#));
-        assert!(!new_data.contains(r#"\??\C:\Program Files\Firm\bendini.exe"#));
+        let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
+        let res = editor.get_pending_deletions().unwrap();
+        assert_eq!(res, vec!["bune", "rune", "kune", "lune"]);
+
+        let pending_file_deletions = r#"
+
+bune
+
+
+rune
+
+
+
+
+
+
+kune
+lune
+
+
+
+
+
+"#;
+
+        editor
+            .root()
+            .open_subkey(PENDING_REMOVAL_KEY)
+            .unwrap()
+            .set_value(PENDING_OPERATIONS, pending_file_deletions)
+            .unwrap();
+
+        let res = editor.get_pending_deletions().unwrap();
+
+        assert_eq!(res, vec!["bune", "rune", "kune", "lune"]);
+    }
+
+    #[test]
+    fn mark_deletion() {
+        // Some keyboard cowboy edited this value in the registry
+        let pending_file_deletions = r#"B:\zoo\apa
+B:\zoo\apa\bananer.txt
+
+B:\garage\fin_bil
+
+"#;
+
+        let registry_keys = Arc::new(RwLock::new(HashMap::new()));
+        let root = populate_fake_registry!(
+            registry_keys,
+            {
+                PENDING_REMOVAL_KEY.to_string() => {PENDING_OPERATIONS.to_string() => pending_file_deletions}
+            }
+        );
+
+        let editor = RegistryEditor::new_with_registry(root, |_| {
+            Ok(vec![
+                PathBuf::from(r#"sune:\runes_hus\inkopslista.txt"#),
+                PathBuf::from(r#"sune:\runes_hus\recept.txt"#),
+                PathBuf::from(r#"sune:\runes_hus\garage\verktyg.zip"#),
+                PathBuf::from(r#"sune:\runes_hus\garage"#),
+                PathBuf::from(r#"sune:\runes_hus"#),
+            ])
+        });
+        let res = editor.mark_for_delete(&PathBuf::from(r#"sune:\runes_hus"#));
+        assert!(res.is_ok());
+
+        let pending_deletion_value = editor
+            .root()
+            .open_subkey(PENDING_REMOVAL_KEY)
+            .unwrap()
+            .get_value(PENDING_OPERATIONS)
+            .unwrap();
+
+        assert_eq!(
+            pending_deletion_value,
+            r#"B:\zoo\apa
+
+B:\zoo\apa\bananer.txt
+
+B:\garage\fin_bil
+
+\??\sune:\runes_hus\inkopslista.txt
+
+\??\sune:\runes_hus\recept.txt
+
+\??\sune:\runes_hus\garage\verktyg.zip
+
+\??\sune:\runes_hus\garage
+
+\??\sune:\runes_hus
+
+"#
+        );
+    }
+
+    #[test]
+    fn cancel_deletions() {
+        let pending_file_deletions = r#"\??\D:\bune
+
+\??\B:\birm\bomax.exe
+\??\B:\birm\birm.exe
+
+\??\B:\rune
+\??\B:\birm\binstaller.exe
+
+
+\??\B:\kune
+
+\??\A:\lune
+
+\??\B:\birm\dlls\dynamically_linked_zip.zip
+\??\B:\birm\dlls
+\??\B:\birm
+
+"#;
+
+        let registry_keys = Arc::new(RwLock::new(HashMap::new()));
+        let root = populate_fake_registry!(
+            registry_keys,
+            {
+                PENDING_REMOVAL_KEY.to_string() => {PENDING_OPERATIONS.to_string() => pending_file_deletions}
+            }
+        );
+        let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
+
+        editor
+            .root()
+            .open_subkey(PENDING_REMOVAL_KEY)
+            .unwrap()
+            .set_value(PENDING_OPERATIONS, pending_file_deletions)
+            .unwrap();
+
+        let res = editor.cancel_pending_deletions(&PathBuf::from(r#"B:\birm"#));
+        assert!(res.is_ok());
+
+        let res = editor.get_pending_deletions().unwrap();
+
+        assert_eq!(
+            res,
+            vec![
+                r#"\??\D:\bune"#,
+                r#"\??\B:\rune"#,
+                r#"\??\B:\kune"#,
+                r#"\??\A:\lune"#
+            ]
+        );
     }
 
     #[test]
     fn uninstaller_registry() {
         let (_registry_keys, root) = populate_fake_registry!([UNINSTALL_KEY.to_string()]);
 
-        let editor = RegistryEditor::new_with_registry(root);
+        let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
         let mut extra = HashMap::new();
         extra.insert(
             String::from("URLInfoAbout"),
@@ -697,7 +842,7 @@ pub mod test {
                 .to_string_lossy()
         );
         let root = populate_fake_registry!(registry_keys, {ENVIRONMENT_KEY.to_string() => {"Path" => orig_path.clone()}});
-        let editor = RegistryEditor::new_with_registry(root);
+        let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
         let path = PathBuf::from("yellow").join("brick").join("toad");
         let res = editor.add_to_path(&path);
         assert!(res.is_ok(), "Adding a path to PATH should work");
@@ -750,7 +895,7 @@ pub mod test {
 "#;
         let registry_keys = Arc::new(RwLock::new(HashMap::new()));
         let root = populate_fake_registry!(registry_keys, {PENDING_REMOVAL_KEY.to_string() => {PENDING_OPERATIONS => pending_deletions}});
-        let editor = RegistryEditor::new_with_registry(root);
+        let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
         let res = editor
             .cancel_pending_deletions(&PathBuf::from(r#"C:\"#).join("Program Files").join("Firm"));
         assert!(
@@ -806,7 +951,7 @@ pub mod test {
 
 "#;
         let root = populate_fake_registry!(registry_keys, {PENDING_REMOVAL_KEY.to_string() => {PENDING_OPERATIONS => pending_deletions}});
-        let editor = RegistryEditor::new_with_registry(root);
+        let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
         let res = editor
             .cancel_pending_deletions(&PathBuf::from(r#"C:\"#).join("Program Files").join("Firm"));
         assert!(
@@ -852,7 +997,7 @@ pub mod test {
 
 "#;
         let root = populate_fake_registry!(registry_keys, {PENDING_REMOVAL_KEY.to_string() => {PENDING_OPERATIONS => pending_deletions}});
-        let editor = RegistryEditor::new_with_registry(root);
+        let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
         let res = editor
             .cancel_pending_deletions(&PathBuf::from(r#"B:\"#).join("Brogram Biles").join("Birm"));
         assert!(
@@ -869,7 +1014,7 @@ pub mod test {
 
         // And once more with no pending operations
         let root = populate_fake_registry!(registry_keys, {PENDING_REMOVAL_KEY.to_string() => {PENDING_OPERATIONS => ""}});
-        let editor = RegistryEditor::new_with_registry(root);
+        let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
         let res = editor
             .cancel_pending_deletions(&PathBuf::from(r#"C:\"#).join("Program Files").join("Firm"));
         assert!(res.is_ok(), "Cancel no pending deletions should just work");
@@ -885,7 +1030,7 @@ pub mod test {
     #[test]
     fn application_registration() {
         let (_, root) = populate_fake_registry!(["SOFTWARE"]);
-        let editor = RegistryEditor::new_with_registry(root);
+        let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
         let mut moar = HashMap::new();
         moar.insert(
             String::from("HeadMistressName"),

@@ -427,9 +427,7 @@ fn uninstall(logger: Logger) {
     pass_result!(logger, reg_edit.remove_from_path(&data_path));
 
     debug!(logger, "Marking folders for deletion");
-    registry::mark_folder_for_deletion(&exe_path)
-        .iter()
-        .for_each(|e| debug!(logger, "{}", e));
+    pass_result!(logger, reg_edit.mark_for_delete(&exe_path));
 
     pass_result!(logger, remove_directory(&data_path));
     pass_result!(logger, reg_edit.deregister_application("Firm"));
@@ -498,7 +496,7 @@ mod test {
     fn finding_firm() {
         let registry_keys = Arc::new(RwLock::new(HashMap::new()));
         let root = populate_fake_registry!(registry_keys, {r#"SOFTWARE\Firm"#.to_string() => {"InstallPath" => "🍊", "DataPath" => "🥭", "Version" => "🕳️"}});
-        let editor = RegistryEditor::new_with_registry(root);
+        let editor = RegistryEditor::new_with_registry(root, |_| Ok(vec![]));
         let log = null_logger!();
         let (exe, data) = find_firm(&editor, &log, PathBuf::new, PathBuf::new);
         assert_eq!(exe, PathBuf::from("🍊"));
@@ -507,7 +505,7 @@ mod test {
         // Test when we have not put in the data
         let registry_keys = Arc::new(RwLock::new(HashMap::new()));
         let root = populate_fake_registry!(registry_keys, [String::from(r#"SOFTWARE\Firm"#)]);
-        let editor = registry::RegistryEditor::new_with_registry(root);
+        let editor = registry::RegistryEditor::new_with_registry(root, |_| Ok(vec![]));
         let (exe, data) = find_firm(
             &editor,
             &log,
