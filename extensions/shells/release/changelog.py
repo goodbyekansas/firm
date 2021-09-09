@@ -38,16 +38,21 @@ def padded_version(version: Union[Tuple[str, dict], str]) -> str:
 
 def find_latest(versions: dict) -> Tuple[str, dict]:
     """ Find the latest version (by semantic version) of a set of versions"""
-    return sorted(
+    sorted_releases = sorted(
         filter(lambda x: x[0] != "unreleased", versions.items()), key=padded_version
-    )[-1]
+    )
+
+    if sorted_releases:
+        return sorted_releases[-1]
+    else:
+        return ("", {})
 
 
 def get_new_version(changelog: dict) -> str:
     """ Guess the next version number and ask for correction """
     latest = find_latest(changelog)
     new_version = versioning.guess_unreleased_version(
-        changelog, latest[1]["metadata"]["semantic_version"]
+        changelog, latest[1].get("metadata", {}).get("semantic_version", { "major": 0, "minor": 0, "patch": 0, "prerelease": None, "buildmetadata": None})
     )
     print(f"Suggested version for these changes are: {new_version}.")
     return input("If this is incorrect input a new version here:") or new_version
@@ -69,7 +74,7 @@ def check_component(
         new_version = get_new_version(component_changelog)
         keepachangelog.release(changelog_file, new_version=new_version)
         print("")
-        return (component, version, unreleased)
+        return (component, new_version, unreleased)
 
     if padded_version(latest) > padded_version(version):
         print(f"\033[95m{component}\033[0m has a new version {version} -> {latest[0]}:")
@@ -124,6 +129,7 @@ def release(changelogs: str) -> None:
             find_latest(main_changelog)[1].get("packages", []),
         )
     )
+
     main_changelog["unreleased"]["packages"] = []
     check_component_since = partial(check_component, last_packages, changelogs)
 
