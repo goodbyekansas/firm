@@ -2,7 +2,7 @@
 let
   sources = import ./nix/sources.nix;
   nedryland = (if nedrylandOverride == null then (import sources.nedryland) else nedrylandOverride);
-  version = "1.0.0";
+  version = "1.1.0";
 in
 nedryland.mkProject rec{
   name = "firm";
