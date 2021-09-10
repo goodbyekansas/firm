@@ -9,6 +9,7 @@ use thiserror::Error;
 use winapi::um::winreg::REGSAM;
 use winreg::{
     enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE},
+    transaction::Transaction,
     types::FromRegValue,
     RegKey,
 };
@@ -52,6 +53,15 @@ pub enum RegistryError {
 
     #[error("Failed to deregister application \"{0}\": {1}")]
     FailedToDeregisterApplication(String, IoError),
+
+    #[error("Failed to get registry transaction: {0}")]
+    FailedToAcquireTransaction(IoError),
+
+    #[error("Failed to rollback transaction: {0}. Original Error: {1}")]
+    FailedToRollbackTransaction(IoError, String),
+
+    #[error("Failed to commit transaction: {0}")]
+    FailedToCommitTransaction(IoError),
 }
 
 pub trait RegistryKey {
@@ -71,6 +81,34 @@ pub trait RegistryKey {
         flags: REGSAM,
     ) -> Result<Box<dyn RegistryKey>, IoError>;
     fn enum_values(&self) -> Result<HashMap<String, String>, IoError>;
+    fn get_transaction(&self) -> Result<Box<dyn RegistryTransaction>, IoError>;
+
+    fn open_subkey_transacted_with_flags(
+        &self,
+        name: &str,
+        flags: REGSAM,
+        transaction: &Transaction,
+    ) -> Result<Box<dyn RegistryKey>, IoError>;
+}
+
+pub trait RegistryTransaction {
+    fn commit(&self) -> Result<(), IoError>;
+    fn rollback(&self) -> Result<(), IoError>;
+    fn get_handle(&self) -> &Transaction;
+}
+
+impl RegistryTransaction for Transaction {
+    fn commit(&self) -> Result<(), IoError> {
+        self.commit()
+    }
+
+    fn rollback(&self) -> Result<(), IoError> {
+        self.rollback()
+    }
+
+    fn get_handle(&self) -> &Transaction {
+        self
+    }
 }
 
 impl RegistryKey for RegKey {
@@ -119,6 +157,20 @@ impl RegistryKey for RegKey {
             .map(|rv| rv.and_then(|(n, v)| String::from_reg_value(&v).map(|v| (n, v))))
             .collect::<Result<HashMap<String, String>, IoError>>()
     }
+
+    fn get_transaction(&self) -> Result<Box<dyn RegistryTransaction>, IoError> {
+        Transaction::new().map(|trans| Box::new(trans) as Box<dyn RegistryTransaction>)
+    }
+
+    fn open_subkey_transacted_with_flags(
+        &self,
+        name: &str,
+        flags: REGSAM,
+        transaction: &Transaction,
+    ) -> Result<Box<dyn RegistryKey>, IoError> {
+        self.open_subkey_transacted_with_flags(name, transaction.get_handle(), flags)
+            .map(|key| Box::new(key) as Box<dyn RegistryKey>)
+    }
 }
 
 impl From<RegistryError> for u32 {
@@ -135,6 +187,9 @@ impl From<RegistryError> for u32 {
             RegistryError::RegistryKeyError(_) => 18,
             RegistryError::FailedToRegisterApplication(_, _) => 19,
             RegistryError::FailedToDeregisterApplication(_, _) => 20,
+            RegistryError::FailedToAcquireTransaction(_) => 21,
+            RegistryError::FailedToRollbackTransaction(_, _) => 22,
+            RegistryError::FailedToCommitTransaction(_) => 23,
         }
     }
 }
@@ -260,73 +315,102 @@ impl<'a> RegistryEditor<'a> {
     }
 
     pub fn add_to_path(&self, location: &Path) -> Result<(), RegistryError> {
-        self.registry
-            .open_subkey_with_flags(ENVIRONMENT_KEY, KEY_READ | KEY_WRITE)
-            .and_then(|key| {
-                {
-                    key.get_value("Path").and_then(|old_path: String| {
-                        if old_path.contains(&location.to_string_lossy().to_string()) {
-                            Ok(())
-                        } else {
-                            key.set_value(
-                                "Path",
-                                &format!("{};{}", old_path, location.to_string_lossy()),
-                            )
-                        }
-                    })
-                }
-            })
-            .map_err(RegistryError::FailedToAddToPath)
+        let transaction = self.get_transaction()?;
+
+        self.apply_transaction(
+            self.registry
+                .open_subkey_transacted_with_flags(
+                    ENVIRONMENT_KEY,
+                    KEY_READ | KEY_WRITE,
+                    transaction.get_handle(),
+                )
+                .and_then(|key| {
+                    {
+                        key.get_value("Path").and_then(|old_path: String| {
+                            if old_path.contains(&location.to_string_lossy().to_string()) {
+                                Ok(())
+                            } else {
+                                key.set_value(
+                                    "Path",
+                                    &format!("{};{}", old_path, location.to_string_lossy()),
+                                )
+                            }
+                        })
+                    }
+                })
+                .map_err(RegistryError::FailedToAddToPath),
+            transaction.as_ref(),
+        )
     }
 
     pub fn remove_from_path(&self, location: &Path) -> Result<(), RegistryError> {
-        self.registry
-            .open_subkey_with_flags(ENVIRONMENT_KEY, KEY_READ | KEY_WRITE)
-            .and_then(|key| {
-                {
-                    key.get_value("Path").and_then(|old_path: String| {
-                        let location_string = location.to_string_lossy();
-                        // To cover the cases where firm is last in the path and to not
-                        // catch C:\Program Files\Firmware
-                        if old_path.ends_with(&location_string.to_string())
-                            || old_path.contains(&format!(";{};", location_string))
-                        {
-                            key.set_value(
-                                "Path",
-                                &old_path.replace(&format!(";{}", location_string), ""),
-                            )
-                        } else {
-                            Ok(())
-                        }
-                    })
-                }
-            })
-            .map_err(RegistryError::FailedToRemoveFromPath)
+        let transaction = self.get_transaction()?;
+
+        self.apply_transaction(
+            self.registry
+                .open_subkey_transacted_with_flags(
+                    ENVIRONMENT_KEY,
+                    KEY_READ | KEY_WRITE,
+                    transaction.get_handle(),
+                )
+                .and_then(|key| {
+                    {
+                        key.get_value("Path").and_then(|old_path: String| {
+                            let location_string = location.to_string_lossy();
+                            // To cover the cases where firm is last in the path and to not
+                            // catch C:\Program Files\Firmware
+                            if old_path.ends_with(&location_string.to_string())
+                                || old_path.contains(&format!(";{};", location_string))
+                            {
+                                key.set_value(
+                                    "Path",
+                                    &old_path.replace(&format!(";{}", location_string), ""),
+                                )
+                            } else {
+                                Ok(())
+                            }
+                        })
+                    }
+                })
+                .map_err(RegistryError::FailedToRemoveFromPath),
+            transaction.as_ref(),
+        )
     }
 
     pub fn cancel_pending_deletions(&self, path: &Path) -> Result<(), RegistryError> {
-        Regex::new(&format!(
-            r#"^\\\?\?\\{}.*"#,
-            path.to_string_lossy().into_owned().escape_default()
-        ))
-        .map_err(|e| {
-            RegistryError::FailedToCancelFileDeletion(format!(
-                "Failed to create regex: {}",
-                e.to_string()
+        let transaction = self.get_transaction()?;
+
+        self.apply_transaction(
+            Regex::new(&format!(
+                r#"^\\\?\?\\{}.*"#,
+                path.to_string_lossy().into_owned().escape_default()
             ))
-        })
-        .and_then(|regex| {
-            self.get_pending_deletions().map(|paths| {
-                paths
-                    .into_iter()
-                    .filter(|path| !regex.is_match(path))
-                    .collect::<Vec<String>>()
+            .map_err(|e| {
+                RegistryError::FailedToCancelFileDeletion(format!(
+                    "Failed to create regex: {}",
+                    e.to_string()
+                ))
             })
-        })
-        .and_then(|new_deletions| self.set_pending_deletions(&new_deletions))
+            .and_then(|regex| {
+                self.get_pending_deletions(transaction.as_ref())
+                    .map(|paths| {
+                        paths
+                            .into_iter()
+                            .filter(|path| !regex.is_match(path))
+                            .collect::<Vec<String>>()
+                    })
+            })
+            .and_then(|new_deletions| {
+                self.set_pending_deletions(&new_deletions, transaction.as_ref())
+            }),
+            transaction.as_ref(),
+        )
     }
 
-    fn get_pending_deletions(&self) -> Result<Vec<String>, RegistryError> {
+    fn get_pending_deletions(
+        &self,
+        transaction: &dyn RegistryTransaction,
+    ) -> Result<Vec<String>, RegistryError> {
         // There is an expected format to this string.
         // Path, two new lines, another path two new lines etc.
 
@@ -337,7 +421,11 @@ impl<'a> RegistryEditor<'a> {
         // is ruined due to others presumably editing and inserting bad things.
 
         self.registry
-            .open_subkey_with_flags(PENDING_REMOVAL_KEY, KEY_READ | KEY_WRITE)
+            .open_subkey_transacted_with_flags(
+                PENDING_REMOVAL_KEY,
+                KEY_READ | KEY_WRITE,
+                transaction.get_handle(),
+            )
             .map_err(|e| RegistryError::FailedToCancelFileDeletion(format!("{}", e)))
             .and_then(|key| {
                 key.get_value(PENDING_OPERATIONS)
@@ -351,9 +439,17 @@ impl<'a> RegistryEditor<'a> {
             })
     }
 
-    fn set_pending_deletions(&self, pending_deletions: &[String]) -> Result<(), RegistryError> {
+    fn set_pending_deletions(
+        &self,
+        pending_deletions: &[String],
+        transaction: &dyn RegistryTransaction,
+    ) -> Result<(), RegistryError> {
         self.registry
-            .open_subkey_with_flags(PENDING_REMOVAL_KEY, KEY_READ | KEY_WRITE)
+            .open_subkey_transacted_with_flags(
+                PENDING_REMOVAL_KEY,
+                KEY_READ | KEY_WRITE,
+                transaction.get_handle(),
+            )
             .map_err(|e| RegistryError::FailedToCancelFileDeletion(format!("{}", e)))
             .and_then(|key| {
                 key.set_value(
@@ -381,15 +477,47 @@ impl<'a> RegistryEditor<'a> {
     }
 
     fn mark_paths_for_delete(&self, paths: &[PathBuf]) -> Result<(), RegistryError> {
-        // TODO: Add transaction layer around this.
-        self.get_pending_deletions()
-            .and_then(|mut deletion_content| {
-                deletion_content.extend(
-                    paths
-                        .iter()
-                        .map(|p| format!(r#"\??\{}"#, p.to_string_lossy().into_owned())),
-                );
-                self.set_pending_deletions(deletion_content.as_slice())
+        let transaction = self.get_transaction()?;
+
+        self.apply_transaction(
+            self.get_pending_deletions(transaction.as_ref())
+                .and_then(|mut deletion_content| {
+                    deletion_content.extend(
+                        paths
+                            .iter()
+                            .map(|p| format!(r#"\??\{}"#, p.to_string_lossy().into_owned())),
+                    );
+                    self.set_pending_deletions(deletion_content.as_slice(), transaction.as_ref())
+                }),
+            transaction.as_ref(),
+        )
+    }
+
+    fn get_transaction(&self) -> Result<Box<dyn RegistryTransaction>, RegistryError> {
+        self.registry.get_transaction().map_err(|e| {
+            RegistryError::FailedToCancelFileDeletion(format!(
+                "Failed to create transaction lock: {}",
+                e.to_string()
+            ))
+        })
+    }
+
+    fn apply_transaction(
+        &self,
+        result: Result<(), RegistryError>,
+        transaction: &dyn RegistryTransaction,
+    ) -> Result<(), RegistryError> {
+        result
+            .or_else(|e1| {
+                transaction
+                    .rollback()
+                    .map_err(|e2| RegistryError::FailedToRollbackTransaction(e2, e1.to_string()))
+                    .and(Err(e1))
+            })
+            .and_then(|_| {
+                transaction
+                    .commit()
+                    .map_err(RegistryError::FailedToCommitTransaction)
             })
     }
 }
@@ -493,6 +621,34 @@ pub mod test {
         }
     }
 
+    struct FakeTransaction {
+        transaction: Transaction,
+    }
+
+    impl FakeTransaction {
+        pub fn new() -> Self {
+            Self {
+                transaction: Transaction {
+                    handle: winapi::shared::ntdef::NULL,
+                },
+            }
+        }
+    }
+
+    impl RegistryTransaction for FakeTransaction {
+        fn commit(&self) -> Result<(), IoError> {
+            Ok(())
+        }
+
+        fn rollback(&self) -> Result<(), IoError> {
+            Ok(())
+        }
+
+        fn get_handle(&self) -> &Transaction {
+            &self.transaction
+        }
+    }
+
     impl RegistryKey for MemoryKey {
         fn create_subkey(&self, path: &str) -> Result<Box<dyn RegistryKey>, IoError> {
             self.registry_keys
@@ -575,6 +731,19 @@ pub mod test {
                 .ok_or_else(|| IoError::from_raw_os_error(2))
                 .map(|entry| entry.values.clone())
         }
+
+        fn get_transaction(&self) -> Result<Box<dyn RegistryTransaction>, IoError> {
+            Ok(Box::new(FakeTransaction::new()) as Box<dyn RegistryTransaction>)
+        }
+
+        fn open_subkey_transacted_with_flags(
+            &self,
+            name: &str,
+            _flags: REGSAM,
+            _transaction: &Transaction,
+        ) -> Result<Box<dyn RegistryKey>, IoError> {
+            self.open_subkey(name)
+        }
     }
 
     fn get_test_folder_paths(_path: &Path) -> Result<Vec<PathBuf>, IoError> {
@@ -605,7 +774,8 @@ lune"#;
             }
         );
         let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
-        let res = editor.get_pending_deletions().unwrap();
+        let transaction = FakeTransaction::new();
+        let res = editor.get_pending_deletions(&transaction).unwrap();
         assert_eq!(res, vec!["bune", "rune", "kune", "lune"]);
 
         let pending_file_deletions = r#"
@@ -636,7 +806,7 @@ lune
             .set_value(PENDING_OPERATIONS, pending_file_deletions)
             .unwrap();
 
-        let res = editor.get_pending_deletions().unwrap();
+        let res = editor.get_pending_deletions(&transaction).unwrap();
 
         assert_eq!(res, vec!["bune", "rune", "kune", "lune"]);
     }
@@ -739,8 +909,8 @@ B:\garage\fin_bil
 
         let res = editor.cancel_pending_deletions(&PathBuf::from(r#"B:\birm"#));
         assert!(res.is_ok());
-
-        let res = editor.get_pending_deletions().unwrap();
+        let transaction = FakeTransaction::new();
+        let res = editor.get_pending_deletions(&transaction).unwrap();
 
         assert_eq!(
             res,

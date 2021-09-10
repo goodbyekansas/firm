@@ -16,6 +16,6 @@ slog-async = "2"
 [target.'cfg(windows)'.dependencies]
 winapi = { version="0.3", features=["winsvc", "impl-default"] }
 windows-acl = "0.3"
-winreg = "0.9"
+winreg = { version="0.9", features=["transactions"] }
 winlog = "0.2.6"
 windows_events = { version = "0.1.0", registry = "nix" }
