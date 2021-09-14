@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    convert::TryFrom,
     path::{Path, PathBuf},
 };
 
@@ -64,14 +65,48 @@ pub struct Auth {
     pub allow: AllowConfig,
 }
 
+// For backwards compatibility, add things to this struct and
+// convert it in the try from. TODO: consider removing the
+// hosted_domain for next major release.
 #[derive(Debug, Deserialize, PartialEq, Clone)]
+#[serde(try_from = "OidcProviderConfig")]
 pub struct OidcProvider {
     pub discovery_url: String,
     pub client_id: String,
     pub client_secret: String,
 
     #[serde(default)]
+    pub hosted_domains: Vec<String>,
+}
+#[derive(Debug, Deserialize, PartialEq, Clone)]
+pub struct OidcProviderConfig {
+    pub discovery_url: String,
+    pub client_id: String,
+    pub client_secret: String,
+
+    #[serde(default)]
     pub hosted_domain: Option<String>,
+    #[serde(default)]
+    pub hosted_domains: Vec<String>,
+}
+
+impl TryFrom<OidcProviderConfig> for OidcProvider {
+    type Error = &'static str;
+
+    fn try_from(value: OidcProviderConfig) -> Result<Self, Self::Error> {
+        Ok(Self {
+            discovery_url: value.discovery_url,
+            client_id: value.client_id,
+            client_secret: value.client_secret,
+            hosted_domains: value
+                .hosted_domain
+                .map(|hd| vec![hd])
+                .unwrap_or_default()
+                .into_iter()
+                .chain(value.hosted_domains)
+                .collect(),
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,7 +253,7 @@ client_secret="no"
                 discovery_url: "oidc.something.external".to_owned(),
                 client_id: "123abc".to_owned(),
                 client_secret: "weeeooooo".to_owned(),
-                hosted_domain: None
+                hosted_domains: vec![]
             }),
         );
         assert_eq!(
@@ -227,7 +262,65 @@ client_secret="no"
                 discovery_url: "ocd.something.external".to_owned(),
                 client_id: "456def".to_owned(),
                 client_secret: "no".to_owned(),
-                hosted_domain: None
+                hosted_domains: vec![]
+            }),
+        );
+    }
+
+    #[test]
+    fn oidc_combine_single_multi_hd() {
+        let c = Config::new_with_toml_string(
+            r#"
+[oidc_providers.overmind]
+discovery_url="oidc.something.external"
+client_id="123abc"
+client_secret="weeeooooo"
+hosted_domains=["yes.no", "no.yes"]
+[oidc_providers.undermined]
+discovery_url="ocd.something.external"
+client_id="456def"
+client_secret="no"
+hosted_domain="sula.com"
+[oidc_providers.sidemind]
+discovery_url="ocd.something.external"
+client_id="456def"
+client_secret="no"
+hosted_domain="sula.com"
+hosted_domains=["💈.no", "🌡️.yes"]
+"#,
+        );
+        assert!(c.is_ok());
+
+        let conf = c.unwrap();
+        assert_eq!(
+            conf.oidc_providers.get("overmind"),
+            Some(&OidcProvider {
+                discovery_url: "oidc.something.external".to_owned(),
+                client_id: "123abc".to_owned(),
+                client_secret: "weeeooooo".to_owned(),
+                hosted_domains: vec![String::from("yes.no"), String::from("no.yes")]
+            }),
+        );
+        assert_eq!(
+            conf.oidc_providers.get("undermined"),
+            Some(&OidcProvider {
+                discovery_url: "ocd.something.external".to_owned(),
+                client_id: "456def".to_owned(),
+                client_secret: "no".to_owned(),
+                hosted_domains: vec![String::from("sula.com")]
+            }),
+        );
+        assert_eq!(
+            conf.oidc_providers.get("sidemind"),
+            Some(&OidcProvider {
+                discovery_url: "ocd.something.external".to_owned(),
+                client_id: "456def".to_owned(),
+                client_secret: "no".to_owned(),
+                hosted_domains: vec![
+                    String::from("sula.com"),
+                    String::from("💈.no"),
+                    String::from("🌡️.yes")
+                ]
             }),
         );
     }

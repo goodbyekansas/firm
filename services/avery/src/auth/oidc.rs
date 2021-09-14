@@ -94,7 +94,7 @@ struct AuthContext {
     client_secret: String,
     token_endpoint: String,
     jwks_uri: String,
-    hosted_domain: Option<String>,
+    hosted_domain: Vec<String>,
     id_token_signing_alg_values_supported: Vec<Algorithm>,
     claims: Claims,
 }
@@ -394,10 +394,15 @@ impl Oidc {
                     ("state", &state_string),
                     ("access_type", "offline"),
                 ])
-                .query(&if let Some(hd) = self.oidc_config.hosted_domain.as_ref() {
-                    vec![("hd", hd)]
-                } else {
-                    vec![]
+                .query(&match self.oidc_config.hosted_domains.len() {
+                    0 => vec![],
+                    1 => self
+                        .oidc_config
+                        .hosted_domains
+                        .first()
+                        .map(|hd| vec![("hd", hd.as_str())])
+                        .unwrap_or_default(),
+                    _ => vec![("hd", "*")],
                 })
                 .build()
                 .map_err(|e| OidcError::HttpError(e, "Failed to build URL.".to_owned()))?
@@ -510,7 +515,7 @@ impl Oidc {
 
     async fn validate_claims(
         client_id: &str,
-        hosted_domain: &Option<String>,
+        hosted_domains: &[String],
         jwks_uri: &str,
         id_token: &str,
         supported_algorithms: &[Algorithm],
@@ -562,15 +567,19 @@ impl Oidc {
                                     )
                                     .ok()
                                     .and_then(|c| {
-                                        if let Some(hd) = hosted_domain.as_ref() {
-                                            (Some(hd.as_str())
-                                                == c.claims
-                                                    .extra
-                                                    .get("hd")
-                                                    .and_then(|v| v.as_str()))
-                                            .then(|| c.claims)
-                                        } else {
+                                        if hosted_domains.is_empty() {
                                             Some(c.claims)
+                                        } else {
+                                            c.claims
+                                                .extra
+                                                .get("hd")
+                                                .and_then(|v| v.as_str())
+                                                .map(|expected_hd| {
+                                                    hosted_domains
+                                                        .contains(&expected_hd.to_string())
+                                                })
+                                                .unwrap_or_default()
+                                                .then(|| c.claims)
                                         }
                                     })
                                 })
@@ -612,7 +621,7 @@ impl Oidc {
                 async move {
                     Self::validate_claims(
                         &self.oidc_config.client_id,
-                        &self.oidc_config.hosted_domain,
+                        &self.oidc_config.hosted_domains,
                         &jwks_uri,
                         &auth_token.id_token,
                         &supported_algorithms,
@@ -625,7 +634,7 @@ impl Oidc {
                             client_secret: self.oidc_config.client_secret.clone(),
                             token_endpoint,
                             jwks_uri,
-                            hosted_domain: self.oidc_config.hosted_domain.clone(),
+                            hosted_domain: self.oidc_config.hosted_domains.clone(),
                             id_token_signing_alg_values_supported: supported_algorithms,
                             claims: c,
                         };
@@ -734,16 +743,16 @@ r#"
         }};
 
         ($discovery_url:expr, $client_id:expr) => {{
-            create_oidc!($discovery_url, $client_id, None)
+            create_oidc!($discovery_url, $client_id, vec![])
         }};
 
-        ($discovery_url:expr, $client_id:expr, $hosted_domain:expr) => {{
+        ($discovery_url:expr, $client_id:expr, $hosted_domains:expr) => {{
             Oidc::new(
                 &crate::config::OidcProvider {
                     discovery_url: $discovery_url.to_owned(),
                     client_id: $client_id.to_owned(),
                     client_secret: "supersecret".to_owned(),
-                    hosted_domain: $hosted_domain,
+                    hosted_domains: $hosted_domains,
                 },
                 null_logger!(),
             )
@@ -951,6 +960,45 @@ r#"
     }
 
     #[tokio::test]
+    async fn validate_claims_no_domain() {
+        let client_id = "frequenter identifier".to_owned();
+        let now = chrono::Utc::now().timestamp();
+
+        let mut extra = HashMap::new();
+        extra.insert(String::from("hd"), "extremelybigbowls.com".into());
+
+        let claims = Claims {
+            iss: "".to_owned(),
+            sub: "".to_owned(),
+            aud: client_id.clone(),
+            exp: (now + 3600) as u64,
+            iat: now as u64,
+            extra,
+        };
+
+        let oidc_with_no_hd = create_oidc!("discovery_url", client_id.clone());
+        let header = jsonwebtoken::Header::new(Algorithm::RS256);
+        let key = jsonwebtoken::EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY.as_bytes()).unwrap();
+        let jwt = jsonwebtoken::encode(&header, &claims, &key).unwrap();
+
+        let _m = mock("GET", Matcher::Any)
+            .with_status(200)
+            .with_body(jwk!())
+            .create();
+
+        let result = Oidc::validate_claims(
+            &oidc_with_no_hd.oidc_config.client_id,
+            &oidc_with_no_hd.oidc_config.hosted_domains,
+            &mockito::server_url(),
+            &jwt,
+            &[Algorithm::RS256],
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), claims);
+    }
+
+    #[tokio::test]
     async fn validate_claims() {
         // Bad response
         let _m = mock("GET", Matcher::Any)
@@ -958,11 +1006,18 @@ r#"
             .with_body("sad times")
             .create();
         let client_id = "frequenter identifier".to_owned();
-        let oidc = create_oidc!("discovery_url", client_id.clone());
+        let oidc = create_oidc!(
+            "discovery_url",
+            client_id.clone(),
+            vec![
+                String::from("babycancas.com"),
+                String::from("adultcancas.com")
+            ]
+        );
 
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
             &mockito::server_url(),
             "galningen som token",
             &[],
@@ -979,7 +1034,7 @@ r#"
 
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
             &mockito::server_url(),
             "galningen som token",
             &[],
@@ -996,7 +1051,7 @@ r#"
 
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
             &mockito::server_url(),
             "galningen som token",
             &[],
@@ -1011,7 +1066,7 @@ r#"
         // Checking validation failure
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
                 &mockito::server_url(),
                 "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0.POstGetfAytaZS82wHcjoTyoqhMyxXiWdR7Nn7A29DNSl0EiXLdwJ6xC6AfgZWF1bOsS_TuYI3OG85AmiExREkrS6tDfTQ2B3WXlrr-wp5AokiRbz3_oB4OxG-W9KcEEbDRcZc0nH3L7LzYptiy1PtAylQGxHTWZXtGz4ht0bAecBgmpdgXMguEIcoqPJ1n3pIWk_dUZegpqx0Lka21H6XxUTxiy8OcaarA8zdnPUnV6AmNP3ecFawIFYdvJB_cm-GvpCSbr8G8y_Mllj8f4x9nBH8pQux89_6gUY618iYv7tuPWBFfEbLxtF2pZS6YC1aSfLQxeNe8djT9YjpvRZA",
                 &[Algorithm::RS256]
@@ -1027,13 +1082,17 @@ r#"
         let mut aud = HashSet::new();
         aud.insert(client_id.clone());
 
+        // Normal validation with hd
+        let mut extra = HashMap::new();
+        extra.insert(String::from("hd"), "babycancas.com".into());
+
         let claims = Claims {
             iss: "".to_owned(),
             sub: "".to_owned(),
             aud: client_id.clone(),
             exp: (now + 3600) as u64,
             iat: now as u64,
-            extra: HashMap::new(),
+            extra,
         };
 
         let header = jsonwebtoken::Header::new(Algorithm::RS256);
@@ -1047,7 +1106,7 @@ r#"
 
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
             &mockito::server_url(),
             &jwt,
             &[Algorithm::RS256],
@@ -1056,13 +1115,42 @@ r#"
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), claims);
 
+        // Wrong hosted domain
+        let mut extra = HashMap::new();
+        extra.insert(String::from("hd"), "sune.com".into());
+
+        let invalid_claims = Claims {
+            iss: "".to_owned(),
+            sub: "".to_owned(),
+            aud: client_id.clone(),
+            exp: (now + 3600) as u64,
+            iat: now as u64,
+            extra,
+        };
+
+        let header = jsonwebtoken::Header::new(Algorithm::RS256);
+        let key = jsonwebtoken::EncodingKey::from_rsa_pem(RSA_PRIVATE_KEY.as_bytes()).unwrap();
+        let jwt = jsonwebtoken::encode(&header, &invalid_claims, &key).unwrap();
+
+        let _m = mock("GET", Matcher::Any)
+            .with_status(200)
+            .with_body(jwk!())
+            .create();
+
+        let result = Oidc::validate_claims(
+            &oidc.oidc_config.client_id,
+            &oidc.oidc_config.hosted_domains,
+            &mockito::server_url(),
+            &jwt,
+            &[Algorithm::RS256],
+        )
+        .await;
+        assert!(result.is_err());
+
         // Different hosted domain must result in error
         let mut extra_claims = HashMap::new();
-        extra_claims.insert(
-            "hd".to_owned(),
-            serde_json::Value::String("extremelybigbowls.com".to_owned()),
-        );
-        let oidc_with_hd = create_oidc!("sune", "bune", Some("mabrikaf.com".to_owned()));
+        extra_claims.insert("hd".to_owned(), "extremelybigbowls.com".into());
+        let oidc_with_hd = create_oidc!("sune", "bune", vec!["mabrikaf.com".to_owned()]);
 
         let invalid_claims = Claims {
             iss: "".to_owned(),
@@ -1082,7 +1170,7 @@ r#"
 
         let result = Oidc::validate_claims(
             &oidc_with_hd.oidc_config.client_id,
-            &oidc_with_hd.oidc_config.hosted_domain,
+            &oidc_with_hd.oidc_config.hosted_domains,
             &mockito::server_url(),
             &jwt,
             &[Algorithm::RS256],
@@ -1116,7 +1204,7 @@ r#"
 
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
             &mockito::server_url(),
             &jwt,
             &[Algorithm::RS256],
@@ -1137,7 +1225,7 @@ r#"
 
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
             &mockito::server_url(),
             &jwt,
             &[Algorithm::HS384],
@@ -1171,7 +1259,7 @@ r#"
 
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
             &mockito::server_url(),
             &jwt,
             &[Algorithm::RS256],
@@ -1190,7 +1278,7 @@ r#"
 
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
             &mockito::server_url(),
             &jwt,
             &[Algorithm::RS256],
@@ -1207,13 +1295,13 @@ r#"
 
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
             &mockito::server_url(),
             &jwt,
             &[Algorithm::RS256],
         )
         .await;
-        assert!(dbg!(&result).is_ok());
+        assert!(result.is_ok());
         assert_eq!(result.unwrap(), claims);
 
         // Wrong key id in json web key set, note that this should still work
@@ -1226,7 +1314,7 @@ r#"
 
         let result = Oidc::validate_claims(
             &oidc.oidc_config.client_id,
-            &oidc.oidc_config.hosted_domain,
+            &oidc.oidc_config.hosted_domains,
             &mockito::server_url(),
             &jwt,
             &[Algorithm::RS256],
@@ -1271,7 +1359,11 @@ r#"
     #[test]
     fn build_authorize_url() {
         let client_id = "agent007";
-        let oidc = create_oidc!("https://discovery-my-document.com", client_id);
+        let oidc = create_oidc!(
+            "https://discovery-my-document.com",
+            client_id,
+            vec![String::from("sune.com")]
+        );
         let (url, statestr, redirect) = oidc
             .build_authorize_url("https://test.com/oauth", "challenge-accepted", 1337u16)
             .unwrap();
@@ -1326,9 +1418,32 @@ r#"
             Some(Cow::Borrowed("offline"))
         );
         assert_eq!(
+            query.clone().find_map(|(k, v)| (k == "hd").then(|| v)),
+            Some(Cow::Borrowed("sune.com"))
+        );
+
+        assert_eq!(
             url::Url::parse(&redirect).unwrap().port(),
             Some(1337u16),
             "The redirect uri must use the port we sent in"
+        );
+
+        // Multi host domains must not generate hd in query
+        let oidc = create_oidc!(
+            "https://discovery-my-document.com",
+            client_id,
+            vec![String::from("sune.com"), String::from("sune.co.uk")]
+        );
+        let (url, _, _) = oidc
+            .build_authorize_url("https://test.com/oauth", "challenge-accepted", 1337u16)
+            .unwrap();
+        let url = url::Url::parse(&url).unwrap();
+        let query = url.query_pairs();
+
+        assert_eq!(
+            query.clone().find_map(|(k, v)| (k == "hd").then(|| v)),
+            Some(Cow::Borrowed("*")),
+            "When multiple hosted domains are set the query url is expected to set hd to \"*\""
         );
     }
 
@@ -1351,7 +1466,7 @@ r#"
                 client_secret: String::new(),
                 token_endpoint: String::new(),
                 jwks_uri: String::new(),
-                hosted_domain: None,
+                hosted_domain: vec![],
                 id_token_signing_alg_values_supported: vec![],
                 claims: Claims {
                     iss: "sssss".to_owned(),
