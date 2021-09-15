@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2021-09-15
+
 ### Fixed
 - Make sure pending reboot deletions are correctly formatted
 
