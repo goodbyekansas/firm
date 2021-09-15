@@ -6,10 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2021-09-15
+
 ### Fixed
 - Stop windows service on runtime errors correctly.
 
-## Added
+### Added
 - Support for multiple hosted domains for authentication.
 
 ## [1.1.0] - 2021-09-09
