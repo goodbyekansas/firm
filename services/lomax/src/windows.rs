@@ -174,12 +174,15 @@ fn service_main(_: Vec<OsString>) {
                 })
                 .map(|rt| (rt, status_handle))
         })
-        .and_then(|(rt, status_handle)| {
-            rt.block_on(run::run(args, || started_callback(status_handle), log))
+        .map(|(rt, status_handle)| {
+            // We always want to return the handle to signal stop so after the log we
+            // not interested in the actual result any more
+            let _ = rt
+                .block_on(run::run(args, || started_callback(status_handle), log))
                 .map_err(|e| {
                     error!(exit_log, "Unhandled error: {}. Exiting", e);
-                })
-                .map(|_| status_handle)
+                });
+            status_handle
         })
         .and_then(|status_handle| {
             status_handle
