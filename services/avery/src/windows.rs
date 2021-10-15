@@ -14,7 +14,7 @@ use slog::{error, info, o, Drain, Logger};
 use structopt::StructOpt;
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
-    net::NamedPipeServerBuilder,
+    net::windows::named_pipe::{NamedPipeServer, ServerOptions},
 };
 use triggered::{Listener, Trigger};
 use winapi::um::{errhandlingapi::GetLastError, winbase::GetUserNameW};
@@ -237,15 +237,16 @@ pub async fn create_listener(
 
     Ok((
         {
-            let pipe = NamedPipeServerBuilder::new(pipe_path)
-                .with_accept_remote(false)
-                .build()
+            let mut server = ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(&pipe_path)
                 .map_err(|e| format!("Failed to create named pipe: {}", e))?;
-
             async_stream::stream! {
-                while let item = pipe.accept().map_ok(|np| NamedPipe(np)).await {
-                    yield item;
-                }
+                while server.connect().await.is_ok() {
+                    yield Ok(NamedPipe(server));
+                    server = ServerOptions::new()
+                        .create(&pipe_path)?;
+                    }
             }
         },
         None,
@@ -253,16 +254,16 @@ pub async fn create_listener(
 }
 
 #[derive(Debug)]
-pub struct NamedPipe(pub tokio::net::NamedPipe);
+pub struct NamedPipe(pub NamedPipeServer);
 
 impl Connected for NamedPipe {}
 
 impl AsyncRead for NamedPipe {
     fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
         buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
+    ) -> std::task::Poll<std::io::Result<()>> {
         Pin::new(&mut self.0).poll_read(cx, buf)
     }
 }
