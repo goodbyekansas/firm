@@ -1,6 +1,6 @@
 [package]
 name = "avery"
-version = "1.2.0"
+version = "1.2.1"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
@@ -37,8 +37,7 @@ sudo = "0.6.0"
 tar = "0.4"
 tempfile = "3"
 thiserror = "1"
-# use `=` here to match our fork below
-tokio = { version = "=1.4.0", features = ["rt-multi-thread", "time", "macros", "net", "signal"] }
+tokio = { version = "1.12.0", features = ["rt-multi-thread", "time", "macros", "net", "signal"] }
 toml = "0.5"
 typetag = "0.1"
 url = "2"
@@ -78,7 +77,3 @@ windows_events = { version = "0.1.0", registry = "nix" }
 # TODO: Use the resource and message compiler ourselves in build.rs to generate these enums.
 # TODO Alternative: Ask the owner of the crate to make them pub.
 winlog = "=0.2.6"
-
-# our own version of tokio 1.4.0 with named pipes
-[patch.crates-io]
-tokio = {  git = "https://github.com/goodbyekansas/tokio.git", branch="named-pipes-1.4.0" }

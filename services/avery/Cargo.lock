@@ -108,7 +108,7 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
 name = "avery"
-version = "1.0.0"
+version = "1.2.1"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -2308,15 +2308,15 @@ checksum = "cda74da7e1a664f795bb1f8a87ec406fb89a02522cf6e50620d016add6dbbf5c"
 
 [[package]]
 name = "tokio"
-version = "1.4.0"
-source = "git+https://github.com/goodbyekansas/tokio.git?branch=named-pipes-1.4.0#557ffea14fc3927cb7cf239e8dd9fecfa77f049f"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2c2416fdedca8443ae44b4527de1ea633af61d8f7169ffa6e72c5b53d24efcc"
 dependencies = [
  "autocfg",
  "bytes",
  "libc",
  "memchr",
  "mio",
- "miow",
  "num_cpus",
  "once_cell",
  "pin-project-lite",
@@ -2327,8 +2327,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "1.1.0"
-source = "git+https://github.com/goodbyekansas/tokio.git?branch=named-pipes-1.4.0#557ffea14fc3927cb7cf239e8dd9fecfa77f049f"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2dd85aeaba7b68df939bd357c6afb36c87951be9e80bf9c859f2fc3e9fca0fd"
 dependencies = [
  "proc-macro2",
  "quote",
