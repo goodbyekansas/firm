@@ -1,11 +1,11 @@
 { nedrylandOverride ? null }:
 let
   sources = import ./nix/sources.nix;
-  nedryland = (if nedrylandOverride == null then (import sources.nedryland) else nedrylandOverride);
-  version = "1.2.0";
+  nedryland = (if nedrylandOverride == null then (import sources.nedryland { }) else nedrylandOverride);
 in
-nedryland.mkProject rec{
+nedryland.mkProject rec {
   name = "firm";
+  version = "1.2.0";
   baseExtensions = [
     ./extensions/nedryland/function.nix
     ./extensions/nedryland/runtime.nix
