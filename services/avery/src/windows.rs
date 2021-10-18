@@ -16,8 +16,21 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::windows::named_pipe::{NamedPipeServer, ServerOptions},
 };
+
 use triggered::{Listener, Trigger};
-use winapi::um::{errhandlingapi::GetLastError, winbase::GetUserNameW};
+use winapi::{
+    shared::{minwindef::FALSE, ntdef::NULL},
+    um::{
+        errhandlingapi::GetLastError,
+        minwinbase::{LPTR, SECURITY_ATTRIBUTES},
+        securitybaseapi::InitializeSecurityDescriptor,
+        winbase::{GetUserNameW, LocalAlloc, LocalFree},
+        winnt::{
+            PSECURITY_DESCRIPTOR, SECURITY_DESCRIPTOR_MIN_LENGTH, SECURITY_DESCRIPTOR_REVISION,
+        },
+    },
+};
+
 use windows_events::WinLogger;
 use windows_service::{
     define_windows_service,
@@ -210,6 +223,48 @@ pub fn user_data_path() -> Option<PathBuf> {
         .map(|p| PathBuf::from(p).join("avery"))
 }
 
+struct Security {
+    descriptor: PSECURITY_DESCRIPTOR,
+    attributes: SECURITY_ATTRIBUTES,
+    log: Logger,
+}
+
+impl Security {
+    pub fn try_new(log: Logger) -> Result<Self, String> {
+        match unsafe { LocalAlloc(LPTR, SECURITY_DESCRIPTOR_MIN_LENGTH) } {
+            v if v == NULL => Err("Failed to allocate security descriptor".to_string()),
+            descriptor => {
+                (unsafe { InitializeSecurityDescriptor(descriptor, SECURITY_DESCRIPTOR_REVISION) }
+                    != 0)
+                    .then(|| Self {
+                        descriptor,
+                        attributes: SECURITY_ATTRIBUTES {
+                            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                            lpSecurityDescriptor: descriptor,
+                            bInheritHandle: FALSE,
+                        },
+                        log,
+                    })
+                    .ok_or_else(|| "Failed to initialize security descriptor".to_string())
+            }
+        }
+    }
+}
+
+impl Drop for Security {
+    fn drop(&mut self) {
+        unsafe {
+            if LocalFree(self.descriptor) != NULL {
+                error!(
+                    self.log,
+                    "Failed to free security descriptor memory, Error Code: {}",
+                    GetLastError()
+                );
+            }
+        }
+    }
+}
+
 pub async fn create_listener(
     log: Logger,
 ) -> Result<
@@ -237,16 +292,31 @@ pub async fn create_listener(
 
     Ok((
         {
-            let mut server = ServerOptions::new()
-                .first_pipe_instance(true)
-                .create(&pipe_path)
-                .map_err(|e| format!("Failed to create named pipe: {}", e))?;
+            let mut security = Security::try_new(log.new(o!("listener" => "security-descriptor")))?;
+            let mut server = unsafe {
+                ServerOptions::new()
+                    .first_pipe_instance(true)
+                    .create_with_security_attributes_raw(
+                        &pipe_path,
+                        &mut security.attributes as winapi::um::minwinbase::PSECURITY_ATTRIBUTES
+                            as *mut std::ffi::c_void,
+                    )
+                    .map_err(|e| format!("Failed to create named pipe: {}", e))
+            }?;
+
             async_stream::stream! {
                 while server.connect().await.is_ok() {
-                    yield Ok(NamedPipe(server));
-                    server = ServerOptions::new()
-                        .create(&pipe_path)?;
-                    }
+                    // Making sure server is always open for connections.
+                    // https://docs.rs/tokio/1.12.0/src/tokio/net/windows/named_pipe.rs.html#79
+                    let old_server = server;
+                    server = unsafe { ServerOptions::new()
+                        .create_with_security_attributes_raw(
+                            &pipe_path,
+                            &mut security.attributes as winapi::um::minwinbase::PSECURITY_ATTRIBUTES
+                                as *mut std::ffi::c_void,
+                        )}?;
+                    yield Ok(NamedPipe(old_server));
+                }
             }
         },
         None,
