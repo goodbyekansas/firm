@@ -6,7 +6,7 @@ use std::{
 use futures::{Stream, TryFutureExt};
 use rustls::ServerConfig;
 use slog::{info, o, warn, Logger};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio_rustls::{server::TlsStream, TlsAcceptor as TlsAcceptorTokio};
 
 pub fn get_tls_config(cert_file: &Path, key_file: &Path) -> Result<ServerConfig, String> {
@@ -145,7 +145,7 @@ impl<'a> TlsAcceptor<'a> {
                         format!("Failed to create TCP listener from systemd socket: {}", e)
                     })?
                 } else {
-                    TcpListener::bind(&addr)
+                    tokio::net::TcpListener::bind(&addr)
                         .await
                         .map(|l| {
                             info!(log, "Listening for requests on port {}", addr.port());
@@ -156,13 +156,34 @@ impl<'a> TlsAcceptor<'a> {
             }
             #[cfg(windows)]
             {
-                TcpListener::bind(&addr)
-                    .await
-                    .map(|l| {
-                        info!(log, "Listening for requests on port {}", addr.port());
-                        l
-                    })
-                    .map_err(|e| format!("Failed to bind TCP listener: {}", e))?
+                use std::os::windows::io::AsRawSocket;
+                use winapi::um::winsock2::setsockopt;
+
+                // This enables windows named pipes to listen to
+                // both Ipv4 and Ipv6.
+                tokio::net::TcpSocket::new_v6()
+                    .map_err(|e| format!("Failed to create TCP socket: {}", e))
+                    .and_then(|socket| {
+                        unsafe {
+                            setsockopt(
+                                socket.as_raw_socket() as usize,
+                                winapi::shared::ws2def::IPPROTO_IPV6 as i32,
+                                winapi::shared::ws2ipdef::IPV6_V6ONLY,
+                                (&0u32 as *const u32).cast::<i8>(),
+                                4,
+                            )
+                        };
+                        socket
+                            .bind(addr)
+                            .map_err(|e| format!("Failed to bind TPC socket: {}", e))?;
+                        socket
+                            .listen(1024)
+                            .map(|l| {
+                                info!(log, "Listening for requests on port {}", addr.port());
+                                l
+                            })
+                            .map_err(|e| format!("Failed listen on TCP socket: {}", e))
+                    })?
             }
         };
         let acceptor = TlsAcceptorTokio::from(Arc::new(config));
