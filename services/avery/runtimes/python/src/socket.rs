@@ -6,7 +6,7 @@ use pyo3::{
     ffi,
     proc_macro::{pyclass, pyfunction, pymodule},
     types::PyModule,
-    wrap_pyfunction, PyAny, PyCell, PyResult, Python,
+    wrap_pyfunction, PyAny, PyResult, Python,
 };
 
 create_exception!(firm, ConnectionError, PyException);

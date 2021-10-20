@@ -38,12 +38,12 @@
       systemd-socket-activate -l "/tmp/avery-dev.sock" "target/debug/avery"
     }
   '';
-}).overrideAttrs (attrs: {
+}).overrideAttrs (avery: {
   withRuntimes = base.callFile ./avery-with-runtimes.nix {
-    avery = attrs;
+    inherit avery;
   };
 
   withDefaultRuntimes = (base.callFile ./avery-with-runtimes.nix {
-    avery = attrs;
+    inherit avery;
   }) { };
 })

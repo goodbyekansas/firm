@@ -1,4 +1,4 @@
-{ base, pkgs }:
+{ base }:
 base.languages.python.mkFunction {
   name = "networking";
   version = "1.0.0";

@@ -1,4 +1,4 @@
-{ base, pkgs, firmRust, firmTypes, avery, bendini, wasiPython, runCommand, wasiPythonShims }:
+{ base, pkgs, firmRust, firmTypes, avery, bendini, wasiPython, wasiPythonShims }:
 let
   examples = {
     hello = base.callFile ./examples/hello/hello.nix { };
@@ -65,6 +65,10 @@ let
 
   '';
 
+  # Python comes with an (env hook)[https://github.com/NixOS/nixpkgs/blob/f46390a8733096606e1ff18f393609769fa72d39/pkgs/development/interpreters/python/cpython/default.nix#L161]
+  # which sets _PYTHON_SYSCONFIGDATA_NAME to the host platoform, which pyo3 uses to find sysconfigdata.
+  # This is incorrect for us because pyo3 will then think it should look for the host plaform instead of wasi/wasm.
+  pythonWithoutHook = ((pkgs.python3).overrideAttrs (_: { postFixup = ""; }));
 in
 base.mkRuntime {
   inherit examples fileSystemImage;
@@ -86,7 +90,7 @@ base.mkRuntime {
     runDepsExample "sune: suna" "sune"
   '';
 
-  nativeBuildInputs = [ pkgs.python3 ];
+  nativeBuildInputs = [ pythonWithoutHook ];
   checkInputs = [ avery.package bendini.package ];
 
   buildInputs = [ firmRust.package firmTypes.package wasiPythonShims.package zlib ];

@@ -21,6 +21,42 @@ jobs:
     - name: Format the Firm 💋
       run: nix-build -A ci && result/bin/nixfmt
 
+
+  shell-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v12
+
+    - name: Setup ssh agent and ssh options
+      env:
+        CI_ACCESS_KEY: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
+      run: .github/workflows/setup-ssh.sh .github/workflows/ssh-config
+
+    - name: Check the shell scripts 🐢 🐌 💶
+      run:  nix-build -A ci && result/bin/shellcheck
+
+
+  nix-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v12
+
+    - name: Setup ssh agent and ssh options
+      env:
+        CI_ACCESS_KEY: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
+      run: .github/workflows/setup-ssh.sh .github/workflows/ssh-config
+
+    - name: Lint .nix files 🦕 📝 👀
+      run:  nix-build -A ci && result/bin/nix-lint
+
   build-package-with-checks:
     name: "Build all components with checks"
     runs-on: ubuntu-latest

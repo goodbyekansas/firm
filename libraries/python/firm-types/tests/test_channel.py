@@ -72,9 +72,13 @@ def test_value() -> None:
     chan = channel.channel(1.230000000001)
     assert typing.cast(typing.List[float], channel.value(chan)) == [1.230000000001]
     assert typing.cast(float, channel.value(chan, as_type=float)) == 1.230000000001
-    assert typing.cast(
-        typing.List[float], channel.value(chan, as_type=typing.List[float]),
-    ) == [1.230000000001]
+    assert (
+        typing.cast(
+            typing.List[float],
+            channel.value(chan, as_type=typing.List[float]),
+        )
+        == [1.230000000001]
+    )
 
     with pytest.raises(channel.ChannelConversionError):
         channel.value(chan, as_type=typing.List[bool])

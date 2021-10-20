@@ -14,14 +14,15 @@ trap trap_handler EXIT
 if [ -z "$2" ]; then
     echo "no example name given, running WASI executable..."
     tmpdir=$(mktemp -d)
-    wasmtime run --disable-cache --env=RUST_TEST_NOCAPTURE=1 --mapdir=.::$tmpdir "$@"
+    wasmtime run --disable-cache --env=RUST_TEST_NOCAPTURE=1 --mapdir=.::"$tmpdir" "$@"
     exitCode=$?
-    rm -rf $tmpdir
+    rm -rf "$tmpdir"
     exit $exitCode
 fi
 
 # source a definition of all the functions
 # we have available
+# shellcheck disable=SC1091
 source @functions@
 
 # argument "parsing"
@@ -59,7 +60,7 @@ if [ -n "${fsimage:-}" ]; then
     # -h to resolve symlinks
     # also set mode because of https://github.com/alexcrichton/tar-rs/issues/242
     echo "📦 creating tar file for runtime filesystem image at $runtime_dir/$runtime..."
-    tar -chzf "$runtime_dir/$runtime" --mode='a+rwX' -C "$tmp_tar_dir" fs -C "$(dirname $executable)" "$(basename $executable)"
+    tar -chzf "$runtime_dir/$runtime" --mode='a+rwX' -C "$tmp_tar_dir" fs -C "$(dirname "$executable")" "$(basename "$executable")"
     echo "🌅 Image created!"
 else
     runtime="$(basename executable)"
@@ -69,8 +70,8 @@ fi
 # avery config file
 echo "
 [\"$runtime\"]
-sha256=\"$(sha256sum $runtime_dir/$runtime | cut -d ' ' -f 1)\"
-executable_sha256=\"$(sha256sum $executable | cut -d ' ' -f 1)\"" >"$runtime_dir/.checksums.toml"
+sha256=\"$(sha256sum "$runtime_dir/$runtime" | cut -d ' ' -f 1)\"
+executable_sha256=\"$(sha256sum "$executable" | cut -d ' ' -f 1)\"" >"$runtime_dir/.checksums.toml"
 
 # checksum file for the avery filesystem source
 echo "

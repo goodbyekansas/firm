@@ -1,4 +1,4 @@
-{ base, pkgs }:
+{ base }:
 base.languages.python.mkFunction {
   name = "hello";
   version = "1.0.0";

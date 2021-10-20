@@ -6,10 +6,6 @@ let
     , version
     , src
     , setupPyArgs ? ""
-    , preBuild ? ""
-    , postBuild ? ""
-    , preInstall ? ""
-    , postInstall ? ""
     , dependencies ? [ ]
     }:
     pkgs.pkgsCross.wasi32.clang12Stdenv.mkDerivation rec {

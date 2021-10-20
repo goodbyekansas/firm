@@ -1,12 +1,11 @@
-{ pkgs, base, types }:
-with pkgs;
+{ base, types, stdenv, lib, darwin, postgresql, coreutils, pkg-config, glibcLocales, openssl }:
 base.languages.rust.mkService {
   name = "quinn";
   src = ./.;
-  buildInputs = [ types.package pkgs.openssl ]
-    ++ pkgs.stdenv.lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.darwin.apple_sdk.frameworks.Security;
+  buildInputs = [ types.package openssl ]
+    ++ lib.optional stdenv.hostPlatform.isDarwin darwin.apple_sdk.frameworks.Security;
 
-  nativeBuildInputs = [ pkgs.postgresql pkgs.coreutils pkgs.pkg-config ];
+  nativeBuildInputs = [ postgresql coreutils pkg-config ];
 
   extraChecks = ''
     source scripts/postgres.bash
@@ -14,7 +13,7 @@ base.languages.rust.mkService {
     postgres_tests
   '';
 
-  LOCALE_ARCHIVE = if pkgs.stdenv.isLinux then "${pkgs.glibcLocales}/lib/locale/locale-archive" else "";
+  LOCALE_ARCHIVE = if stdenv.isLinux then "${glibcLocales}/lib/locale/locale-archive" else "";
   shellHook = ''
     source scripts/postgres.bash
   '';

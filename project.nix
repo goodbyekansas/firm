@@ -12,7 +12,7 @@ nedryland.mkProject rec {
   ];
   ci = nedryland.ci;
 
-  components = { callFile, callFunction }: rec {
+  components = { callFile }: rec {
     protocols = callFile ./protocols/protocols.nix { };
 
     firmTypes = {

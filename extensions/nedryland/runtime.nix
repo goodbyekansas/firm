@@ -3,7 +3,7 @@ let
   mkRuntime = attrs@{ name, runtimeName ? name, src, examples ? { }, fileSystemImage ? null, ... }:
     let
       env = (builtins.mapAttrs
-        (n: v: {
+        (_: v: {
           function = v.deployment.function;
           name = v.package.pname;
         })

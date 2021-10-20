@@ -67,7 +67,6 @@ base.extend.mkExtension {
         { name
         , src
         , manifest
-        , extensions ? [ ]
         , targets ? [ ]
         , useNightly ? ""
         , extraChecks ? ""
@@ -114,7 +113,6 @@ base.extend.mkExtension {
         , src
         , version
         , description ? ""
-        , packageAttrs ? { }
         , componentAttrs ? { }
         , entrypoint ? "main:main"
         , inputs ? { }
