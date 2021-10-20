@@ -1,4 +1,4 @@
-{ base, pkgs, pythonSource, overrideCC, wasiPythonShims }:
+{ base, pkgs, pythonSource, wasiPythonShims }:
 let
   zlib = pkgs.pkgsCross.wasi32.zlib.override {
     stdenv = pkgs.pkgsCross.wasi32.clang12Stdenv;

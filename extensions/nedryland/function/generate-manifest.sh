@@ -1,10 +1,12 @@
 #! @bash@
+# shellcheck disable=SC2239
 
 copyAttachments() {
   echo "  📜 [manifest] Copying attachments to output folder..."
-  mkdir -p $out/attachments
+  # shellcheck disable=SC2154
+  mkdir -p "$out/attachments"
   python @out@/copy_attachments.py \
-    $out/attachments \
+    "$out/attachments" \
     @out@/manifest-data.json \
     "$NIX_BUILD_TOP/manifest-data-with-existing-attachments.json" | sed "s/^/  📜 [manifest] /"
 }
@@ -23,7 +25,7 @@ generateManifestPhase() {
   j2 -f json --customize @out@/template_settings.py \
     @out@/manifest-template.jinja.toml \
     "$NIX_BUILD_TOP/manifest-data-with-checksums.json" \
-    -o $out/manifest.toml | sed "s/^/  📜 [manifest] /"
+    -o "$out/manifest.toml" | sed "s/^/  📜 [manifest] /"
   echo "  📜 [manifest] Manifest written to $out/manifest.toml"
 }
 

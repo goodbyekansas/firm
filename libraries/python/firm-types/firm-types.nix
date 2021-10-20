@@ -5,7 +5,7 @@ base.languages.python.mkLibrary rec{
   version = "1.0.0";
   src = ./.;
   pythonVersion = pkgs.python3;
-  propagatedBuildInputs = (pythonPkgs: [
+  propagatedBuildInputs = (_: [
     protocols.package
   ]);
 }

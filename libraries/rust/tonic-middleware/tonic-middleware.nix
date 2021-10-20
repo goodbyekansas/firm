@@ -1,4 +1,4 @@
-{ base, pkgs, protocols }:
+{ base, protocols }:
 base.languages.rust.mkLibrary {
   name = "tonic-middleware";
   src = ./.;

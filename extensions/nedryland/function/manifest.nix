@@ -1,17 +1,15 @@
 { pkgs, name, manifest }:
 let
-  manifestData = (if builtins.isPath manifest then (builtins.fromTOML (builtins.readFile manifest)) else manifest);
   j2 = pkgs.python3.withPackages (ps: with ps; [ j2cli setuptools ]);
 
-  normalizeAttachments = attachments: pkgs.lib.mapAttrs
+  normalizeAttachments = pkgs.lib.mapAttrs
     (
-      attName: attachmentPathOrData:
-        if builtins.isString attachmentPathOrData || builtins.isPath attachmentPathOrData then {
-          path = attachmentPathOrData;
+      _: path:
+        if builtins.isString path || builtins.isPath path then {
+          inherit path;
         }
-        else attachmentPathOrData
-    )
-    attachments;
+        else path
+    );
 
   manifestWithNormalizedAttachments = {
     # wrap this in a key to be able to

@@ -4,8 +4,8 @@ let
     [ "-" ]
     [ " " ]
     (pkgs.lib.toUpper (builtins.substring 0 1 manifest.name) + builtins.substring 1 (builtins.stringLength manifest.name) manifest.name);
-  required_inputs = (pkgs.lib.filterAttrs (n: v: v.required or false) manifest.inputs);
-  optional_inputs = (pkgs.lib.filterAttrs (n: v: !v.required or false) manifest.inputs);
+  required_inputs = (pkgs.lib.filterAttrs (_: v: v.required or false) manifest.inputs);
+  optional_inputs = (pkgs.lib.filterAttrs (_: v: !v.required or false) manifest.inputs);
   manifestData = builtins.toFile
     "manifest-data.json"
     (builtins.toJSON {
@@ -20,7 +20,7 @@ let
     });
   jinjaTemplate = ./index.html.jinja2;
   overrides = pkgs.lib.filterAttrs
-    (n: v: v != null)
+    (_: v: v != null)
     (parseConfig {
       key = "docs";
       structure = {

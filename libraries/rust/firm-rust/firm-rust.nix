@@ -1,4 +1,4 @@
-{ base, pkgs, types }:
+{ base, types }:
 base.languages.rust.mkLibrary {
   name = "firm-rust";
   src = ./.;

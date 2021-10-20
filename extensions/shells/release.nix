@@ -1,6 +1,6 @@
-{ base, mkShell, linkFarm, python38, lib, components, fetchFromGitHub, github-release }:
+{ base, mkShell, linkFarm, python38, lib, components, github-release }:
 let
-  components' = components { inherit (base) callFile callFunction; };
+  components' = components { inherit (base) callFile; };
   allChangelogs =
     let
       toList = set: if set ? changelog then set else (builtins.map toList (builtins.attrValues set));
@@ -13,7 +13,7 @@ let
           toList
           (builtins.attrValues
             (lib.filterAttrsRecursive
-              (n: v: v != null)
+              (_: v: v != null)
               (lib.mapAttrsRecursiveCond
                 (attr: !(attr ? isNedrylandComponent))
                 (
@@ -29,7 +29,7 @@ let
 
       uniqueChangelogs =
         lib.mapAttrsToList
-          (changelog: component: { name = component; path = changelog; })
+          (path: name: { inherit name path; })
           (builtins.foldl'
             (acc: cur:
               if acc ? "${cur.changelog}" then
