@@ -5,7 +5,7 @@ let
 in
 nedryland.mkProject rec {
   name = "firm";
-  version = "1.2.0";
+  version = "1.2.1";
   baseExtensions = [
     ./extensions/nedryland/function.nix
     ./extensions/nedryland/runtime.nix
