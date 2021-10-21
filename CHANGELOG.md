@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2021-10-21
+### Packages
+- avery: 1.2.1
+- bendini: 1.0.0
+- firmRust: 1.0.0
+- firmTypes-python: 1.0.0
+- firmTypes-rust-withServices, firmTypes-rust-withoutServices: 1.0.0
+- lomax: 1.0.1
+- protocols-withServices-python, protocols-withServices-rust, protocols-withoutServices-python, protocols-withoutServices-rust: 1.0.0
+- quinn: 1.0.0
+- tonicMiddleware: 1.0.0
+- windowsEvents: 0.1.0
+- windowsInstaller: 0.1.1
+
+### Fixed
+- avery: Restrict permissions on named pipes. Before System, admins and user had RW. Everyone and anonymous users had R. Now only system user and user has RW.
+
 ## [1.2.0] - 2021-09-15
 ### Packages
 - avery: 1.2.0
