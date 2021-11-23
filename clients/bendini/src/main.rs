@@ -447,35 +447,22 @@ async fn run() -> Result<(), error::BendiniError> {
 
     // When calling non pure grpc endpoints we may get content that is not application/grpc.
     // Tonic doesn't handle these cases very well. We have to make a wrapper around
-    // to handle these edge cases. We convert it into normal tonic statuses that tonic can handle.
-    let channel = HttpStatusInterceptor::new(channel);
+    // to handle these edge cases. We convert it into normal tonic statuses that tonic can
+    // handle.
+    let channel = tower::ServiceBuilder::new()
+        .option_layer(bearer.map(|bearer| {
+            tonic::service::interceptor(move |mut req: tonic::Request<()>| {
+                req.metadata_mut().insert("authorization", bearer.clone());
+                Ok(req)
+            })
+        }))
+        .layer_fn(HttpStatusInterceptor::new)
+        .service(channel);
 
-    let (registry_client, execution_client) = match bearer {
-        Some(bearer) => {
-            let bearer2 = bearer.clone();
-            (
-                RegistryClient::with_interceptor(
-                    channel.clone(),
-                    move |mut req: tonic::Request<()>| {
-                        req.metadata_mut().insert("authorization", bearer.clone());
-                        Ok(req)
-                    },
-                ),
-                ExecutionClient::with_interceptor(
-                    channel.clone(),
-                    move |mut req: tonic::Request<()>| {
-                        req.metadata_mut().insert("authorization", bearer2.clone());
-                        Ok(req)
-                    },
-                ),
-            )
-        }
-
-        None => (
-            RegistryClient::new(channel.clone()),
-            ExecutionClient::new(channel.clone()),
-        ),
-    };
+    let (registry_client, execution_client) = (
+        RegistryClient::new(channel.clone()),
+        ExecutionClient::new(channel.clone()),
+    );
 
     match args.cmd {
         Command::List { .. } => commands::list::run(registry_client).await,

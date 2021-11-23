@@ -326,7 +326,11 @@ pub async fn create_listener(
 #[derive(Debug)]
 pub struct NamedPipe(pub NamedPipeServer);
 
-impl Connected for NamedPipe {}
+impl Connected for NamedPipe {
+    type ConnectInfo = ();
+
+    fn connect_info(&self) -> Self::ConnectInfo {}
+}
 
 impl AsyncRead for NamedPipe {
     fn poll_read(

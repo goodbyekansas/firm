@@ -56,7 +56,7 @@ mod tests {
 
     macro_rules! sandbox {
         ($root_dir:expr, $guest_path:expr) => {
-            Sandbox::new($root_dir.path(), Path::new($guest_path)).unwrap();
+            Sandbox::new($root_dir.path(), Path::new($guest_path)).unwrap()
         };
     }
     #[test]

@@ -62,23 +62,23 @@ fn setup_api_imports(store: &Store, api_state: ApiState) -> ImportObject {
     imports! {
         "firm" => {
             // Host queries
-            "host_path_exists" => Function::new_native_with_env(&store, api_state.clone(), api::host::path_exists),
-            "get_host_os" => Function::new_native_with_env(&store, api_state.clone(), api::host::get_os),
-            "start_host_process" => Function::new_native_with_env(&store, api_state.clone(), api::host::start_process),
-            "run_host_process" => Function::new_native_with_env(&store, api_state.clone(), api::host::run_process),
-            "connect" => Function::new_native_with_env(&store, api_state.clone(), api::host::socket_connect),
+            "host_path_exists" => Function::new_native_with_env(store, api_state.clone(), api::host::path_exists),
+            "get_host_os" => Function::new_native_with_env(store, api_state.clone(), api::host::get_os),
+            "start_host_process" => Function::new_native_with_env(store, api_state.clone(), api::host::start_process),
+            "run_host_process" => Function::new_native_with_env(store, api_state.clone(), api::host::run_process),
+            "connect" => Function::new_native_with_env(store, api_state.clone(), api::host::socket_connect),
 
             // Attachments
-            "get_attachment_path_len" => Function::new_native_with_env(&store, api_state.clone(), api::attachments::get_path_len),
-            "map_attachment" => Function::new_native_with_env(&store, api_state.clone(), api::attachments::map),
-            "get_attachment_path_len_from_descriptor" => Function::new_native_with_env(&store, api_state.clone(), api::attachments::get_path_len_from_descriptor),
-            "map_attachment_from_descriptor" => Function::new_native_with_env(&store, api_state.clone(), api::attachments::map_from_descriptor),
+            "get_attachment_path_len" => Function::new_native_with_env(store, api_state.clone(), api::attachments::get_path_len),
+            "map_attachment" => Function::new_native_with_env(store, api_state.clone(), api::attachments::map),
+            "get_attachment_path_len_from_descriptor" => Function::new_native_with_env(store, api_state.clone(), api::attachments::get_path_len_from_descriptor),
+            "map_attachment_from_descriptor" => Function::new_native_with_env(store, api_state.clone(), api::attachments::map_from_descriptor),
 
             // Connections
-            "get_input_len" => Function::new_native_with_env(&store, api_state.clone(), api::connections::get_input_len),
-            "get_input" => Function::new_native_with_env(&store, api_state.clone(), api::connections::get_input),
-            "set_output" => Function::new_native_with_env(&store, api_state.clone(), api::connections::set_output),
-            "set_error" => Function::new_native_with_env(&store, api_state, api::connections::set_error),
+            "get_input_len" => Function::new_native_with_env(store, api_state.clone(), api::connections::get_input_len),
+            "get_input" => Function::new_native_with_env(store, api_state.clone(), api::connections::get_input),
+            "set_output" => Function::new_native_with_env(store, api_state.clone(), api::connections::set_output),
+            "set_error" => Function::new_native_with_env(store, api_state, api::connections::set_error),
         }
     }
 }
@@ -95,18 +95,18 @@ impl Runtime for WasiRuntime {
             .new(o!("function" => runtime_parameters.function_name.to_owned()));
 
         let sandbox = Sandbox::new(
-            &runtime_parameters.function_dir.execution_path(),
+            runtime_parameters.function_dir.execution_path(),
             Path::new("sandbox"),
         )
         .map_err(|e| e.to_string())?;
         let attachment_sandbox = Sandbox::new(
-            &runtime_parameters.function_dir.execution_path(),
+            runtime_parameters.function_dir.execution_path(),
             Path::new("attachments"),
         )
         .map_err(|e| e.to_string())?;
 
         let cache_sandbox = Sandbox::new(
-            &runtime_parameters.function_dir.cache_path(),
+            runtime_parameters.function_dir.cache_path(),
             Path::new("cache"),
         )
         .map_err(|e| e.to_string())?;

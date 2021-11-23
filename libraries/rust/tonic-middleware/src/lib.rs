@@ -78,8 +78,8 @@ impl Future for ResponseFuture {
     }
 }
 
-impl tonic::client::GrpcService<tonic::body::BoxBody> for HttpStatusInterceptor {
-    type ResponseBody = tonic::transport::Body;
+impl tower::Service<http::Request<tonic::body::BoxBody>> for HttpStatusInterceptor {
+    type Response = http::Response<Body>;
     type Error = tonic::transport::Error;
     type Future = ResponseFuture;
 
@@ -88,8 +88,14 @@ impl tonic::client::GrpcService<tonic::body::BoxBody> for HttpStatusInterceptor 
     }
 
     fn call(&mut self, request: http::Request<tonic::body::BoxBody>) -> Self::Future {
+        // This is necessary because tonic internally uses `tower::buffer::Buffer`.
+        // See https://github.com/tower-rs/tower/issues/547#issuecomment-767629149
+        // for details on why this is necessary
+        let clone = self.channel.clone();
+        let mut inner = std::mem::replace(&mut self.channel, clone);
+
         ResponseFuture {
-            inner: self.channel.call(request),
+            inner: inner.call(request),
         }
     }
 }

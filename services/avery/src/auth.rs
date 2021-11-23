@@ -51,7 +51,7 @@ impl From<firm_types::auth::RemoteAccessRequest> for PendingAccessRequest {
 pub struct AuthService {
     logger: Logger,
     token_store: Arc<RwLock<TokenStore>>,
-    key_store: Arc<Box<dyn KeyStore>>,
+    key_store: Arc<dyn KeyStore>,
     scope_mappings: Arc<HashMap<String, AuthConfig>>,
     access_list: ExpireMap<String, ()>,
     pending_access_requests: ExpireMap<uuid::Uuid, PendingAccessRequest>,
@@ -68,7 +68,7 @@ impl Default for AuthService {
         Self {
             logger: slog::Logger::root(slog::Discard, slog::o!()),
             token_store: Arc::new(RwLock::new(TokenStore::default())),
-            key_store: Arc::new(Box::new(keystore::NullKeyStore {})),
+            key_store: Arc::new(keystore::NullKeyStore {}),
             scope_mappings: Arc::new(HashMap::new()),
             access_list: ExpireMap::default(),
             pending_access_requests: ExpireMap::default(),
@@ -132,7 +132,7 @@ impl TokenStore {
         .as_mut()
         // always do refresh, the refresh methods of the providers
         // are responsible for checking if it is needed
-        .refresh(&logger)
+        .refresh(logger)
         .await
         .map_err(|err| format!("Failed to refresh token for scope \"{}\": {}", scope, err))
     }
@@ -408,7 +408,7 @@ impl ScopeKey for IdentityProvider {
 }
 
 impl AuthService {
-    pub fn new(keystore: Box<dyn KeyStore>) -> Self {
+    pub fn new<T: KeyStore + 'static>(keystore: T) -> Self {
         Self {
             key_store: Arc::new(keystore),
             ..Default::default()
@@ -482,14 +482,14 @@ impl AuthService {
         }));
 
         let key_store = match key_store_config {
-            crate::config::KeyStore::Simple { url } => Box::new(keystore::SimpleKeyStore::new(
+            crate::config::KeyStore::Simple { url } => Arc::new(keystore::SimpleKeyStore::new(
                 &url,
                 token_store.clone(),
                 auth_scopes.clone(),
                 logger.new(o!("scope" => "key-store", "type" => "simple", "url" => url.clone())),
-            )) as Box<dyn KeyStore>,
+            )),
             crate::config::KeyStore::None => {
-                Box::new(keystore::NullKeyStore {}) as Box<dyn KeyStore>
+                Arc::new(keystore::NullKeyStore {}) as Arc<dyn KeyStore>
             }
         };
 
@@ -517,7 +517,7 @@ impl AuthService {
         }
 
         Ok(Self {
-            key_store: Arc::new(key_store),
+            key_store,
             token_store,
             scope_mappings: Arc::new(auth_scopes),
             logger,
@@ -649,13 +649,13 @@ impl AuthService {
                         "Using token signing private key from: {}",
                         private_key_path.display()
                     );
-                    internal::TokenGeneratorBuilder::new(&audience)
+                    internal::TokenGeneratorBuilder::new(audience)
                         .with_ecdsa_private_key_from_file(&private_key_path)
                         .build()
                         .map_err(|e| e.to_string())
                         .map(|token_gen| (None, token_gen))
                 } else {
-                    internal::TokenGeneratorBuilder::new(&audience)
+                    internal::TokenGeneratorBuilder::new(audience)
                         .build()
                         .map_err(|e| e.to_string())
                         .and_then(|tg| {
@@ -906,7 +906,7 @@ impl Authentication for AuthService {
                 })
                 .map(|id| &id.uuid)
                 .and_then(|uuid| {
-                    uuid::Uuid::parse_str(&uuid).map_err(|e| {
+                    uuid::Uuid::parse_str(uuid).map_err(|e| {
                         tonic::Status::invalid_argument(format!("Invalid UUID: {}", e))
                     })
                 }),

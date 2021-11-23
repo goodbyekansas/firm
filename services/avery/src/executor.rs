@@ -81,7 +81,7 @@ pub struct QueuedFunction {
 #[derive(Clone)]
 pub struct ExecutionService {
     logger: Logger,
-    registry: Arc<Box<dyn Registry>>,
+    registry: Arc<dyn Registry>,
     runtime_sources: Arc<Vec<Box<dyn RuntimeSource>>>,
     execution_queue: Arc<Mutex<HashMap<Uuid, QueuedFunction>>>, // Death row hehurr
     root_dir: PathBuf,
@@ -90,9 +90,9 @@ pub struct ExecutionService {
 }
 
 impl ExecutionService {
-    pub fn new(
+    pub fn new<T: Registry + 'static>(
         log: Logger,
-        registry: Box<dyn Registry>,
+        registry: T,
         runtime_sources: Vec<Box<dyn RuntimeSource>>,
         auth_service: AuthService,
         root_dir: &Path,
@@ -250,7 +250,7 @@ impl ExecutionServiceTrait for ExecutionService {
             &self.root_dir,
             &queued_function.function.name,
             &queued_function.function.version,
-            &queued_function
+            queued_function
                 .function
                 .metadata
                 .get("_dev-checksum")
@@ -750,7 +750,7 @@ mod tests {
         let fr = registry!();
         let execution_service = ExecutionService::new(
             null_logger!(),
-            Box::new(fr),
+            fr,
             vec![Box::new(runtime::InternalRuntimeSource::new(
                 null_logger!(),
             ))],
@@ -778,7 +778,7 @@ mod tests {
         let fr = registry!();
         let execution_service = ExecutionService::new(
             null_logger!(),
-            Box::new(fr),
+            fr,
             vec![Box::new(runtime::InternalRuntimeSource::new(
                 null_logger!(),
             ))],

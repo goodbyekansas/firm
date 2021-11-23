@@ -7,7 +7,7 @@ use firm_types::{
         registry_client::RegistryClient, registry_server::Registry, Functions, Ordering,
         OrderingKey,
     },
-    tonic,
+    tonic::{self, codegen::InterceptedService, service::Interceptor, Status},
 };
 use futures::{stream, StreamExt, TryStreamExt};
 use slog::{o, warn, Logger};
@@ -22,10 +22,12 @@ use url::Url;
 
 use crate::{auth::AuthService, config::ConflictResolutionMethod, registry::RegistryService};
 
+type RegClient = RegistryClient<InterceptedService<HttpStatusInterceptor, AcquireAuthInterceptor>>;
+
 #[derive(Debug, Clone)]
 struct RegistryConnection {
     name: String,
-    client: RegistryClient<HttpStatusInterceptor>,
+    client: RegClient,
 }
 
 /// A forwarding proxy registry
@@ -62,11 +64,67 @@ pub enum ProxyRegistryError {
     ConflictingFunctions(String),
 }
 
+#[derive(Debug, Clone)]
+struct AcquireAuthInterceptor {
+    auth_service: AuthService,
+    logger: Logger,
+    endpoint: Endpoint,
+}
+
+impl Interceptor for AcquireAuthInterceptor {
+    fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+        /*
+         * TODO: Block on calls are really ugly. Unfortunately Interceptor does
+         * not take async block and we need to use async functionality.
+         * This can be fixed by implementing a tower Service as in
+         * https://github.com/hyperium/tonic/blob/c62f382e3c6e9c0641decfafb2b8396fe52b6314/examples/src/tower/client.rs#L61
+         */
+        if let Some(token) = self
+            .endpoint
+            .uri()
+            .host()
+            .and_then(|host| {
+                let host = host.to_owned();
+                let auth = self.auth_service.clone();
+                let handle = Handle::current();
+                let logger = self.logger.new(o!());
+                std::thread::spawn(move || {
+                    handle
+                        .block_on(async {
+                            auth.acquire_token(tonic::Request::new(AcquireTokenParameters {
+                                scope: host.clone(),
+                            }))
+                            .await
+                        })
+                        .map_err(|e| {
+                            warn!(
+                                logger,
+                                "Requesting auth for scope \"{}\" failed with error: {}", host, e
+                            );
+                            e
+                        })
+                        .ok()
+                })
+                .join()
+                .ok()
+                .and_then(|op| op)
+            })
+            .and_then(|result| {
+                AsciiMetadataValue::from_str(&format!("bearer {}", &result.get_ref().token)).ok()
+            })
+        {
+            request.metadata_mut().insert("authorization", token);
+        }
+
+        Ok(request)
+    }
+}
+
 async fn create_connection(
     auth_service: AuthService,
     registry: ExternalRegistry,
     logger: Logger,
-) -> Result<RegistryClient<HttpStatusInterceptor>, ProxyRegistryError> {
+) -> Result<RegClient, ProxyRegistryError> {
     let mut endpoint = Endpoint::from_shared(registry.url.to_string())
         .map_err(|e| ProxyRegistryError::InvalidUri(e.to_string()))?;
 
@@ -77,52 +135,14 @@ async fn create_connection(
     // When calling non pure grpc endpoints we may get content that is not application/grpc.
     // Tonic doesn't handle these cases very well. We have to make a wrapper around
     // to handle these edge cases. We convert it into normal tonic statuses that tonic can handle.
-    let channel = HttpStatusInterceptor::new(endpoint.connect().await?);
     Ok(RegistryClient::with_interceptor(
-        channel,
-        move |mut req: tonic::Request<()>| {
-            // TODO: Block on calls are really ugly. Unfortunately with_interceptor does
-            // not take async block and we need to use async functionality.
-            if let Some(token) = endpoint
-                .uri()
-                .host()
-                .and_then(|host| {
-                    let host = host.to_owned();
-                    let auth = auth_service.clone();
-                    let handle = Handle::current();
-                    let logger = logger.new(o!());
-                    std::thread::spawn(move || {
-                        handle
-                            .block_on(async {
-                                auth.acquire_token(tonic::Request::new(AcquireTokenParameters {
-                                    scope: host.clone(),
-                                }))
-                                .await
-                            })
-                            .map_err(|e| {
-                                warn!(
-                                    logger,
-                                    "Requesting auth for scope \"{}\" failed with error: {}",
-                                    host,
-                                    e
-                                );
-                                e
-                            })
-                            .ok()
-                    })
-                    .join()
-                    .ok()
-                    .and_then(|op| op)
-                })
-                .and_then(|result| {
-                    AsciiMetadataValue::from_str(&format!("bearer {}", &result.get_ref().token))
-                        .ok()
-                })
-            {
-                req.metadata_mut().insert("authorization", token);
-            }
-
-            Ok(req)
+        tower::ServiceBuilder::new()
+            .layer_fn(HttpStatusInterceptor::new)
+            .service(endpoint.connect_lazy()),
+        AcquireAuthInterceptor {
+            auth_service,
+            logger,
+            endpoint,
         },
     ))
 }
@@ -285,7 +305,7 @@ impl Registry for ProxyRegistry {
             match OrderingKey::from_i32(order.key) {
                 Some(OrderingKey::NameVersion) | None => {
                     match a_function.name.cmp(&b_function.name) {
-                        std::cmp::Ordering::Equal => b_semver.cmp(&a_semver),
+                        std::cmp::Ordering::Equal => b_semver.cmp(a_semver),
                         o => o,
                     }
                 }

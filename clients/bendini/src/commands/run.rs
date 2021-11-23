@@ -7,13 +7,15 @@ use firm_types::{
         NameFilter, Ordering, OrderingKey, Stream, VersionRequirement,
     },
     stream::ToChannel,
-    tonic,
+    tonic::{
+        self,
+        codegen::{Body, StdError},
+    },
 };
 use futures::{
     future::{abortable, select, Either},
     FutureExt, StreamExt, TryFutureExt,
 };
-use tonic_middleware::HttpStatusInterceptor;
 
 use crate::{error, formatting::DisplayExt};
 use error::BendiniError;
@@ -122,13 +124,23 @@ where
     }
 }
 
-pub async fn run(
-    mut registry_client: RegistryClient<HttpStatusInterceptor>,
-    mut execution_client: ExecutionClient<HttpStatusInterceptor>,
+pub async fn run<T1, T2>(
+    mut registry_client: RegistryClient<T1>,
+    mut execution_client: ExecutionClient<T2>,
     function_id: String,
     arguments: Vec<(String, String)>,
     follow_output: bool,
-) -> Result<(), BendiniError> {
+) -> Result<(), BendiniError>
+where
+    T1: tonic::client::GrpcService<tonic::body::BoxBody>,
+    T1::ResponseBody: Body + Send + 'static,
+    T1::Error: Into<StdError>,
+    <T1::ResponseBody as Body>::Error: Into<StdError> + Send,
+    T2: tonic::client::GrpcService<tonic::body::BoxBody>,
+    T2::ResponseBody: Body + Send + 'static,
+    T2::Error: Into<StdError>,
+    <T2::ResponseBody as Body>::Error: Into<StdError> + Send,
+{
     let (function_name, function_version): (&str, &str) =
         match &function_id.splitn(2, ':').collect::<Vec<&str>>()[..] {
             [name, version] => Ok((*name, *version)),
@@ -437,10 +449,7 @@ mod tests {
         );
 
         // Bools
-        assert_eq!(
-            bool::try_from(stream.get_channel("arg5").unwrap()).unwrap(),
-            true
-        );
+        assert!(bool::try_from(stream.get_channel("arg5").unwrap()).unwrap());
         assert_eq!(
             stream.get_channel_as_ref::<[bool]>("arg6").unwrap(),
             &[true, false, false, true],

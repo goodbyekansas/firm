@@ -38,7 +38,7 @@ macro_rules! auth_service {
     }};
 
     ($keystore:expr) => {{
-        AuthService::new(Box::new($keystore))
+        AuthService::new($keystore)
     }};
 }
 

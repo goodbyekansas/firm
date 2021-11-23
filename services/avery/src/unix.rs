@@ -148,7 +148,8 @@ pub async fn create_listener(
 
     Ok((
         async_stream::stream! {
-            while let item = uds.accept().map_ok(|(st, _)| UnixStream(st)).await {
+            loop {
+                let item = uds.accept().map_ok(|(st, _)| UnixStream(st)).await;
                 yield item;
             }
         },
@@ -173,7 +174,11 @@ pub async fn shutdown_signal(log: Logger) {
 #[derive(Debug)]
 pub struct UnixStream(pub tokio::net::UnixStream);
 
-impl Connected for UnixStream {}
+impl Connected for UnixStream {
+    type ConnectInfo = ();
+
+    fn connect_info(&self) -> Self::ConnectInfo {}
+}
 
 impl AsyncRead for UnixStream {
     fn poll_read(

@@ -5,7 +5,8 @@ authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2018"
 
 [dependencies]
-http = "0.2"
+http = "0.2.5"
+tower = "0.4.11"
 
 firm-protocols = { version = "1.0.0", registry = "nix" }
 

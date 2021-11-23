@@ -119,7 +119,7 @@ impl RegistryService {
             // Make sure we only open the file once and re-use the file handle for later writes.
             // Since we get the path inside the chunk we got no other option but to open the file
             // inside the scope
-            let file = match *maybe_file.get_or_insert_with(|| {
+            let file = match maybe_file.get_or_insert_with(|| {
                 (
                     fs::OpenOptions::new()
                         .create(true)
@@ -134,8 +134,8 @@ impl RegistryService {
                     path.clone(),
                 )
             }) {
-                (Ok(ref mut f), _) => Ok(f),
-                (Err(ref mut e), _) => Err(e.clone()),
+                (Ok(f), _) => Ok(f),
+                (Err(e), _) => Err(tonic::Status::new(e.code(), e.message())),
             }?;
 
             hasher.update(&chunk.content);

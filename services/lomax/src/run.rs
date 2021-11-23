@@ -12,6 +12,7 @@ use firm_types::{
 use futures::TryFutureExt;
 use http::{Request, Response, Uri};
 use hyper::{
+    body::HttpBody,
     server::Server,
     service::{make_service_fn, service_fn},
     Body, Client,
@@ -417,7 +418,12 @@ async fn proxy(
     .and_then(|client| {
         client
             .request(request)
-            .map_ok(|resp| resp.map(BoxBody::map_from))
+            .map_ok(|resp| {
+                Response::new(
+                    resp.map_err(|e| tonic::Status::unknown(e.to_string()))
+                        .boxed_unsync(),
+                )
+            })
             .map_err(ProxyError::HttpError)
     })
     .await

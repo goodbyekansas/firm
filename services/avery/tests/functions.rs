@@ -87,7 +87,7 @@ macro_rules! register_functions {
         ExecutionServiceWrapper::new(
             ExecutionService::new(
                 null_logger!(),
-                Box::new($service.clone()),
+                $service.clone(),
                 vec![Box::new(avery::runtime::InternalRuntimeSource::new(
                     null_logger!(),
                 ))],
