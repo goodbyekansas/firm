@@ -185,7 +185,7 @@ impl FunctionManifest {
         self.code
             .as_ref()
             .map(|code| {
-                self.get_attachment_path(&code)
+                self.get_attachment_path(code)
                     .map(|absolute| AttachmentInfo {
                         path: absolute,
                         request: AttachmentData {
@@ -202,7 +202,7 @@ impl FunctionManifest {
         self.attachments
             .iter()
             .map(|(n, a)| {
-                self.get_attachment_path(&a).map(|absolute| AttachmentInfo {
+                self.get_attachment_path(a).map(|absolute| AttachmentInfo {
                     path: absolute,
                     request: AttachmentData {
                         name: n.clone(),

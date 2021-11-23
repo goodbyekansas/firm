@@ -2,15 +2,21 @@ use std::collections::HashMap;
 
 use firm_types::{
     functions::{registry_client::RegistryClient, Filters, Ordering, OrderingKey},
-    tonic,
+    tonic::{
+        self,
+        codegen::{Body, StdError},
+    },
 };
-use tonic_middleware::HttpStatusInterceptor;
 
 use crate::{error, formatting::DisplayExt};
 
-pub async fn run(
-    mut client: RegistryClient<HttpStatusInterceptor>,
-) -> Result<(), error::BendiniError> {
+pub async fn run<T>(mut client: RegistryClient<T>) -> Result<(), error::BendiniError>
+where
+    T: tonic::client::GrpcService<tonic::body::BoxBody>,
+    T::ResponseBody: Body + Send + 'static,
+    T::Error: Into<StdError>,
+    <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+{
     println!("Listing functions");
     let list_request = Filters {
         name: None,

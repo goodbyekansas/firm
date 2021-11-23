@@ -3,22 +3,36 @@ use std::path::Path;
 use firm_types::{
     auth::authentication_client::AuthenticationClient,
     functions::{registry_client::RegistryClient, FunctionData},
-    tonic::{self, transport::Channel},
+    tonic::{
+        self,
+        codegen::{Body, StdError},
+    },
 };
 use futures::future::try_join_all;
 use indicatif::ProgressBar;
-use tonic_middleware::HttpStatusInterceptor;
 
 use crate::{error, formatting::with_progressbars, manifest::FunctionManifest};
 use error::BendiniError;
 
 mod attachments;
 
-pub async fn run(
-    mut client: RegistryClient<HttpStatusInterceptor>,
-    auth_client: AuthenticationClient<Channel>,
+pub async fn run<T1, T2>(
+    mut client: RegistryClient<T1>,
+    auth_client: AuthenticationClient<T2>,
     manifest: &Path,
-) -> Result<(), BendiniError> {
+) -> Result<(), BendiniError>
+where
+    T1: tonic::client::GrpcService<tonic::body::BoxBody> + Clone + Send,
+    T1::ResponseBody: Body + Send + 'static,
+    T1::Error: Into<StdError>,
+    T1::Future: Send,
+    <T1::ResponseBody as Body>::Error: Into<StdError> + Send,
+    T2: tonic::client::GrpcService<tonic::body::BoxBody> + Clone + Send,
+    T2::ResponseBody: Body + Send + 'static,
+    T2::Error: Into<StdError>,
+    T2::Future: Send,
+    <T2::ResponseBody as Body>::Error: Into<StdError> + Send,
+{
     let manifest_path = if manifest.is_dir() {
         manifest.join("manifest.toml")
     } else {

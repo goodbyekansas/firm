@@ -10,24 +10,38 @@ use firm_types::{
     auth::{authentication_client::AuthenticationClient, AcquireTokenParameters},
     functions::AttachmentUrl,
     functions::{registry_client::RegistryClient, AttachmentId, AttachmentStreamUpload},
-    tonic::{self, transport::Channel},
+    tonic::{
+        self,
+        codegen::{Body, StdError},
+    },
 };
 use futures::{FutureExt, StreamExt, TryFutureExt};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use tonic_middleware::HttpStatusInterceptor;
 
 use crate::manifest::AttachmentInfo;
 
 const CHUNK_SIZE: usize = 8192;
 
-pub async fn register_and_upload_attachment(
+pub async fn register_and_upload_attachment<T1, T2>(
     attachment: &AttachmentInfo,
-    mut client: RegistryClient<HttpStatusInterceptor>,
-    auth_client: AuthenticationClient<Channel>,
+    mut client: RegistryClient<T1>,
+    auth_client: AuthenticationClient<T2>,
     progressbar: ProgressBar,
-) -> Result<AttachmentId, String> {
+) -> Result<AttachmentId, String>
+where
+    T1: tonic::client::GrpcService<tonic::body::BoxBody> + Clone + Send,
+    T1::ResponseBody: Body + Send + 'static,
+    T1::Error: Into<StdError>,
+    T1::Future: Send,
+    <T1::ResponseBody as Body>::Error: Into<StdError> + Send,
+    T2: tonic::client::GrpcService<tonic::body::BoxBody> + Clone + Send,
+    T2::ResponseBody: Body + Send + 'static,
+    T2::Error: Into<StdError>,
+    T2::Future: Send,
+    <T2::ResponseBody as Body>::Error: Into<StdError> + Send,
+{
     const VEHICLES: [&str; 12] = [
         "🏇", "🏃", "🚙", "🚁", "🚕", "🚜", "🚌", "🚑", "🚚", "🚂", "🐌", "🚴",
     ];
@@ -121,20 +135,33 @@ pub async fn register_and_upload_attachment(
 
 #[async_trait::async_trait]
 trait AuthBuilder {
-    async fn build_auth(
+    async fn build_auth<T>(
         self,
         upload_info: &AttachmentUrl,
-        auth_client: AuthenticationClient<Channel>,
-    ) -> reqwest::RequestBuilder;
+        auth_client: AuthenticationClient<T>,
+    ) -> reqwest::RequestBuilder
+    where
+        T: tonic::client::GrpcService<tonic::body::BoxBody> + Send,
+        T::ResponseBody: Body + Send + 'static,
+        T::Error: Into<StdError>,
+        T::Future: Send,
+        <T::ResponseBody as Body>::Error: Into<StdError> + Send;
 }
 
 #[async_trait::async_trait]
 impl AuthBuilder for reqwest::RequestBuilder {
-    async fn build_auth(
+    async fn build_auth<T>(
         self,
         upload_url: &AttachmentUrl,
-        mut auth_client: AuthenticationClient<Channel>,
-    ) -> reqwest::RequestBuilder {
+        mut auth_client: AuthenticationClient<T>,
+    ) -> reqwest::RequestBuilder
+    where
+        T: tonic::client::GrpcService<tonic::body::BoxBody> + Send,
+        T::ResponseBody: Body + Send + 'static,
+        T::Error: Into<StdError>,
+        T::Future: Send,
+        <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+    {
         match firm_types::functions::AuthMethod::from_i32(upload_url.auth_method) {
             Some(firm_types::functions::AuthMethod::Oauth2) => {
                 match futures::future::ready(url::Url::parse(&upload_url.url).map_err(|_| ()))
@@ -164,15 +191,22 @@ impl AuthBuilder for reqwest::RequestBuilder {
     }
 }
 
-async fn upload_via_http(
-    auth_client: AuthenticationClient<Channel>,
+async fn upload_via_http<T>(
+    auth_client: AuthenticationClient<T>,
     upload_url: &AttachmentUrl,
     progressbar: ProgressBar,
     attachment_name: String,
     mut file: std::fs::File,
     file_name: &std::path::Path,
     file_size: usize,
-) -> Result<(), String> {
+) -> Result<(), String>
+where
+    T: tonic::client::GrpcService<tonic::body::BoxBody> + Send,
+    T::ResponseBody: Body + Send + 'static,
+    T::Error: Into<StdError>,
+    T::Future: Send,
+    <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+{
     // TODO: this should be streamed
     let mut buf = Vec::with_capacity(file_size);
     file.read_to_end(&mut buf).map_err(|e| {
@@ -187,7 +221,7 @@ async fn upload_via_http(
     progressbar.set_position(0);
     reqwest::Client::new()
         .post(&upload_url.url)
-        .build_auth(&upload_url, auth_client)
+        .build_auth(upload_url, auth_client)
         .await
         .body(buf)
         .send()
@@ -200,14 +234,20 @@ async fn upload_via_http(
         .map(|_| progressbar.finish_with_message(&format!("Done uploading {}!", &attachment_name)))
 }
 
-async fn upload_via_grpc(
-    mut client: RegistryClient<HttpStatusInterceptor>,
+async fn upload_via_grpc<T>(
+    mut client: RegistryClient<T>,
     progressbar: ProgressBar,
     attachment_id: AttachmentId,
     attachment_name: String,
     file: std::fs::File,
     file_size: usize,
-) -> Result<(), String> {
+) -> Result<(), String>
+where
+    T: tonic::client::GrpcService<tonic::body::BoxBody> + Send,
+    T::ResponseBody: Body + Send + 'static,
+    T::Error: Into<StdError>,
+    <T::ResponseBody as Body>::Error: Into<StdError> + Send,
+{
     let chunk_count = file_size / CHUNK_SIZE + (file_size % CHUNK_SIZE != 0) as usize; // 🧙‍♀️🧠
     let uploaded_chunk_count = Arc::new(AtomicUsize::new(0));
     let uploaded_chunk_count_clone = Arc::clone(&uploaded_chunk_count);

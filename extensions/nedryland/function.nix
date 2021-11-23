@@ -43,7 +43,7 @@ let
       attrs // {
         package = packageWithManifest;
         docs = attrs.docs or { } // {
-          generated = import ./function/function-doc.nix pkgs base.parseConfig manifest;
+          api = import ./function/function-doc.nix pkgs base.parseConfig manifest;
         };
       } // (
         if deploy then {

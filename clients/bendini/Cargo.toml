@@ -17,10 +17,10 @@ futures = "0.3"
 http = "0.2.4"
 indicatif = "0.15"
 pem = "0.8.3"
-prost = "0.7"
+prost = "0.9.0"
 rand = "0.8"
 regex = "1"
-reqwest = { version = "0.11", features = ["rustls-tls"], default-features = false }
+reqwest = { version = "0.11.6", features = ["rustls-tls"], default-features = false }
 rustls-native-certs = "0.5.0"
 rustls = "0.19.1"
 serde = { version = "1", features = ["derive"] }

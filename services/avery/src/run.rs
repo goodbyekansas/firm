@@ -121,7 +121,7 @@ where
 
     let execution_service = ExecutionService::new(
         log.new(o!("service" => "execution")),
-        Box::new(proxy_registry.clone()),
+        proxy_registry.clone(),
         runtime_sources,
         auth_service.clone(),
         // TODO In the future root_directory must be configurable

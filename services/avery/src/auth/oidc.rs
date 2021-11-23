@@ -557,7 +557,7 @@ impl Oidc {
                                     expected_aud.insert(client_id.to_owned());
                                     jsonwebtoken::decode::<Claims>(
                                         id_token,
-                                        &DecodingKey::from_rsa_components(&n, &e),
+                                        &DecodingKey::from_rsa_components(n, e),
                                         &Validation {
                                             leeway: 10,
                                             aud: Some(expected_aud),

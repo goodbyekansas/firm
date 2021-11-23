@@ -113,7 +113,7 @@ pub fn get_attachment_path_len(
         .find(|a| a.name == attachment_key)
         .ok_or(WasiError::FailedToFindAttachment(attachment_key))?;
     path_len.set(
-        wasi_attachment_path_from_descriptor(&attachment_data)
+        wasi_attachment_path_from_descriptor(attachment_data)
             .as_bytes()
             .len() as u32,
     )
@@ -138,16 +138,16 @@ pub async fn map_attachment(
         .ok_or(WasiError::FailedToFindAttachment(attachment_key))?;
 
     download_and_map_at(
-        &attachment_data,
+        attachment_data,
         download_ctx,
-        &native_attachment_path_from_descriptor(&attachment_data, &sandbox),
+        &native_attachment_path_from_descriptor(attachment_data, sandbox),
         unpack,
         logger,
     )
     .await?;
 
     path_buffer
-        .write(&wasi_attachment_path_from_descriptor(&attachment_data).as_bytes())
+        .write(wasi_attachment_path_from_descriptor(attachment_data).as_bytes())
         .map_err(WasiError::FailedToWriteBuffer)
         .map(|_bytes_written| ())
 }
@@ -176,14 +176,14 @@ pub async fn map_attachment_from_descriptor(
     download_and_map_at(
         &fa,
         download_ctx,
-        &native_attachment_path_from_descriptor(&fa, &sandbox),
+        &native_attachment_path_from_descriptor(&fa, sandbox),
         unpack,
         logger,
     )
     .await?;
 
     path_buffer
-        .write(&wasi_attachment_path_from_descriptor(&fa).as_bytes())
+        .write(wasi_attachment_path_from_descriptor(&fa).as_bytes())
         .map_err(WasiError::FailedToWriteBuffer)
         .map(|_bytes_written| ())
 }
