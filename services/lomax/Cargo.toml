@@ -21,7 +21,7 @@ slog = "2.7.0"
 slog-async = "2.6.0"
 slog-term = "2.8.0"
 structopt = "0.3.21"
-tokio = { version = "=1.4.0", features = ["rt-multi-thread", "macros", "signal"] }
+tokio = { version = "1.14.0", features = ["rt-multi-thread", "macros", "signal"] }
 tokio-rustls = "0.22"
 tower = "0.4.7"
 jsonwebtoken = "7.2.0"
@@ -39,6 +39,4 @@ winlog = "0.2.6"
 # for winlog
 log = "0.4.14"
 
-# our own version of tokio 1.4.0 with named pipes
-[patch.crates-io]
-tokio = {  git = "https://github.com/goodbyekansas/tokio.git", branch="named-pipes-1.4.0" }
+

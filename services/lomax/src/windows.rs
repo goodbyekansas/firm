@@ -4,8 +4,12 @@ use futures::{FutureExt, TryFutureExt};
 use log::Log;
 use slog::{error, info, o, Drain, Logger};
 use structopt::StructOpt;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::windows::named_pipe::{ClientOptions, NamedPipeClient},
+};
 use triggered::{Listener, Trigger};
+use winapi::shared::winerror;
 use windows_service::{
     define_windows_service,
     service::{
@@ -63,7 +67,7 @@ impl Drain for WinLoggerDrain {
     }
 }
 
-pub struct NamedPipe(tokio::net::NamedPipe);
+pub struct NamedPipe(pub NamedPipeClient);
 
 impl AsyncRead for NamedPipe {
     fn poll_read(
@@ -118,14 +122,31 @@ impl hyper::service::Service<http::Uri> for crate::run::LocalAveryConnector {
     }
 
     fn call(&mut self, _req: http::Uri) -> Self::Future {
-        Box::pin(
-            tokio::net::NamedPipe::connect(format!(
-                r#"\\{}{}"#,
-                self.uri.host().unwrap_or("."),
-                self.uri.path().replace("/", "\\")
-            ))
-            .map_ok(NamedPipe),
-        )
+        // TODO: It would be nicer to do this work in poll_ready.
+        // It would reflect the correct behaviour that way.
+        // Right now we skip it because the code becomes a bit
+        // more tricky. You could for example add a private
+        // member in LocalAveryConnector that saves the client
+        // in poll_ready and later returns it in this function.
+        let uri = format!(
+            r#"\\{}{}"#,
+            self.uri.host().unwrap_or("."),
+            self.uri.path().replace("/", "\\")
+        );
+
+        Box::pin(async move {
+            let client = loop {
+                match ClientOptions::new().open(&uri) {
+                    Ok(client) => break client,
+                    Err(e) if e.raw_os_error() == Some(winerror::ERROR_PIPE_BUSY as i32) => (),
+                    Err(e) => return Err(e),
+                }
+
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            };
+
+            Ok(NamedPipe(client))
+        })
     }
 }
 
