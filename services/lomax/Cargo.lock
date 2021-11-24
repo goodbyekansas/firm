@@ -665,6 +665,7 @@ dependencies = [
  "jsonwebtoken",
  "lazy_static",
  "libc",
+ "log",
  "pem 0.8.3",
  "rcgen",
  "rustls",
@@ -680,7 +681,7 @@ dependencies = [
  "winapi",
  "windows-acl",
  "windows-service",
- "windows_events",
+ "winlog",
 ]
 
 [[package]]
@@ -1847,24 +1848,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows_events"
-version = "0.1.0"
-source = "registry+https://fake-nix-registry/not-really-an-index"
+name = "winlog"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b651e150c151f8feee1c3df5cd5d2c9f5c02d921e34ca309df247ef9c555f919"
 dependencies = [
+ "log",
  "regex",
  "sha2",
- "slog",
- "thiserror",
  "winapi",
- "windows-acl",
  "winreg",
 ]
 
 [[package]]
 name = "winreg"
-version = "0.9.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16cdb3898397cf7f624c294948669beafaeebc5577d5ec53d0afb76633593597"
+checksum = "a27a759395c1195c4cc5cda607ef6f8f6498f64e78f7900f5de0a127a424704a"
 dependencies = [
  "winapi",
 ]

@@ -31,7 +31,7 @@ use winapi::{
     },
 };
 
-use windows_events::WinLogger;
+use log::Log;
 use windows_service::{
     define_windows_service,
     service::{
@@ -41,6 +41,7 @@ use windows_service::{
     service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle},
     service_dispatcher,
 };
+use winlog::WinLogger;
 
 define_windows_service!(ffi_service_main, service_main);
 
@@ -64,6 +65,40 @@ impl WindowsServiceStopEvent {
     }
 }
 
+struct WinLoggerDrain {
+    inner: WinLogger,
+}
+
+impl Drain for WinLoggerDrain {
+    type Ok = ();
+    type Err = Box<dyn std::error::Error>;
+
+    fn log(
+        &self,
+        record: &slog::Record,
+        _values: &slog::OwnedKVList,
+    ) -> Result<Self::Ok, Self::Err> {
+        self.inner.log(
+            &log::RecordBuilder::new()
+                .args(*record.msg())
+                .file_static(Some(record.file()))
+                .module_path_static(Some(record.module()))
+                .line(Some(record.line()))
+                .level(match record.level() {
+                    slog::Level::Critical => log::Level::Error,
+                    slog::Level::Error => log::Level::Error,
+                    slog::Level::Warning => log::Level::Warn,
+                    slog::Level::Info => log::Level::Info,
+                    slog::Level::Debug => log::Level::Debug,
+                    slog::Level::Trace => log::Level::Trace,
+                })
+                .build(),
+        );
+
+        Ok(())
+    }
+}
+
 lazy_static! {
     static ref WINDOWS_SERVICE_STOP_EVENT: WindowsServiceStopEvent = WindowsServiceStopEvent::new();
 }
@@ -75,9 +110,11 @@ fn service_main(_: Vec<OsString>) {
     let args = run::AveryArgs::from_args();
     let log = Logger::root(
         slog_async::Async::new(
-            WinLogger::try_new("Avery")
-                .expect("Failed to create windows event logger for Avery")
-                .ignore_res(),
+            WinLoggerDrain {
+                inner: WinLogger::try_new("Avery")
+                    .expect("Failed to create windows event logger for Avery"),
+            }
+            .ignore_res(),
         )
         .build()
         .fuse(),

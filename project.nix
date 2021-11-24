@@ -65,8 +65,6 @@ nedryland.mkProject rec {
     };
 
     windowsInstaller = callFile ./clients/windows-installer/windows-installer.nix { inherit version; };
-
-    windowsEvents = callFile ./libraries/rust/windows-events/windows-events.nix { };
   };
 
   extraShells = { callFile }: {

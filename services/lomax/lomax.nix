@@ -7,13 +7,12 @@
 , pkg-config
 , lib
 , systemd
-, windowsEvents
 }:
 base.languages.rust.mkService rec {
   name = "lomax";
   src = ./.;
 
-  buildInputs = [ types.package tonicMiddleware.package windowsEvents.package ];
+  buildInputs = [ types.package tonicMiddleware.package ];
 
   nativeBuildInputs = [ pkg-config ]
     ++ lib.optional stdenv.hostPlatform.isDarwin xcbuild;
