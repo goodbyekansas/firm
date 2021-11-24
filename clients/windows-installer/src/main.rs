@@ -134,7 +134,7 @@ pub fn find_firm<F: Fn() -> PathBuf, G: Fn() -> PathBuf>(
 
 fn default_path_from_env(logger: &Logger, key: &str, default: &str) -> PathBuf {
     std::env::var_os(key)
-        .map(|appdata| PathBuf::from(&appdata))
+        .map(|appdata| PathBuf::from(&appdata).join("Firm"))
         .unwrap_or_else(|| {
             debug!(
                 logger,
@@ -142,7 +142,6 @@ fn default_path_from_env(logger: &Logger, key: &str, default: &str) -> PathBuf {
             );
             PathBuf::from(default)
         })
-        .join("Firm")
 }
 
 fn unpack_entry<E>(mut entry: Entry<E>, install_path: &Path) -> Result<(), InstallerError>
