@@ -25,7 +25,10 @@ use tower::service_fn;
 use tokio::net::UnixStream;
 
 #[cfg(windows)]
-use tokio::net::NamedPipe;
+use tokio::net::windows::named_pipe::ClientOptions;
+
+#[cfg(windows)]
+use winapi::shared::winerror;
 
 use error::BendiniError;
 
@@ -360,7 +363,19 @@ async fn connect(endpoint: Endpoint) -> Result<(Channel, bool), BendiniError> {
                     uri.host().unwrap_or("."),
                     uri.path().replace("/", "\\")
                 );
-                NamedPipe::connect(pipe_path)
+
+                async move {
+                    loop {
+                        match ClientOptions::new().open(&pipe_path) {
+                            Ok(client) => break Ok(client),
+                            Err(e)
+                                if e.raw_os_error() == Some(winerror::ERROR_PIPE_BUSY as i32) => {}
+                            Err(e) => break Err(e),
+                        }
+
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                    }
+                }
             }))
             .await
             .map(|channel| (channel, false)),

@@ -37,7 +37,7 @@ sudo = "0.6.0"
 tar = "0.4"
 tempfile = "3"
 thiserror = "1"
-tokio = { version = "1.12.0", features = ["rt-multi-thread", "time", "macros", "net", "signal"] }
+tokio = { version = "1.14.0", features = ["rt-multi-thread", "time", "macros", "net", "signal"] }
 toml = "0.5"
 tower = "0.4.11"
 typetag = "0.1"
