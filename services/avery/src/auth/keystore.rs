@@ -189,7 +189,10 @@ pub struct NullKeyStore {}
 #[async_trait::async_trait]
 impl KeyStore for NullKeyStore {
     async fn get(&self, _id: &str) -> Result<Vec<u8>, KeyStoreError> {
-        Ok(vec![])
+        Err(KeyStoreError::Error(
+            "Failed to find public key (which is expected since this is a null key store)!"
+                .to_owned(),
+        ))
     }
 
     async fn set(&self, _id: &str, _key_data: &[u8]) -> Result<(), KeyStoreError> {
