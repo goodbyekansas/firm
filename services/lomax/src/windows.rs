@@ -1,11 +1,11 @@
 use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use futures::{FutureExt, TryFutureExt};
+use log::Log;
 use slog::{error, info, o, Drain, Logger};
 use structopt::StructOpt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use triggered::{Listener, Trigger};
-use windows_events::WinLogger;
 use windows_service::{
     define_windows_service,
     service::{
@@ -15,6 +15,7 @@ use windows_service::{
     service_control_handler::{self, ServiceControlHandlerResult, ServiceStatusHandle},
     service_dispatcher,
 };
+use winlog::WinLogger;
 
 use crate::run::{self, LomaxArgs};
 
@@ -26,6 +27,40 @@ pub fn get_lomax_cfg_dir() -> Option<PathBuf> {
 
 pub fn drop_privileges(_: &str, _: &str) -> Result<(), String> {
     Ok(())
+}
+
+struct WinLoggerDrain {
+    inner: WinLogger,
+}
+
+impl Drain for WinLoggerDrain {
+    type Ok = ();
+    type Err = Box<dyn std::error::Error>;
+
+    fn log(
+        &self,
+        record: &slog::Record,
+        _values: &slog::OwnedKVList,
+    ) -> Result<Self::Ok, Self::Err> {
+        self.inner.log(
+            &log::RecordBuilder::new()
+                .args(*record.msg())
+                .file_static(Some(record.file()))
+                .module_path_static(Some(record.module()))
+                .line(Some(record.line()))
+                .level(match record.level() {
+                    slog::Level::Critical => log::Level::Error,
+                    slog::Level::Error => log::Level::Error,
+                    slog::Level::Warning => log::Level::Warn,
+                    slog::Level::Info => log::Level::Info,
+                    slog::Level::Debug => log::Level::Debug,
+                    slog::Level::Trace => log::Level::Trace,
+                })
+                .build(),
+        );
+
+        Ok(())
+    }
 }
 
 pub struct NamedPipe(tokio::net::NamedPipe);
@@ -127,9 +162,11 @@ fn service_main(_: Vec<OsString>) {
     let args = run::LomaxArgs::from_args();
     let log = Logger::root(
         slog_async::Async::new(
-            WinLogger::try_new("Lomax")
-                .expect("Failed to create windows event logger for Lomax")
-                .ignore_res(),
+            WinLoggerDrain {
+                inner: WinLogger::try_new("Lomax")
+                    .expect("Failed to create windows event logger for Lomax"),
+            }
+            .ignore_res(),
         )
         .build()
         .fuse(),

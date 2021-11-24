@@ -5,7 +5,6 @@
 , pkgsCross
 , lib
 , version
-, windowsEvents
 , avery
 , bendini
 , lomax
@@ -34,7 +33,7 @@ in
 
   crossTargets = {
     windows = {
-      buildInputs = [ pkgsCross.mingwW64.windows.pthreads windowsEvents.package ];
+      buildInputs = [ pkgsCross.mingwW64.windows.pthreads ];
     };
   };
 

@@ -34,7 +34,10 @@ triggered = "0.1"
 winapi = "0.3"
 windows-acl = "0.3"
 windows-service = "0.3"
-windows_events = { version = "0.1.0", registry = "nix" }
+winlog = "0.2.6"
+# needed to be able to reuse Log impl
+# for winlog
+log = "0.4.14"
 
 # our own version of tokio 1.4.0 with named pipes
 [patch.crates-io]

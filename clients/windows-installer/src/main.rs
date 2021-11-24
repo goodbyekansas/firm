@@ -17,7 +17,8 @@ use winapi::um::{
 mod registry;
 mod service;
 
-use registry::RegistryEditor;
+use registry::{RegistryEditor, RegistryError};
+use winreg::{enums::HKEY_LOCAL_MACHINE, RegKey};
 
 const AVERY: &str = "Avery";
 const LOMAX: &str = "Lomax";
@@ -40,9 +41,6 @@ pub enum InstallerError {
     ServiceError(#[from] service::ServiceError),
 
     #[error(transparent)]
-    EventError(#[from] windows_events::EventError),
-
-    #[error(transparent)]
     RegistryError(#[from] registry::RegistryError),
 }
 
@@ -54,7 +52,6 @@ impl From<InstallerError> for u32 {
             InstallerError::FailedToFindCurrentExe(_) => 3,
             InstallerError::ArchiveError(_) => 4,
             InstallerError::ServiceError(e) => e.into(),
-            InstallerError::EventError(_) => 200,
             InstallerError::RegistryError(e) => e.into(),
         }
     }
@@ -220,9 +217,9 @@ fn copy_files(
                                 .map(|p| p.starts_with(Path::new(".").join("bin")))
                                 .unwrap_or_default()
                             {
-                                unpack_entry(entry, &install_path)
+                                unpack_entry(entry, install_path)
                             } else {
-                                unpack_data_entry(entry, &data_path)
+                                unpack_data_entry(entry, data_path)
                             }
                         }
                         _ => Err(InstallerError::ArchiveError(format!(
@@ -278,6 +275,22 @@ fn upgrade(logger: Logger) -> Result<(), InstallerError> {
         .and_then(|services| service::start_services(services).map_err(Into::into))
 }
 
+const REG_BASEKEY: &str = "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application";
+fn try_register_log_source(name: &str, exe_path: &str) -> Result<(), InstallerError> {
+    RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(REG_BASEKEY)
+        .and_then(|cur_ver| cur_ver.create_subkey(name))
+        .and_then(|(app_key, _)| app_key.set_value("EventMessageFile", &exe_path))
+        .map_err(|e| RegistryError::FailedToRegisterApplication(name.to_owned(), e).into())
+}
+
+fn try_deregister_log_source(name: &str) -> Result<(), InstallerError> {
+    RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(REG_BASEKEY)
+        .and_then(|cur_ver| cur_ver.delete_subkey(name))
+        .map_err(|e| RegistryError::FailedToDeregisterApplication(name.to_owned(), e).into())
+}
+
 fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), InstallerError> {
     debug!(
         logger,
@@ -291,11 +304,11 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
 
     copy_files(&logger, install_path, data_path)
         .and_then(|_| {
-            windows_events::try_register(AVERY, &install_path.join("avery.exe").to_string_lossy())
+            try_register_log_source(AVERY, &install_path.join("avery.exe").to_string_lossy())
                 .map_err(Into::into)
         })
         .and_then(|_| {
-            windows_events::try_register(LOMAX, &install_path.join("lomax.exe").to_string_lossy())
+            try_register_log_source(LOMAX, &install_path.join("lomax.exe").to_string_lossy())
                 .map_err(Into::into)
         })
         .and_then(|_| {
@@ -327,7 +340,7 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
                 .and_then(|lomax| service::start_service(&lomax))
                 .map_err(Into::into)
         })
-        .and_then(|_| reg_edit.add_to_path(&install_path).map_err(Into::into))
+        .and_then(|_| reg_edit.add_to_path(install_path).map_err(Into::into))
         .and_then(|_| {
             let mut additional_data = HashMap::new();
             additional_data.insert(
@@ -414,8 +427,8 @@ fn uninstall(logger: Logger) {
         "😭 Failed to stop services"
     );
     let reg_edit = registry::RegistryEditor::new();
-    pass_result!(logger, windows_events::try_deregister(AVERY));
-    pass_result!(logger, windows_events::try_deregister(LOMAX));
+    pass_result!(logger, try_deregister_log_source(AVERY));
+    pass_result!(logger, try_deregister_log_source(LOMAX));
 
     let (exe_path, data_path) = find_firm(
         &reg_edit,
