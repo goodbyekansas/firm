@@ -2,7 +2,7 @@
 name = "tonic-middleware"
 version = "1.0.0"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 http = "0.2.5"

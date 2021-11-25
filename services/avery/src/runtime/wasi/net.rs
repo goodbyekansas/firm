@@ -167,7 +167,7 @@ impl WasiFile for SocketFile {
     }
 }
 
-pub fn connect(fs: &mut WasiFs, address: WasmString, fd_out: WasmItemPtr<u32>) -> WasiResult<()> {
+pub fn connect(fs: &mut WasiFs, address: WasmString, fd_out: WasmItemPtr<i32>) -> WasiResult<()> {
     let address: String = String::try_from(address)
         .map_err(|e| WasiError::FailedToReadStringPointer("address".to_owned(), e))?;
 
@@ -188,5 +188,5 @@ pub fn connect(fs: &mut WasiFs, address: WasmString, fd_out: WasmItemPtr<u32>) -
         )
         .map_err(|e| WasiError::FailedToOpenFile(format!("{:#?}", e)))?;
 
-    fd_out.set(fd)
+    fd_out.set(fd as i32)
 }

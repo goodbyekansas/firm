@@ -2,7 +2,7 @@
 name = "lomax"
 version = "1.0.1"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 async-stream = "0.3.1"

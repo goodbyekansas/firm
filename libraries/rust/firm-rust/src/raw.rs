@@ -51,5 +51,5 @@ extern "C" {
     pub fn set_error(msg_ptr: *const u8, msg_len: usize) -> u32;
 
     #[cfg(feature = "net")]
-    pub fn connect(addr_ptr: *const u8, addr_len: usize, file_descriptor: *mut u32) -> u32;
+    pub fn connect(addr_ptr: *const u8, addr_len: usize, file_descriptor: *mut i32) -> u32;
 }

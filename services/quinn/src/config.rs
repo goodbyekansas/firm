@@ -88,8 +88,9 @@ fn resolve_secrets<S: AsRef<str>>(
     let reg = Regex::new(r"\{\{\s*(?P<type>\w+):(?P<value>[\w\.\-\?\&/_=]+)\s*\}\}")
         .expect("Regex was invalid for resolving secrets.");
 
-    reg.captures_iter(content.as_ref())
-        .try_fold(content.as_ref().to_owned(), |acc, captures| {
+    let res = reg.captures_iter(content.as_ref()).try_fold(
+        content.as_ref().to_owned(),
+        |acc, captures| {
             captures
                 .name("type")
                 .and_then(|t| captures.name("value").map(|v| (t, v)))
@@ -125,7 +126,10 @@ fn resolve_secrets<S: AsRef<str>>(
                     };
                     reg.replace(&acc, real_value.as_str()).to_string()
                 })
-        })
+        },
+    );
+
+    res
 }
 
 macro_rules! create_resolve_error {

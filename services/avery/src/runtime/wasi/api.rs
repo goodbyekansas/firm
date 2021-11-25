@@ -101,7 +101,7 @@ pub mod host {
         api_state: &ApiState,
         addr: WasmPtr<u8, Array>,
         addr_len: u32,
-        fd_out: WasmPtr<u32, Item>,
+        fd_out: WasmPtr<i32, Item>,
     ) -> u32 {
         net::connect(
             &mut api_state.wasi_env.state().fs,
