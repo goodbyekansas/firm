@@ -176,7 +176,7 @@ pub unsafe fn set_error(msg_ptr: *const u8, msg_len: usize) -> u32 {
 /// # Safety
 /// This is a mock implementation and while it uses
 /// unsafe functions it does nothing technically unsafe
-pub unsafe fn connect(addr_ptr: *const u8, addr_len: usize, file_descriptor: *mut u32) -> u32 {
+pub unsafe fn connect(addr_ptr: *const u8, addr_len: usize, file_descriptor: *mut i32) -> u32 {
     MockResultRegistry::execute_connect(addr_ptr, addr_len, file_descriptor)
 }
 
@@ -206,7 +206,7 @@ pub struct MockResultRegistry {
     set_error_closure: MockCallbacks<dyn Fn(&str) -> Result<(), u32> + Send>,
 
     #[cfg(feature = "net")]
-    connect_closure: MockCallbacks<dyn Fn(&str) -> Result<u32, u32> + Send>,
+    connect_closure: MockCallbacks<dyn Fn(&str) -> Result<i32, u32> + Send>,
 }
 
 impl MockResultRegistry {
@@ -679,7 +679,7 @@ impl MockResultRegistry {
     #[cfg(feature = "net")]
     pub fn set_connect_impl<F>(closure: F)
     where
-        F: Fn(&str) -> Result<u32, u32> + 'static + Send,
+        F: Fn(&str) -> Result<i32, u32> + 'static + Send,
     {
         MOCK_RESULT_REGISTRY
             .lock()
@@ -689,7 +689,7 @@ impl MockResultRegistry {
     }
 
     #[cfg(feature = "net")]
-    fn execute_connect(addr_ptr: *const u8, addr_len: usize, file_descriptor: *mut u32) -> u32 {
+    fn execute_connect(addr_ptr: *const u8, addr_len: usize, file_descriptor: *mut i32) -> u32 {
         let address = unsafe {
             let slice = std::slice::from_raw_parts(addr_ptr, addr_len);
             std::str::from_utf8(slice).unwrap()

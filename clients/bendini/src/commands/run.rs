@@ -440,7 +440,7 @@ mod tests {
 
         // Ints
         assert_eq!(
-            i64::try_from(stream.get_channel("arg3").unwrap()).unwrap(),
+            <i64 as TryFromChannel>::try_from(stream.get_channel("arg3").unwrap()).unwrap(),
             1338
         );
         assert_eq!(
@@ -449,7 +449,7 @@ mod tests {
         );
 
         // Bools
-        assert!(bool::try_from(stream.get_channel("arg5").unwrap()).unwrap());
+        assert!(<bool as TryFromChannel>::try_from(stream.get_channel("arg5").unwrap()).unwrap());
         assert_eq!(
             stream.get_channel_as_ref::<[bool]>("arg6").unwrap(),
             &[true, false, false, true],
@@ -457,7 +457,7 @@ mod tests {
 
         // Bytes
         assert_eq!(
-            u8::try_from(stream.get_channel("arg7").unwrap()).unwrap(),
+            <u8 as TryFromChannel>::try_from(stream.get_channel("arg7").unwrap()).unwrap(),
             128
         );
 
@@ -468,7 +468,9 @@ mod tests {
 
         // Floats
         assert!(
-            (f64::try_from(stream.get_channel("arg9").unwrap()).unwrap() - 1.2341).abs()
+            (<f64 as TryFromChannel>::try_from(stream.get_channel("arg9").unwrap()).unwrap()
+                - 1.2341)
+                .abs()
                 < f64::EPSILON
         );
 

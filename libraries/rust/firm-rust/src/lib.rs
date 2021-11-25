@@ -298,7 +298,7 @@ where
                 let key = self.key;
                 self.channel.map_or_else(
                     || default.ok_or(Error::FailedToFindRequiredInput(key)),
-                    |channel| T::try_from(&channel).map_err(Error::from),
+                    |channel| <T as TryFromChannel>::try_from(&channel).map_err(Error::from),
                 )
             }
             Some(e) => Err(e),
@@ -506,11 +506,11 @@ pub mod net {
     }
 
     pub fn connect<S: AsRef<str>>(address: S) -> Result<TcpConnection, super::Error> {
-        let mut file_descriptor: u32 = 0;
+        let mut file_descriptor: i32 = 0;
         host_call!(raw::connect(
             address.as_ref().as_ptr(),
             address.as_ref().as_bytes().len(),
-            &mut file_descriptor as *mut u32
+            &mut file_descriptor as *mut i32
         ))?;
 
         Ok(TcpConnection {
@@ -745,7 +745,7 @@ mod tests {
         let value = "kalle";
         MockResultRegistry::set_set_output_impl(move |_key, res| {
             assert!(matches!(res.value, Some(ValueType::Strings(_))));
-            assert_eq!(String::try_from(&res).unwrap(), value);
+            assert_eq!(<String as TryFromChannel>::try_from(&res).unwrap(), value);
             Ok(())
         });
 
@@ -757,7 +757,7 @@ mod tests {
         let value = 50i64;
         MockResultRegistry::set_set_output_impl(move |_key, res| {
             assert!(matches!(res.value, Some(ValueType::Integers(_))));
-            assert_eq!(i64::try_from(&res).unwrap(), value);
+            assert_eq!(<i64 as TryFromChannel>::try_from(&res).unwrap(), value);
             Ok(())
         });
 
@@ -784,7 +784,9 @@ mod tests {
 
         MockResultRegistry::set_set_output_impl(move |_key, res| {
             assert!(matches!(res.value, Some(ValueType::Floats(_))));
-            assert!((f64::try_from(&res).unwrap() - value).abs() < f64::EPSILON);
+            assert!(
+                (<f64 as TryFromChannel>::try_from(&res).unwrap() - value).abs() < f64::EPSILON
+            );
             Ok(())
         });
 
@@ -797,7 +799,7 @@ mod tests {
 
         MockResultRegistry::set_set_output_impl(move |_key, res| {
             assert!(matches!(res.value, Some(ValueType::Booleans(_))));
-            assert_eq!(bool::try_from(&res).unwrap(), value);
+            assert_eq!(<bool as TryFromChannel>::try_from(&res).unwrap(), value);
             Ok(())
         });
 

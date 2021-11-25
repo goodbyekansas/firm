@@ -2,7 +2,7 @@
 name = "avery"
 version = "1.2.1"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 async-stream = "0.3"

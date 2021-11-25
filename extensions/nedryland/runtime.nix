@@ -54,7 +54,7 @@ let
           ${attrs.shellHook or ""}
         '';
 
-        useNightly = curatedAttrs.useNightly or "2021-05-30";
+        useNightly = curatedAttrs.useNightly or "2021-11-22";
         installPhase = ''
           mkdir -p $out/share/avery/runtimes
           cp target/wasm32-wasi/release/*.wasm $out/share/avery/runtimes/${runtimeName}.wasm

@@ -11,7 +11,7 @@ let
     targets = [ "wasm32-wasi" ];
 
     doCrossCheck = true;
-    useNightly = "2021-05-30";
+    useNightly = "2021-11-22";
 
     checkInputs = [ pkgs.wasmtime ];
     shellInputs = [ pkgs.bear ];

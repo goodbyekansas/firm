@@ -73,7 +73,7 @@ where
     T: TryFromChannel,
 {
     fn channel_into(&self) -> Result<T, ChannelConversionError> {
-        T::try_from(self)
+        <T as TryFromChannel>::try_from(self)
     }
 }
 fn get_exactly_one<T>(
@@ -189,7 +189,7 @@ impl<T: ToChannel> ToChannel for Option<T> {
 impl<T: TryFromChannel> TryFromChannel for Option<T> {
     fn try_from(channel: &Channel) -> Result<Self, ChannelConversionError> {
         match channel.value {
-            Some(_) => T::try_from(channel).map(Some),
+            Some(_) => <T as TryFromChannel>::try_from(channel).map(Some),
             None => Ok(None),
         }
     }

@@ -2,7 +2,7 @@
 name = "firm"
 version = "1.0.0"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 lazy_static = { version = "1", optional = true }

@@ -51,7 +51,7 @@ let
 
     runNetExample() {
       echo "Starting netcat on port 3333..."
-      nc -l -k -p 3333 2>&1 | sed "s/^/  [network] /" &
+      nc -l -k 3333 2>&1 | sed "s/^/  [network] /" &
       command cargo run networking -i port=3333
       kill %1 && wait %1
     }
@@ -94,7 +94,7 @@ base.mkRuntime {
   checkInputs = [ avery.package bendini.package ];
 
   buildInputs = [ firmRust.package firmTypes.package wasiPythonShims.package zlib ];
-  shellInputs = [ pkgs.netcat-gnu ];
+  shellInputs = [ pkgs.netcat ];
   shellHook = exampleRunFunctions;
   RUSTFLAGS = "-Ctarget-feature=-crt-static -Clink-args=-lwasi-emulated-signal -Clink-args=-lwasi-emulated-process-clocks -lz";
 
