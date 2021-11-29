@@ -1,10 +1,17 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
-use firm_types::{auth::authentication_server::Authentication, tonic};
+use firm_types::{
+    auth::{authentication_server::Authentication, Identity},
+    tonic,
+};
 use serde::Serialize;
+use tempfile::tempdir;
 
-use avery::auth::{AuthService, KeyStore, KeyStoreError};
+use avery::{
+    auth::{AuthService, KeyStore, KeyStoreError},
+    config::{AllowConfig, IdentityProvider, KeyStore as ConfigKeyStore},
+};
 
 const PRIVATE_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgiuNp+s23UTotSsEXctwtU0HAA7IHvodB8Q+KA7cW5AuhRANCAASFpp3A7q4Zjtnin9pDoSMzppIczS+O5UkeKM6Wr8HghHI/moGdWYkbGqUPnd2JTmz8YbpGoXz2KewpRQ4no4cx
@@ -28,6 +35,12 @@ impl KeyStore for FakeKeyStore {
     async fn set(&self, _id: &str, _key_data: &[u8]) -> Result<(), KeyStoreError> {
         Ok(())
     }
+}
+
+macro_rules! null_logger {
+    () => {{
+        slog::Logger::root(slog::Discard, slog::o!())
+    }};
 }
 
 macro_rules! auth_service {
@@ -491,4 +504,40 @@ async fn list() {
         String::from("user@host"),
         "Expected subject to be of the requested remote access request."
     );
+}
+
+#[tokio::test]
+async fn test_get_identity() {
+    let service = AuthService::from_config(
+        HashMap::new(),
+        HashMap::new(),
+        IdentityProvider::Override {
+            name: String::from("Bob Loblaw"),
+            email: "legal@loblaw.com".to_owned(),
+        },
+        ConfigKeyStore::None,
+        AllowConfig::default(),
+        Some(tempdir().unwrap().into_path()),
+        null_logger!(),
+    )
+    .await;
+
+    assert!(service.is_ok(), "Expected AuthService to be creatable");
+    let identity = service.unwrap().get_identity(tonic::Request::new(())).await;
+    assert!(identity.is_ok(), "Expected Identity to be set");
+    assert_eq!(
+        identity.unwrap().get_ref(),
+        &Identity {
+            name: String::from("Bob Loblaw"),
+            email: String::from("legal@loblaw.com")
+        }
+    );
+
+    // Test empty identity
+    let service = auth_service!();
+    let identity = service.get_identity(tonic::Request::new(())).await;
+    assert!(
+        identity.is_err(),
+        "Expected empty identity from default auth service"
+    )
 }

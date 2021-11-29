@@ -40,7 +40,7 @@ pub enum IdentityProvider {
     Oidc { provider: String },
     Username,
     UsernameSuffix { suffix: String },
-    Override { identity: String },
+    Override { name: String, email: String },
 }
 
 impl Default for IdentityProvider {

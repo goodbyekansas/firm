@@ -8,7 +8,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use firm_types::functions::{
-    AttachmentData, ChannelSpec, ChannelType, Checksums as ProtoChecksums, FunctionData,
+    AttachmentData, ChannelSpec, ChannelType, Checksums as ProtoChecksums, FunctionData, Publisher,
     RuntimeSpec as ProtoRuntimeSpec,
 };
 
@@ -51,6 +51,12 @@ pub struct FunctionManifest {
 
     #[serde(skip)]
     path: PathBuf,
+
+    #[serde(skip)]
+    publisher_name: String,
+
+    #[serde(skip)]
+    publisher_email: String,
 
     version: String,
 
@@ -139,7 +145,11 @@ impl FunctionManifest {
         &self.path
     }
 
-    pub fn parse<P: AsRef<Path>>(path: P) -> Result<Self, ManifestError> {
+    pub fn parse<P: AsRef<Path>>(
+        path: P,
+        publisher_name: &str,
+        publisher_email: &str,
+    ) -> Result<Self, ManifestError> {
         path.as_ref()
             .canonicalize()
             .map_err(|e| ManifestError::ManifestFileReadError {
@@ -158,6 +168,8 @@ impl FunctionManifest {
                 toml::from_str(&toml_content).map_err(|e| e.into()).map(
                     |mut m: FunctionManifest| {
                         m.path = fullpath;
+                        m.publisher_name = publisher_name.to_owned();
+                        m.publisher_email = publisher_email.to_owned();
                         m
                     },
                 )
@@ -192,6 +204,11 @@ impl FunctionManifest {
                             name: "code".to_owned(),
                             metadata: code.metadata.clone(),
                             checksums: Some(ProtoChecksums::from(&code.checksums)),
+                            publisher: Some(Publisher {
+                                name: self.publisher_name.clone(),
+                                email: self.publisher_email.clone(),
+                            }),
+                            signature: None, // TODO
                         },
                     })
             })
@@ -208,6 +225,11 @@ impl FunctionManifest {
                         name: n.clone(),
                         metadata: a.metadata.clone(),
                         checksums: Some(ProtoChecksums::from(&a.checksums)),
+                        publisher: Some(Publisher {
+                            name: self.publisher_name.clone(),
+                            email: self.publisher_email.clone(),
+                        }),
+                        signature: None, // TODO
                     },
                 })
             })
@@ -275,6 +297,11 @@ impl From<&FunctionManifest> for FunctionData {
                 entrypoint: fm.runtime.entrypoint.clone(),
             }),
             attachment_ids: vec![],
+            publisher: Some(Publisher {
+                name: fm.publisher_name.clone(),
+                email: fm.publisher_email.clone(),
+            }),
+            signature: None,
         }
     }
 }
@@ -326,7 +353,7 @@ mod tests {
     #[test]
     fn test_parse() {
         let toml = r#""#;
-        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml), "Sune", "sune@fabrikam.com");
         assert!(r.is_err());
         assert!(matches!(
             r.unwrap_err(),
@@ -339,7 +366,7 @@ mod tests {
         [runtime]
         type = "wasm"
         "#;
-        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml), "Sine", "sine@fibrikam.com");
         assert!(r.is_ok());
 
         let toml = r#"
@@ -354,7 +381,7 @@ mod tests {
         [runtime]
         type = "wasm"
         "#;
-        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml), "Sune", "sune@fabrikam.com");
         assert!(r.is_err());
         assert!(matches!(
             r.unwrap_err(),
@@ -380,11 +407,11 @@ mod tests {
         [runtime.args]
         sune = "bune"
         "#;
-        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml), "Sune", "sune@fabrikam.com");
         assert!(r.is_ok());
         assert_eq!(r.unwrap().runtime.args["sune"], "bune");
 
-        let r = FunctionManifest::parse(Path::new(""));
+        let r = FunctionManifest::parse(Path::new(""), "Sune", "sune@fabrikam.com");
         assert!(r.is_err());
         assert!(matches!(
             r.unwrap_err(),
@@ -417,7 +444,7 @@ mod tests {
         sha256 = "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5"
         "#;
 
-        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml), "Sune", "sune@fabrikam.com");
         assert!(&r.is_ok());
         let val = r.unwrap();
 
@@ -448,7 +475,7 @@ mod tests {
         type = "wasm"
         "#;
 
-        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml), "Sune", "sune@fabrikam.com");
         let rr = FunctionData::from(&r.unwrap());
         assert_eq!(rr.name, "super-simple");
         assert_eq!(rr.version, "0.1.0");
@@ -472,7 +499,7 @@ mod tests {
         type = "int"
         "#;
 
-        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml));
+        let r = FunctionManifest::parse(write_toml_to_tempfile!(toml), "Sune", "sune@fabrikam.com");
         let rr = FunctionData::from(&r.unwrap());
         assert_eq!(
             rr.required_inputs.get("korv"),
@@ -538,13 +565,19 @@ mod tests {
 
         let tomlpath = tempd.path().join("manifest.toml");
         std::fs::write(&tomlpath, toml).unwrap();
-        let r = FunctionManifest::parse(tomlpath).unwrap();
+        let r = FunctionManifest::parse(tomlpath, "Sune", "sune@moonmacrosystems.com").unwrap();
         let attachments = r.attachments().unwrap();
         assert_eq!(
             r.code().unwrap().unwrap(),
             AttachmentInfo {
                 path: codepath.canonicalize().unwrap(),
-                request: attachment_data!("code", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"is_code" => "true"})
+                request: attachment_data!(
+                    "code",
+                    "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5",
+                    "Sune",
+                    "sune@moonmacrosystems.com",
+                    {"is_code" => "true"}
+                )
             }
         );
         assert_eq!(
@@ -554,7 +587,13 @@ mod tests {
                 .unwrap(),
             &AttachmentInfo {
                 path: fkalle.path().canonicalize().unwrap(),
-                request: attachment_data!("kalle", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"someMetadata" => "sune", "cool" => "chorizo korvén"})
+                request: attachment_data!(
+                    "kalle",
+                    "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5",
+                    "Sune",
+                    "sune@moonmacrosystems.com",
+                    {"someMetadata" => "sune", "cool" => "chorizo korvén"}
+                )
             }
         );
         assert_eq!(
@@ -564,7 +603,13 @@ mod tests {
                 .unwrap(),
             &AttachmentInfo {
                 path: foran.path().canonicalize().unwrap(),
-                request: attachment_data!("oran", "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5", {"surname" => "jonsson"})
+                request: attachment_data!(
+                    "oran",
+                    "7767e3afca54296110dd596d8de7cd8adc6f89253beb3c69f0fc810df7f8b6d5",
+                    "Sune",
+                    "sune@moonmacrosystems.com",
+                    {"surname" => "jonsson"}
+                )
             }
         );
     }

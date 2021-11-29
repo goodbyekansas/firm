@@ -20,7 +20,7 @@ use firm_types::{
         registry_server::Registry, Attachment, AttachmentData, AttachmentHandle, AttachmentId,
         AttachmentStreamUpload, AttachmentUrl, AuthMethod, ChannelSpec, Filters,
         Function as ProtoFunction, FunctionData, FunctionId, Functions, Ordering, OrderingKey,
-        RuntimeSpec,
+        Publisher as ProtoPublisher, RuntimeSpec, Signature,
     },
     tonic,
 };
@@ -35,6 +35,12 @@ pub struct RegistryService {
 }
 
 #[derive(Debug, Clone)]
+struct Publisher {
+    name: String,
+    email: String,
+}
+
+#[derive(Debug, Clone)]
 struct Function {
     name: String,
     created_at: u64,
@@ -46,6 +52,8 @@ struct Function {
     code: Option<AttachmentId>,
     attachments: Vec<AttachmentId>,
     metadata: HashMap<String, String>,
+    publisher: Publisher,
+    signature: Option<Vec<u8>>,
 }
 
 impl RegistryService {
@@ -242,6 +250,13 @@ impl RegistryService {
             code,
             attachments,
             created_at: f.created_at,
+            publisher: Some(ProtoPublisher {
+                name: f.publisher.name.clone(),
+                email: f.publisher.email.clone(),
+            }),
+            signature: f.signature.as_ref().map(|sig| Signature {
+                signature: sig.to_vec(),
+            }),
         })
     }
 }
@@ -451,6 +466,28 @@ impl Registry for RegistryService {
             format!("{:x}", combined_checksum.finalize()),
         );
 
+        let publisher = payload
+            .publisher
+            .ok_or_else(|| {
+                tonic::Status::invalid_argument("Publisher is required when registering function")
+            })
+            .and_then(|publisher| match publisher {
+                ProtoPublisher { ref name, .. } if name.is_empty() => {
+                    Err(tonic::Status::invalid_argument(
+                        "Publisher name is required when registering a function",
+                    ))
+                }
+                ProtoPublisher { ref email, .. } if email.is_empty() => {
+                    Err(tonic::Status::invalid_argument(
+                        "Publisher email is required when registering a function",
+                    ))
+                }
+                p => Ok(Publisher {
+                    name: p.name,
+                    email: p.email,
+                }),
+            })?;
+
         let function = Function {
             name: payload.name,
             version,
@@ -465,6 +502,8 @@ impl Registry for RegistryService {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or_default(),
+            publisher,
+            signature: payload.signature.map(|sig| sig.signature),
         };
 
         functions.push(function.clone());
@@ -509,6 +548,24 @@ impl Registry for RegistryService {
             url: String::from("grpc://"),
             auth_method: AuthMethod::None as i32,
         });
+        let publisher = payload
+            .publisher
+            .ok_or_else(|| {
+                tonic::Status::invalid_argument("Publisher is required when registering attachment")
+            })
+            .and_then(|publisher| match publisher {
+                ProtoPublisher { ref name, .. } if name.is_empty() => {
+                    Err(tonic::Status::invalid_argument(
+                        "Publisher name is required when registering an attachment",
+                    ))
+                }
+                ProtoPublisher { ref email, .. } if email.is_empty() => {
+                    Err(tonic::Status::invalid_argument(
+                        "Publisher email is required when registering an attachment",
+                    ))
+                }
+                p => Ok(Some(p)),
+            })?;
 
         fs::OpenOptions::new()
             .create_new(true)
@@ -553,6 +610,10 @@ impl Registry for RegistryService {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or_default(),
+                publisher,
+                signature: payload.signature.map(|sig| Signature {
+                    signature: sig.signature,
+                }),
             },
         );
 

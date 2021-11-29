@@ -32,6 +32,11 @@ macro_rules! attachment {
                 sha256: $sha256.to_owned(),
             }),
             created_at: 0u64,
+            publisher: Some($crate::functions::Publisher {
+                name: String::new(),
+                email: String::new(),
+            }),
+            signature: None,
         }
     }};
 }
@@ -116,11 +121,24 @@ macro_rules! function_data {
             ::std::collections::HashMap::new(),
             ::std::collections::HashMap::new(),
             ::std::collections::HashMap::new(),
+            "Someone",
+            "someone@example.com",
             [$($attach),*],
             {$($key => $value),*})
     }};
 
-    ($name:expr, $version:expr, $runtime_spec:expr, $code:expr, $req_inputs:expr, $opt_inputs:expr, $outputs:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}) => {{
+    ($name:expr,
+     $version:expr,
+     $runtime_spec:expr,
+     $code:expr,
+     $req_inputs:expr,
+     $opt_inputs:expr,
+     $outputs:expr,
+     $publisher_name:expr,
+     $publisher_email:expr,
+     [$($attach:expr),*],
+     {$($key:expr => $value:expr),*}
+    ) => {{
         let mut metadata = ::std::collections::HashMap::new();
         $(
             metadata.insert(String::from($key), String::from($value));
@@ -135,6 +153,12 @@ macro_rules! function_data {
             optional_inputs: $opt_inputs,
             outputs: $outputs,
             attachment_ids: vec![$(($attach),)*].into_iter().collect(),
+
+            publisher: Some($crate::functions::Publisher {
+                name: String::from($publisher_name),
+                email: String::from($publisher_email),
+            }),
+            signature: None,
         }
     }};
 }
@@ -156,7 +180,7 @@ macro_rules! runtime_spec {
 #[macro_export]
 macro_rules! attachment_data {
     ($name:expr) => {{
-        $crate::attachment_data!($name, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", {})
+        $crate::attachment_data!($name, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
     }};
 
     ($name:expr, $sha256:expr) => {{
@@ -164,6 +188,10 @@ macro_rules! attachment_data {
     }};
 
     ($name:expr, $sha256:expr, {$($key:expr => $value:expr),*}) => {{
+        $crate::attachment_data!($name, $sha256, "Horn Simpa", "hornsimpa@fulfisk.se", {$($key => $value),*})
+    }};
+
+    ($name:expr, $sha256:expr, $publisher_name:expr, $publisher_email:expr, {$($key:expr => $value:expr),*}) => {{
         let mut m = ::std::collections::HashMap::new();
         $(
                 m.insert(String::from($key), String::from($value));
@@ -172,6 +200,11 @@ macro_rules! attachment_data {
             name: String::from($name),
             metadata: m,
             checksums: Some($crate::functions::Checksums { sha256: String::from($sha256) }),
+            publisher: Some($crate::functions::Publisher {
+                name: String::from($publisher_name),
+                email: String::from($publisher_email),
+            }),
+            signature: None,
         }
     }};
 }

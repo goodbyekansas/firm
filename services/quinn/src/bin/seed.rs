@@ -33,6 +33,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             code: None,
             attachments: vec![],
             created_at: 4,
+            publisher: storage::Publisher {
+                name: String::from("Johansen Rackstr"),
+                email: String::from("l1333@rackstr.no"),
+            },
+            signature: None,
         })
         .await?;
     let attachment_id = storage
@@ -42,6 +47,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             checksums: storage::Checksums {
                 sha256: "🚢🛥️⛴️🚤".to_owned(),
             },
+            publisher: storage::Publisher {
+                name: "Skrubb Skädda".to_owned(),
+                email: "skrubb.skadda@fisk.se".to_owned(),
+            },
+            signature: None,
         })
         .await?
         .id;
@@ -61,6 +71,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             code: None,
             attachments: vec![attachment_id],
             created_at: 3,
+            publisher: storage::Publisher {
+                name: String::from("Budas"),
+                email: String::from("budas@budarsson.com"),
+            },
+            signature: None,
         })
         .await?;
     storage
@@ -79,6 +94,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             code: None,
             attachments: vec![],
             created_at: 2,
+            publisher: storage::Publisher {
+                name: String::from("sven-benny"),
+                email: String::from("sven-benny@svenbennysson.com"),
+            },
+            signature: None,
         })
         .await?;
     storage
@@ -97,6 +117,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             code: None,
             attachments: vec![],
             created_at: 1,
+            publisher: storage::Publisher {
+                name: String::from("Lasse-gurra Aktersnurra"),
+                email: String::from("lassegurra@aktersnurra.se"),
+            },
+            signature: None,
         })
         .await?;
     Ok(())

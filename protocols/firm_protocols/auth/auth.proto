@@ -1,5 +1,6 @@
 syntax = "proto3";
 package firm_protocols.auth;
+import "google/protobuf/empty.proto";
 
 service Authentication {
   rpc AcquireToken (AcquireTokenParameters) returns (Token);
@@ -7,10 +8,16 @@ service Authentication {
   rpc ListRemoteAccessRequests (RemoteAccessListParameters) returns (RemoteAccessRequests);
   rpc ApproveRemoteAccessRequest (RemoteAccessApproval) returns (RemoteAccessRequest);
   rpc GetRemoteAccessRequest (RemoteAccessRequestId) returns (RemoteAccessRequest);
+  rpc GetIdentity (google.protobuf.Empty) returns (Identity);
 }
 
 message AcquireTokenParameters {
   string scope = 1;
+}
+
+message Identity {
+  string name = 1;
+  string email = 2;
 }
 
 message Token {

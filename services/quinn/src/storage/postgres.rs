@@ -47,6 +47,16 @@ struct Function {
     outputs: Vec<ChannelSpec>,
     runtime: Runtime,
     created_at: SystemTime,
+    publisher_id: Uuid,
+    signature: Option<Vec<u8>>,
+}
+
+#[derive(Debug, ToSql, FromSql)]
+#[postgres(name = "publishers")]
+pub struct Publisher {
+    id: Uuid,
+    name: String,
+    email: String,
 }
 
 #[derive(Debug, ToSql, FromSql, Clone)]
@@ -163,23 +173,39 @@ struct Attachment {
     metadata: HashMap<String, Option<String>>,
     checksums: Checksums,
     created_at: SystemTime,
+    publisher_id: Uuid,
+    signature: Option<Vec<u8>>,
 }
 
-impl From<Attachment> for storage::FunctionAttachment {
-    fn from(a: Attachment) -> Self {
+#[derive(Debug, ToSql, FromSql)]
+#[postgres(name = "attachment_with_publisher")]
+struct AttachmentWithPublisher {
+    attachment: Attachment,
+    publisher: Publisher,
+}
+
+impl From<AttachmentWithPublisher> for storage::FunctionAttachment {
+    fn from(a: AttachmentWithPublisher) -> Self {
         Self {
-            id: a.id,
+            id: a.attachment.id,
             data: storage::FunctionAttachmentData {
-                name: a.name,
+                name: a.attachment.name,
                 // unwrap is ok here since we know what we put in
                 metadata: a
+                    .attachment
                     .metadata
                     .into_iter()
                     .map(|(k, v)| (k, v.unwrap()))
                     .collect(),
-                checksums: a.checksums.into(),
+                checksums: a.attachment.checksums.into(),
+                publisher: storage::Publisher {
+                    name: a.publisher.name,
+                    email: a.publisher.email,
+                },
+                signature: a.attachment.signature,
             },
             created_at: a
+                .attachment
                 .created_at
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -193,6 +219,7 @@ impl From<Attachment> for storage::FunctionAttachment {
 struct FunctionWithAttachments {
     func: Function,
     attachment_ids: Vec<Uuid>,
+    publisher: Publisher,
 }
 
 impl TryFrom<FunctionWithAttachments> for storage::Function {
@@ -223,6 +250,11 @@ impl TryFrom<FunctionWithAttachments> for storage::Function {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            publisher: storage::Publisher {
+                name: f.publisher.name.clone(),
+                email: f.publisher.email.clone(),
+            },
+            signature: f.func.signature,
         })
     }
 }
@@ -389,6 +421,21 @@ impl PostgresStorage {
         Ok(storage)
     }
 
+    async fn insert_publisher(
+        &self,
+        publisher: &storage::Publisher,
+    ) -> Result<Publisher, storage::StorageError> {
+        self.get_connection()
+            .await?
+            .query_one(
+                "select insert_or_get_publisher($1, $2)",
+                &[&publisher.name, &publisher.email],
+            )
+            .await
+            .map_err(|e| storage::StorageError::BackendError(Box::new(e)))
+            .map(|row| row.get::<_, Publisher>(0))
+    }
+
     async fn get_connection(
         &self,
     ) -> Result<bb8::PooledConnection<'_, PostgresConnectionManager<NoTls>>, storage::StorageError>
@@ -470,7 +517,7 @@ impl storage::FunctionStorage for PostgresStorage {
         self.get_connection()
             .await?
             .query_one(
-                "select insert_function($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                "select insert_function($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 &[
                     &name,
                     &Version::from(&function_data.version),
@@ -481,6 +528,8 @@ impl storage::FunctionStorage for PostgresStorage {
                     &ChannelSpecs::from(function_data.outputs).0,
                     &rt,
                     &function_data.attachments,
+                    &self.insert_publisher(&function_data.publisher).await?.id,
+                    &function_data.signature,
                 ],
             )
             .await
@@ -508,8 +557,17 @@ impl storage::FunctionStorage for PostgresStorage {
         self.get_connection()
             .await?
             .query_one(
-                "select insert_attachment($1, $2, $3)",
-                &[&function_attachment_data.name, &metadata, &checksums],
+                "select insert_attachment($1, $2, $3, $4, $5)",
+                &[
+                    &function_attachment_data.name,
+                    &metadata,
+                    &checksums,
+                    &self
+                        .insert_publisher(&function_attachment_data.publisher)
+                        .await?
+                        .id,
+                    &function_attachment_data.signature,
+                ],
             )
             .await
             .map_err(|e| {
@@ -517,7 +575,7 @@ impl storage::FunctionStorage for PostgresStorage {
                     format!("Failed to insert attachment: {}", e).into(),
                 )
             })
-            .map(|row| row.get::<_, Attachment>(0).into())
+            .map(|row| row.get::<_, AttachmentWithPublisher>(0).into())
     }
 
     async fn get(
@@ -560,7 +618,7 @@ impl storage::FunctionStorage for PostgresStorage {
                 rows.pop()
                     .ok_or_else(|| storage::StorageError::AttachmentNotFound(id.to_string()))
             })
-            .map(|row| row.get::<_, Attachment>(0).into())
+            .map(|row| row.get::<_, AttachmentWithPublisher>(0).into())
     }
 
     async fn list(
@@ -622,6 +680,7 @@ impl storage::FunctionStorage for PostgresStorage {
 
 #[cfg(all(test, feature = "postgres-tests"))]
 mod tests {
+
     use std::collections::HashMap;
     use std::panic::{self, AssertUnwindSafe};
     use tokio::sync::Mutex;
@@ -712,6 +771,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let res = storage.insert(data).await;
@@ -736,6 +800,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let res = storage.insert(same_data).await;
@@ -761,6 +830,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let res = storage.insert(data).await;
@@ -782,6 +856,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let res = storage.insert(data).await;
@@ -795,6 +874,11 @@ mod tests {
                     sha256: "6f7c7128c358626cfea2a83173b1626ec18412962969baba819e1ece1b22907e"
                         .to_owned(),
                 },
+                publisher: storage::Publisher {
+                    name: "Sunba".to_owned(),
+                    email: "kolbals@korven.se".to_owned(),
+                },
+                signature: None,
             };
 
             let r = storage.insert_attachment(attachment1).await;
@@ -808,6 +892,11 @@ mod tests {
                     sha256: "6f7c7128c358626cfea2a83173b1626ec18412962969baba819e1ece1b22907e"
                         .to_owned(),
                 },
+                publisher: storage::Publisher {
+                    name: "Bunba".to_owned(),
+                    email: "korven@korven.se".to_owned(),
+                },
+                signature: None,
             };
 
             let r = storage.insert_attachment(attachment2).await;
@@ -845,6 +934,12 @@ mod tests {
                 code: Some(uuid::Uuid::new_v4()),
                 attachments: vec![attachment1.id, attachment2.id],
                 created_at: 0,
+
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let res = storage.insert(data).await;
@@ -869,6 +964,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let res = storage.insert(data).await;
@@ -895,6 +995,11 @@ mod tests {
                 code: None,
                 attachments: vec![Uuid::new_v4()],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let res = storage.insert(data).await;
@@ -920,6 +1025,10 @@ mod tests {
     async fn get_function() {
         with_db!(db, {
             let storage = db.unwrap();
+            let publisher = storage::Publisher {
+                name: String::from("sune"),
+                email: String::from("sune@sune.com"),
+            };
             let data = storage::Function {
                 name: "Super Snek!".to_owned(),
                 version: Version::new(1, 2, 3),
@@ -935,13 +1044,18 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: publisher.clone(),
+                signature: Some(b"1234".to_vec()),
             };
 
             let id = storage::FunctionId::from(&storage.insert(data).await.unwrap());
             let res = storage.get(&id).await;
 
             assert!(res.is_ok());
-            assert_eq!(storage::FunctionId::from(&res.unwrap()), id);
+            let res = res.unwrap();
+            assert_eq!(storage::FunctionId::from(&res), id);
+            assert_eq!(b"1234", &res.signature.unwrap()[..4]);
+            assert_eq!(res.publisher, publisher);
 
             // test nonexistent
             let nilid = storage::FunctionId {
@@ -969,6 +1083,11 @@ mod tests {
                     sha256: "6f7c7128c358626cfea2a83173b1626ec18412962969baba819e1ece1b22907e"
                         .to_owned(),
                 },
+                publisher: storage::Publisher {
+                    name: "Oran Gutang".to_owned(),
+                    email: "Gutang@oran.se".to_owned(),
+                },
+                signature: Some(b"ababa".to_vec()),
             };
 
             let r = storage.insert_attachment(attachment1).await;
@@ -990,6 +1109,11 @@ mod tests {
                 code: None,
                 attachments: vec![att1_id],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let id = storage::FunctionId::from(&storage.insert(data).await.unwrap());
@@ -1004,6 +1128,10 @@ mod tests {
         with_db!(db, {
             let storage = db.unwrap();
             // Test to use all fields
+            let publisher = storage::Publisher {
+                name: "Sten Snultra".to_owned(),
+                email: "stensnulta@fisk.se".to_owned(),
+            };
             let attachment1 = storage::FunctionAttachmentData {
                 name: "Attached super snek!".to_owned(),
                 metadata: hashmap!("meta".to_owned() => "data".to_owned()),
@@ -1011,6 +1139,8 @@ mod tests {
                     sha256: "6f7c7128c358626cfea2a83173b1626ec18412962969baba819e1ece1b22907e"
                         .to_owned(),
                 },
+                publisher: publisher.clone(),
+                signature: Some(b"sune".to_vec()),
             };
 
             let r = storage.insert_attachment(attachment1).await;
@@ -1019,6 +1149,8 @@ mod tests {
 
             // make sure timestamp was set
             assert_ne!(r.created_at, 0);
+            assert_eq!(r.data.publisher, publisher);
+            assert_eq!(&r.data.signature.unwrap()[0..4], b"sune");
 
             let att1_id = r.id;
 
@@ -1063,6 +1195,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let id = storage::FunctionId::from(&storage.insert(data).await.unwrap());
@@ -1214,6 +1351,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function1_1_1_1 = storage::Function {
@@ -1231,6 +1373,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function2_1_1_1 = storage::Function {
@@ -1248,6 +1395,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function2_1_0_0 = storage::Function {
@@ -1265,6 +1417,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let _function1_1_0_0_id =
@@ -1335,6 +1492,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function2_1_2_0 = storage::Function {
@@ -1352,6 +1514,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function2_1_10_0_id =
@@ -1382,6 +1549,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function2_1_10_0_jaws = storage::Function {
@@ -1399,6 +1571,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function2_1_10_0_alpha_id =
@@ -1449,6 +1626,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function_1_1_0 = storage::Function {
@@ -1466,6 +1648,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function_1_1_1 = storage::Function {
@@ -1483,6 +1670,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function_1_2_0 = storage::Function {
@@ -1500,6 +1692,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function_1_10_0 = storage::Function {
@@ -1517,6 +1714,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function_2_2_0 = storage::Function {
@@ -1534,6 +1736,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function_1_2_0_beta = storage::Function {
@@ -1551,6 +1758,11 @@ mod tests {
                 code: None,
                 attachments: vec![],
                 created_at: 0,
+                publisher: storage::Publisher {
+                    name: String::from("sune"),
+                    email: String::from("sune@sune.com"),
+                },
+                signature: None,
             };
 
             let function_1_0_0_id =

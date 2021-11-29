@@ -57,6 +57,15 @@ end $$;
 -- Tables
 ------------------------------------------
 
+create table if not exists publishers (
+    id uuid default uuid_generate_v4(),
+    name varchar(128),
+    email varchar(128),
+    constraint name_email_key primary key(name, email),
+    constraint publisher_id_unique unique(id)
+);
+
+
 create table if not exists functions (
     id uuid default uuid_generate_v4(),
     name varchar(128),
@@ -68,6 +77,8 @@ create table if not exists functions (
     outputs channel_spec[],
     runtime runtime,
     created_at timestamp default (now() at time zone 'utc'),
+    publisher_id uuid references publishers (id) not null,
+    signature bytea null,
     constraint name_version_key primary key(name, version),
     constraint id_unique unique(id)
 );
@@ -78,8 +89,11 @@ create table if not exists attachments (
     name varchar(128),
     metadata hstore,
     checksums checksums,
-    created_at timestamp default (now() at time zone 'utc')
+    created_at timestamp default (now() at time zone 'utc'),
+    publisher_id uuid references publishers (id),
+    signature bytea null
 );
+
 
 create table if not exists attachments_to_functions (
     function_id uuid references functions (id) on delete cascade on update cascade,
@@ -103,11 +117,22 @@ $$ language plpgsql;
 do $$ begin
     create type function_with_attachments as (
         func functions,
-        attachment_ids uuid[]
+        attachment_ids uuid[],
+        publisher publishers
     );
 exception
     when duplicate_object then null;
 end $$;
+
+do $$ begin
+    create type attachment_with_publisher as (
+        attachment attachments,
+        publisher publishers
+    );
+exception
+    when duplicate_object then null;
+end $$;
+
 
 create or replace function insert_function (
     name varchar(128),
@@ -118,7 +143,9 @@ create or replace function insert_function (
     optional_inputs channel_spec[],
     outputs channel_spec[],
     runtime runtime,
-    attachment_ids uuid[]
+    attachment_ids uuid[],
+    publisher_id uuid,
+    signature bytea
 ) returns function_with_attachments as
 $$
 declare
@@ -126,7 +153,7 @@ declare
 begin
 
     insert into functions values (
-        default,
+        default, -- id -> generated
         name,
         version,
         metadata,
@@ -135,13 +162,14 @@ begin
         optional_inputs,
         outputs,
         runtime,
-        default
+        default, -- created at -> now
+        publisher_id,
+        signature
     ) returning * into inserted_function;
 
     -- insert attachment ids in relation table
     insert into attachments_to_functions values (inserted_function.id, unnest(attachment_ids));
-
-    return row(inserted_function, attachment_ids)::function_with_attachments;
+    return row(inserted_function, attachment_ids, (select (publishers::publishers) from publishers where publishers.id = publisher_id limit 1))::function_with_attachments;
 end;
 $$ language plpgsql;
 
@@ -153,11 +181,13 @@ $$
     select (
         functions::functions,
         -- rust does not like nulls in the array (who does?)
-        array_remove(array_agg(attachments_to_functions.attachment_id), null)
+        array_remove(array_agg(attachments_to_functions.attachment_id), null),
+        publishers::publishers
     )::function_with_attachments
     from functions
     left join attachments_to_functions on attachments_to_functions.function_id = functions.id
-    where functions.name = name_ and functions.version = version_ group by functions.name, functions.version limit 1;
+    left join publishers on publishers.id = functions.publisher_id
+    where functions.name = name_ and functions.version = version_ group by functions.name, functions.version, publishers.* limit 1;
 $$ language sql;
 
 do $$ begin
@@ -214,10 +244,12 @@ $$
     select (
         functions::functions,
         -- rust does not like nulls in the array (who does?)
-        array_remove(array_agg(attachments_to_functions.attachment_id), null)
+        array_remove(array_agg(attachments_to_functions.attachment_id), null),
+        publishers::publishers
     )::function_with_attachments
     from functions
     left join attachments_to_functions on attachments_to_functions.function_id = functions.id
+    left join publishers on publishers.id = functions.publisher_id
     where 
         case when exact_name_match = false then
             functions.name like ('%' || name_ || '%')
@@ -235,7 +267,7 @@ $$
         )
     and
         version_matches(functions.version, version_filters)
-    group by functions.name, functions.version
+    group by functions.name, functions.version, publishers.*
     order by
         -- TODO: 🤮 This code is very ugly and there is most likely
         -- a better way to write this
@@ -249,31 +281,58 @@ $$ language sql;
 
 create or replace function get_attachment (
     id_ uuid
-) returns setof attachments as
+) returns setof attachment_with_publisher as
 $$
-    select *
+    select (
+        attachments::attachments,
+        publishers::publishers
+    )::attachment_with_publisher
     from attachments
-    where attachments.id = id_ group by attachments.id limit 1;
+    left join publishers on publishers.id = attachments.publisher_id
+    where attachments.id = id_ group by attachments.id, publishers.* limit 1;
 $$ language sql;
 
 
 create or replace function insert_attachment (
     name varchar(128),
     metadata hstore,
-    checksums checksums
-) returns attachments as
+    checksums checksums,
+    publisher_id uuid,
+    signature bytea
+) returns attachment_with_publisher as
 $$
 declare
     inserted_attachment attachments;
 begin
     insert into attachments values (
-        default,
+        default, -- id -> generated
         name,
         metadata,
         checksums,
-        default
+        default, -- created_at -> now
+        publisher_id,
+        signature
     ) returning * into inserted_attachment;
 
-    return inserted_attachment;
+    return row(inserted_attachment, (select (publishers::publishers) from publishers where publishers.id = publisher_id limit 1))::attachment_with_publisher;
+end;
+$$ language plpgsql;
+
+
+create or replace function insert_or_get_publisher (
+    _name varchar(128),
+    _email varchar(128)
+) returns publishers as
+$$
+declare
+    inserted_publisher publishers;
+begin
+    insert into publishers values (
+        default,
+        _name,
+        _email
+    ) on conflict (name, email) do update set name = _name returning * into inserted_publisher;
+
+    return inserted_publisher;
 end;
 $$ language plpgsql;

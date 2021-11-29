@@ -9,8 +9,8 @@ use std::{
 use firm_types::{
     functions::AttachmentUrl,
     functions::AuthMethod,
-    functions::Checksums,
     functions::{Attachment, Stream as ValueStream},
+    functions::{Checksums, Publisher},
     wasi::RuntimeContext,
 };
 use flate2::read::GzDecoder;
@@ -144,6 +144,11 @@ impl Runtime for NestedWasiRuntime {
                     metadata: HashMap::new(),
                     checksums: Some(self.runtime_checksums.clone()),
                     created_at: runtime_timestamp,
+                    publisher: Some(Publisher {
+                        name: String::from("Unknown"),
+                        email: String::from("un@known.org"),
+                    }),
+                    signature: None,
                 }),
                 arguments: HashMap::new(), // files on disk can not have arguments
                 function_dir: runtime_parameters.function_dir,

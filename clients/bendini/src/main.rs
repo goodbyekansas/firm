@@ -214,12 +214,21 @@ enum Command {
         name: Option<String>,
     },
 
-    /// Register a new function
+    /// Register a new function and upload to
+    /// a registry as given by the `host` option.
     Register {
         /// Path to a manifest or path to
         /// a folder containing a manifest.toml
         #[structopt(parse(from_os_str))]
         manifest: PathBuf,
+
+        /// Name of the function publisher
+        #[structopt(short = "n", long)]
+        publisher_name: Option<String>,
+
+        /// Email of the function publisher
+        #[structopt(short = "e", long)]
+        publisher_email: Option<String>,
     },
 
     /// Executes a function with arguments
@@ -482,8 +491,34 @@ async fn run() -> Result<(), error::BendiniError> {
     match args.cmd {
         Command::List { .. } => commands::list::run(registry_client).await,
 
-        Command::Register { manifest } => {
-            commands::register::run(registry_client, auth_client, &manifest).await
+        Command::Register {
+            manifest,
+            publisher_name,
+            publisher_email,
+        } => {
+            futures::future::ready(match (publisher_name, publisher_email) {
+                (Some(publisher_name), Some(publisher_email)) => {
+                    Ok((publisher_name, publisher_email))
+                }
+                (name, email) => {
+                    auth_client
+                        .get_identity(tonic::Request::new(()))
+                        .await
+                        .map(|identity| {
+                            let identity = identity.into_inner();
+                            (
+                                name.unwrap_or(identity.name),
+                                email.unwrap_or(identity.email),
+                            )
+                        })
+                }
+            })
+            .map_err(Into::into)
+            .and_then(|(name, email)| async move {
+                commands::register::run(registry_client, auth_client, &manifest, &name, &email)
+                    .await
+            })
+            .await
         }
 
         Command::Run {

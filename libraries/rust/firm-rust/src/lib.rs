@@ -566,7 +566,9 @@ pub mod net {
 mod tests {
     use super::*;
     use firm_types::{
-        functions::{channel::Value as ValueType, Attachment, AttachmentUrl, AuthMethod},
+        functions::{
+            channel::Value as ValueType, Attachment, AttachmentUrl, AuthMethod, Publisher,
+        },
         stream::TryRefFromChannel,
     };
     use mock::MockResultRegistry;
@@ -847,6 +849,11 @@ mod tests {
                 auth_method: AuthMethod::None as i32,
             }),
             created_at: 0,
+            publisher: Some(Publisher {
+                name: String::from("Eggbert"),
+                email: String::from("eggbert@hej.se"),
+            }),
+            signature: None,
         };
         let random_attachment2 = random_attachment.clone();
 

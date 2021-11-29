@@ -158,7 +158,7 @@ impl TryFrom<firm_types::functions::FunctionData> for storage::Function {
                 .ok_or_else(|| {
                     tonic::Status::new(
                         tonic::Code::InvalidArgument,
-                        "Registering a function requires an execution environment",
+                        "Registering a function requires a runtime",
                     )
                 })
                 .and_then(|ee| ee.try_into())?,
@@ -184,7 +184,20 @@ impl TryFrom<firm_types::functions::FunctionData> for storage::Function {
                 .iter()
                 .map(|a| a.to_uuid())
                 .collect::<Result<Vec<_>, _>>()?,
-            created_at: 0, // set on the way out, not in
+            created_at: 0, // set on the way out, not in,
+            publisher: value
+                .publisher
+                .map(|p| storage::Publisher {
+                    name: p.name,
+                    email: p.email,
+                })
+                .ok_or_else(|| {
+                    tonic::Status::new(
+                        tonic::Code::InvalidArgument,
+                        "Registering a function requires a publisher",
+                    )
+                })?,
+            signature: value.signature.map(|sig| sig.signature),
         })
     }
 }
@@ -215,6 +228,14 @@ impl TryFrom<firm_types::functions::AttachmentData> for storage::FunctionAttachm
                     )
                 })
                 .and_then(|c| c.try_into())?,
+            publisher: value
+                .publisher
+                .ok_or_else(|| tonic::Status::invalid_argument("Attachment requires publisher"))
+                .map(|publisher| storage::Publisher {
+                    name: publisher.name,
+                    email: publisher.email,
+                })?,
+            signature: value.signature.map(|sig| sig.signature),
         })
     }
 }
@@ -255,6 +276,14 @@ impl<'a> From<AttachmentResolver<'a>> for firm_types::functions::Attachment {
                 sha256: att.data.checksums.sha256.to_string(),
             }),
             created_at: att.created_at,
+            publisher: Some(firm_types::functions::Publisher {
+                name: att.data.publisher.name,
+                email: att.data.publisher.email,
+            }),
+            signature: att
+                .data
+                .signature
+                .map(|s| firm_types::functions::Signature { signature: s }),
         }
     }
 }
@@ -310,6 +339,16 @@ impl FunctionResolver for &Function {
             ))
             .await?,
             created_at: self.created_at,
+            publisher: Some(firm_types::functions::Publisher {
+                name: self.publisher.name.clone(),
+                email: self.publisher.email.clone(),
+            }),
+            signature: self
+                .signature
+                .as_ref()
+                .map(|sig| firm_types::functions::Signature {
+                    signature: sig.clone(),
+                }),
         })
     }
 }
