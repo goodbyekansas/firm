@@ -48,6 +48,14 @@ pub struct Function {
     pub code: Option<Uuid>,
     pub attachments: Vec<Uuid>,
     pub created_at: u64,
+    pub publisher: Publisher,
+    pub signature: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Publisher {
+    pub name: String,
+    pub email: String,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -80,6 +88,8 @@ pub struct FunctionAttachmentData {
     pub name: String,
     pub metadata: HashMap<String, String>,
     pub checksums: Checksums,
+    pub publisher: Publisher,
+    pub signature: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]

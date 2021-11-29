@@ -63,6 +63,8 @@ message FunctionData {
   AttachmentId code_attachment_id = 7;
   firm_protocols.functions.RuntimeSpec runtime = 8;
   repeated AttachmentId attachment_ids = 9;
+  firm_protocols.functions.Publisher publisher = 10;
+  firm_protocols.functions.Signature signature = 11;
 }
 
 
@@ -77,6 +79,8 @@ message AttachmentData {
   string name = 1;
   map<string, string> metadata = 2;
   firm_protocols.functions.Checksums checksums = 3;
+  firm_protocols.functions.Publisher publisher = 4;
+  firm_protocols.functions.Signature signature = 5;
 }
 
 

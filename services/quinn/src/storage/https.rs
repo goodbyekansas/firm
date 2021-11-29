@@ -50,7 +50,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::storage::{Checksums, FunctionAttachmentData};
+    use crate::storage::{Checksums, FunctionAttachmentData, Publisher};
     use std::collections::HashMap;
 
     #[test]
@@ -69,6 +69,11 @@ mod tests {
                 checksums: Checksums {
                     sha256: "nej".to_owned(),
                 },
+                publisher: Publisher {
+                    name: "Sju Rygg".to_owned(),
+                    email: "sju@fetfisk.se".to_owned(),
+                },
+                signature: None,
             },
             created_at: 1337,
         });
@@ -91,6 +96,11 @@ mod tests {
                 checksums: Checksums {
                     sha256: "nej".to_owned(),
                 },
+                publisher: Publisher {
+                    name: "Horn Simpa".to_owned(),
+                    email: "hornsimpa@fulfisk.se".to_owned(),
+                },
+                signature: None,
             },
             created_at: 1337,
         });

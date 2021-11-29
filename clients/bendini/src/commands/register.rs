@@ -20,6 +20,8 @@ pub async fn run<T1, T2>(
     mut client: RegistryClient<T1>,
     auth_client: AuthenticationClient<T2>,
     manifest: &Path,
+    publisher_name: &str,
+    publisher_email: &str,
 ) -> Result<(), BendiniError>
 where
     T1: tonic::client::GrpcService<tonic::body::BoxBody> + Clone + Send,
@@ -39,7 +41,7 @@ where
         manifest.to_owned()
     };
 
-    let manifest = FunctionManifest::parse(&manifest_path)?;
+    let manifest = FunctionManifest::parse(&manifest_path, publisher_name, publisher_email)?;
 
     println!("Registering function \"{}\"...", manifest.name());
 

@@ -17,6 +17,19 @@ message Function {
   repeated Attachment attachments = 8;
   RuntimeSpec runtime = 9;
   uint64 created_at = 10;
+  Publisher publisher = 11;
+  Signature signature = 12;
+}
+
+
+message Publisher {
+  string name = 1;
+  string email = 2;
+}
+
+
+message Signature {
+  bytes signature = 1;
 }
 
 
@@ -53,6 +66,8 @@ message Attachment {
   map<string, string> metadata = 3;
   Checksums checksums = 4;
   uint64 created_at = 5;
+  Publisher publisher = 6;
+  Signature signature = 7;
 }
 
 

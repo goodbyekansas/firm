@@ -143,14 +143,27 @@ impl Display for Displayer<'_, Function> {
             write!(f, "{}outputs:{}", INDENT, self.outputs.display())?;
 
             if self.metadata.is_empty() {
-                writeln!(f, "{}metadata: n/a", INDENT)
+                writeln!(f, "{}metadata: n/a", INDENT)?;
             } else {
                 writeln!(f, "{}metadata:", INDENT)?;
                 self.metadata
                     .clone()
                     .iter()
-                    .try_for_each(|(x, y)| writeln!(f, "{}{}:{}", INDENT.repeat(2), x, y))
+                    .try_for_each(|(x, y)| writeln!(f, "{}{}:{}", INDENT.repeat(2), x, y))?;
             }
+            writeln!(
+                f,
+                "{}published by: {}<{}>",
+                INDENT,
+                self.publisher
+                    .as_ref()
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("Unknown"),
+                self.publisher
+                    .as_ref()
+                    .map(|p| p.email.as_str())
+                    .unwrap_or("un@known.com")
+            )
         } else {
             Ok(())
         }

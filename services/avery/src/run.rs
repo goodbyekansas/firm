@@ -82,6 +82,7 @@ where
         config.auth.identity,
         config.auth.key_store,
         config.auth.allow,
+        crate::system::user_data_path(),
         log.new(o!("service" => "auth")),
     )
     .await?;

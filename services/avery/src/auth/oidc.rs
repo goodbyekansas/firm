@@ -388,7 +388,7 @@ impl Oidc {
                     ("client_id", self.oidc_config.client_id.as_str()),
                     ("redirect_uri", redirect_uri.as_str()),
                     ("response_type", "code"),
-                    ("scope", "openid email"),
+                    ("scope", "openid profile email"),
                     ("code_challenge", code_challenge),
                     ("code_challenge_method", "S256"),
                     ("state", &state_string),

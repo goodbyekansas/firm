@@ -148,6 +148,8 @@ async fn execute() {
             .0,
             std::collections::HashMap::new(),
             channel_specs!({}).0,
+            "Publisher",
+            "publisher@company.com",
             [], // attachments
             {}  // metadata
         )]

@@ -12,8 +12,10 @@ use std::{
 use chrono::{TimeZone, Utc};
 use expiremap::ExpireMap;
 use firm_types::{
-    auth::authentication_server::Authentication, auth::AcquireTokenParameters,
-    auth::Token as ProtoToken, tonic,
+    auth::AcquireTokenParameters,
+    auth::Token as ProtoToken,
+    auth::{authentication_server::Authentication, Identity},
+    tonic,
 };
 use futures::{future::OptionFuture, TryFutureExt};
 use serde::{Deserialize, Serialize};
@@ -55,6 +57,7 @@ pub struct AuthService {
     scope_mappings: Arc<HashMap<String, AuthConfig>>,
     access_list: ExpireMap<String, ()>,
     pending_access_requests: ExpireMap<uuid::Uuid, PendingAccessRequest>,
+    identity: Option<Identity>,
 }
 
 impl Debug for AuthService {
@@ -72,6 +75,7 @@ impl Default for AuthService {
             scope_mappings: Arc::new(HashMap::new()),
             access_list: ExpireMap::default(),
             pending_access_requests: ExpireMap::default(),
+            identity: Option::default(),
         }
     }
 }
@@ -426,6 +430,7 @@ impl AuthService {
         identity_provider: IdentityProvider,
         key_store_config: crate::config::KeyStore,
         access_config: crate::config::AllowConfig,
+        keystore_path: Option<PathBuf>,
         logger: Logger,
     ) -> Result<Self, String> {
         let mut token_cache = TokenCache::new(
@@ -444,7 +449,7 @@ impl AuthService {
             })
             .collect::<HashMap<String, Oidc>>();
 
-        let audience = Self::get_identity(
+        let identity = Self::get_identity(
             identity_provider,
             &oidc_providers,
             &mut token_cache,
@@ -457,7 +462,7 @@ impl AuthService {
             .iter()
             .filter_map(|(_, value)| match value {
                 AuthConfig::KeyFile { path } => Some(
-                    internal::TokenGeneratorBuilder::new(&audience)
+                    internal::TokenGeneratorBuilder::new(&identity.email)
                         .with_rsa_private_key_from_file(path)
                         .build()
                         .map(|token_generator| (path.to_owned(), token_generator)),
@@ -468,7 +473,8 @@ impl AuthService {
             .map_err(|e| e.to_string())?;
 
         let (new_key, self_signed) = Self::create_self_signed_generator(
-            &audience,
+            &identity.email,
+            keystore_path,
             logger.new(o!("scope" => "token-generator-creation")),
         )?;
 
@@ -504,7 +510,7 @@ impl AuthService {
             }))
             .and_then(|key_content| {
                 let ks = &key_store;
-                let audience = &audience;
+                let audience = &identity.email;
                 let logger = &logger;
                 async move {
                     debug!(logger, "Uploading key store data");
@@ -523,6 +529,7 @@ impl AuthService {
             logger,
             access_list: access_config.users.into_iter().collect(),
             pending_access_requests: ExpireMap::default(),
+            identity: Some(identity),
         })
     }
 
@@ -561,7 +568,7 @@ impl AuthService {
         token_cache: &'a mut TokenCache,
         username_provider: F,
         logger: Logger,
-    ) -> Result<String, String>
+    ) -> Result<Identity, String>
     where
         F: FnOnce() -> Option<String>,
     {
@@ -601,32 +608,46 @@ impl AuthService {
                         }
                     }
                     .map(|token| {
-                        token
-                            .claim("email")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_owned())
+                        match (
+                            token
+                                .claim("name")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_owned()),
+                            token
+                                .claim("email")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_owned()),
+                        ) {
+                            (Some(name), Some(email)) => Some(Identity { name, email }),
+                            _ => None,
+                        }
                     })
                 })
                 .await?
             }
-            IdentityProvider::Username => username_provider(),
+            IdentityProvider::Username => username_provider().map(|name| Identity {
+                email: format!("{}@unknown", &name),
+                name,
+            }),
             IdentityProvider::UsernameSuffix { suffix } => {
-                username_provider().map(|name| format!("{}{}", name, suffix))
+                username_provider().map(|name| Identity {
+                    email: format!("{}{}", &name, &suffix),
+                    name,
+                })
             }
-            IdentityProvider::Override { identity } => Some(identity),
+            IdentityProvider::Override { name, email } => Some(Identity { name, email }),
         }
         .ok_or_else(|| "Failed to determine identity".to_owned())
     }
 
     fn create_self_signed_generator(
         audience: &str,
+        keystore_path: Option<PathBuf>,
         logger: Logger,
     ) -> Result<(Option<PathBuf>, internal::TokenGenerator), String> {
-        let keystore_path = crate::system::user_data_path()
-            .map(|p| p.join("keys"))
-            .ok_or_else(|| {
-                "Could not determine key store path for saving generated keys".to_owned()
-            })?;
+        let keystore_path = keystore_path.map(|p| p.join("keys")).ok_or_else(|| {
+            "Could not determine key store path for saving generated keys".to_owned()
+        })?;
 
         std::fs::create_dir_all(&keystore_path)
             .map_err(|e| {
@@ -990,6 +1011,16 @@ impl Authentication for AuthService {
         .await
         .map(tonic::Response::new)
     }
+
+    async fn get_identity(
+        &self,
+        _request: tonic::Request<()>,
+    ) -> Result<tonic::Response<firm_types::auth::Identity>, tonic::Status> {
+        self.identity
+            .as_ref()
+            .ok_or_else(|| tonic::Status::not_found("No identity set"))
+            .map(|identity| tonic::Response::new(identity.clone()))
+    }
 }
 
 #[cfg(test)]
@@ -1028,7 +1059,8 @@ mod tests {
         let map = AuthService::create_alias_map(
             &auth_scopes,
             &IdentityProvider::Override {
-                identity: "i-am-identity@company.se".to_owned(),
+                name: String::from("Superman"),
+                email: String::from("i-am-identity@company.se"),
             },
         );
 
@@ -1043,7 +1075,8 @@ mod tests {
     async fn get_identity() {
         let id = AuthService::get_identity(
             IdentityProvider::Override {
-                identity: "user@company.com".to_owned(),
+                name: String::from("Bob"),
+                email: "user@company.com".to_owned(),
             },
             &HashMap::new(),
             &mut TokenCache::default(),
@@ -1055,7 +1088,10 @@ mod tests {
         assert!(id.is_ok());
         assert_eq!(
             id.unwrap(),
-            "user@company.com",
+            Identity {
+                email: String::from("user@company.com"),
+                name: String::from("Bob")
+            },
             "Overridden user identity must come back unmodified"
         );
 
@@ -1073,7 +1109,10 @@ mod tests {
         assert!(id.is_ok());
         assert_eq!(
             id.unwrap(),
-            "user@company.com",
+            Identity {
+                name: String::from("user"),
+                email: String::from("user@company.com")
+            },
             "Username suffix must be added to the username from the system"
         );
 
@@ -1088,7 +1127,7 @@ mod tests {
 
         assert!(id.is_ok());
         assert_eq!(
-            id.unwrap(),
+            id.unwrap().name,
             "username",
             "Username must be the un-altered username from the system"
         );

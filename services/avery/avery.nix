@@ -14,6 +14,7 @@
   srcExclude = [
     (path: type: (type == "directory" && baseNameOf path == "runtimes"))
     (path: type: (type == "regular" && baseNameOf path == "avery-with-runtimes.nix"))
+    (path: type: (type == "regular" && baseNameOf path == "CHANGELOG.md"))
   ];
 
   buildInputs = [ types.package tonicMiddleware.package ];
