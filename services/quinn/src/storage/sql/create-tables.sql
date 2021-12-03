@@ -230,52 +230,110 @@ $$
 $$ language sql;
 
 
-create or replace function list_functions (
+create or replace function list_functions_internal(
     name_ varchar(128),
-    exact_name_match bool,
     metadata_ hstore,
     offset_ bigint,
     limit_ bigint,
     order_by_ varchar(128),
     reverse_ bool,
-    version_filters version_comparator[]
+    version_filters_ version_comparator[],
+    publisher_email_ varchar(128),
+    group_versions_ bool
 ) returns setof function_with_attachments as
 $$
-    select (
-        functions::functions,
-        -- rust does not like nulls in the array (who does?)
-        array_remove(array_agg(attachments_to_functions.attachment_id), null),
-        publishers::publishers
-    )::function_with_attachments
-    from functions
-    left join attachments_to_functions on attachments_to_functions.function_id = functions.id
-    left join publishers on publishers.id = functions.publisher_id
-    where 
-        case when exact_name_match = false then
-            functions.name like ('%' || name_ || '%')
-        else
-            functions.name = name_
-        end
-    and
-        (
-            metadata ?& akeys(metadata_)
-            and
+    with all_ as
+    (
+        select
+            functions::functions as functions_,
+            -- rust does not like nulls in the array (who does?)
+            array_remove(array_agg(attachments_to_functions.attachment_id), null) as attachments_,
+            publishers::publishers as publishers_,
+            row_number() over (partition by functions.name order by version desc) as row_number_
+        from functions
+        left join attachments_to_functions on attachments_to_functions.function_id = functions.id
+        left join publishers on publishers.id = functions.publisher_id
+        where 
+            case when group_versions_ then
+                functions.name like ('%' || name_ || '%')
+            else
+                functions.name = name_
+            end
+        and
+            version_matches(functions.version, version_filters_)
+        group by functions.name, functions.version, publishers.*
+    )
+    select (functions_, attachments_, publishers_)::function_with_attachments from all_
+    where
+        (row_number_ = 1 or group_versions_ = false)
+        and
             (
-            -- remove all null values since it is enough that they fulfill the above
-            coalesce((select hstore(array_agg(key), array_agg(value)) from each(metadata_) where value is not null), ''::hstore)
-            ) <@ metadata
-        )
-    and
-        version_matches(functions.version, version_filters)
-    group by functions.name, functions.version, publishers.*
+                (functions_).metadata ?& akeys(metadata_)
+                and
+                (
+                    -- remove all null values since it is enough that they fulfill the above
+                    coalesce((select hstore(array_agg(key), array_agg(value)) from each(metadata_) where value is not null), ''::hstore)
+                ) <@ (functions_).metadata
+            )
+        and
+            (publishers_).email like ('%' || publisher_email_ || '%')
     order by
         -- TODO: 🤮 This code is very ugly and there is most likely
         -- a better way to write this
-        case when order_by_ = 'name_version' and not reverse_ then functions.name end asc,
-        case when order_by_ = 'name_version' and reverse_ then functions.name end desc,
-        case when order_by_ = 'name_version' and not reverse_ then functions.version end desc,
-        case when order_by_ = 'name_version' and reverse_ then functions.version end asc
+        case when order_by_ = 'name_version' and not reverse_ then (functions_).name end asc,
+        case when order_by_ = 'name_version' and reverse_ then (functions_).name end desc,
+        case when order_by_ = 'name_version' and not reverse_ then (functions_).version end desc,
+        case when order_by_ = 'name_version' and reverse_ then (functions_).version end asc
     offset offset_ limit limit_;
+$$ language sql;
+
+create or replace function list_functions(
+    name_ varchar(128),
+    metadata_ hstore,
+    offset_ bigint,
+    limit_ bigint,
+    order_by_ varchar(128),
+    reverse_ bool,
+    version_filters_ version_comparator[],
+    publisher_email_ varchar(128)
+) returns setof function_with_attachments as
+$$
+    select list_functions_internal(
+        name_,
+        metadata_,
+        offset_,
+        limit_,
+        order_by_,
+        reverse_,
+        version_filters_,
+        publisher_email_,
+        true
+    );
+$$ language sql;
+
+
+create or replace function list_versions(
+    name_ varchar(128),
+    metadata_ hstore,
+    offset_ bigint,
+    limit_ bigint,
+    order_by_ varchar(128),
+    reverse_ bool,
+    version_filters_ version_comparator[],
+    publisher_email_ varchar(128)
+) returns setof function_with_attachments as
+$$
+    select list_functions_internal(
+        name_,
+        metadata_,
+        offset_,
+        limit_,
+        order_by_,
+        reverse_,
+        version_filters_,
+        publisher_email_,
+        false
+    );
 $$ language sql;
 
 

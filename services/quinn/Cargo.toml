@@ -11,6 +11,7 @@ base64 = "0.13"
 bb8 = "0.7"
 bb8-postgres = "0.7"
 config = "0.10"
+either = "1.6.1"
 futures = "0.3"
 postgres-types = { version = "0.2", features = ["derive", "with-uuid-0_8"] }
 regex = "1"

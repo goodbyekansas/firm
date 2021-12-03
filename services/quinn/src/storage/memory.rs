@@ -20,6 +20,93 @@ impl MemoryStorage {
             attachments: RwLock::new(HashMap::new()),
         }
     }
+
+    fn list(
+        &self,
+        filters: &super::Filters,
+        group_versions: bool,
+    ) -> Result<Vec<Function>, StorageError> {
+        self.functions
+            .read()
+            .map_err(|e| {
+                StorageError::BackendError(
+                    format!("Failed to acquire read lock for functions: {}", e).into(),
+                )
+            })
+            .map(|f| {
+                let funcs = f
+                    .values()
+                    .filter(|function| {
+                        // Name
+                        group_versions && function.name == filters.name
+                            || function.name.contains(&filters.name)
+                    })
+                    .filter(|function| {
+                        // Version requirement
+                        filters
+                            .version_requirement
+                            .as_ref()
+                            .map_or(true, |requirement| requirement.matches(&function.version))
+                    });
+                let funcs = if group_versions {
+                    either::Either::Right(
+                        funcs
+                            .fold(
+                                HashMap::new(),
+                                |mut hashmap: HashMap<String, &Function>, function| match hashmap
+                                    .entry(function.name.clone())
+                                {
+                                    Entry::Occupied(mut entry) => {
+                                        (entry.get().version < function.version)
+                                            .then(|| entry.insert(function));
+                                        hashmap
+                                    }
+                                    Entry::Vacant(entry) => {
+                                        entry.insert(function);
+                                        hashmap
+                                    }
+                                },
+                            )
+                            .into_values(),
+                    )
+                } else {
+                    either::Either::Left(funcs)
+                };
+                funcs
+                    .filter(|fun| {
+                        // Metadata
+                        filters.metadata.iter().all(|(k, v)| match v {
+                            None => fun.metadata.contains_key(k),
+                            value => fun.metadata.get(k) == value.as_ref(),
+                        })
+                    })
+                    .filter(|function| function.publisher.email.contains(&filters.publisher_email))
+                    .cloned()
+                    .collect::<Vec<Function>>()
+            })
+            .map(|mut hits| {
+                let order = filters.order.as_ref().cloned().unwrap_or_default();
+                hits.sort_unstable_by(|a, b| match order.key {
+                    firm_types::functions::OrderingKey::NameVersion => match a.name.cmp(&b.name) {
+                        std::cmp::Ordering::Equal => b.version.cmp(&a.version),
+                        o => o,
+                    },
+                });
+
+                if order.reverse {
+                    hits.into_iter()
+                        .rev()
+                        .skip(order.offset)
+                        .take(order.limit)
+                        .collect()
+                } else {
+                    hits.into_iter()
+                        .skip(order.offset)
+                        .take(order.limit)
+                        .collect()
+                }
+            })
+    }
 }
 
 #[async_trait::async_trait]
@@ -115,60 +202,10 @@ impl FunctionStorage for MemoryStorage {
     }
 
     async fn list(&self, filters: &super::Filters) -> Result<Vec<Function>, StorageError> {
-        self.functions
-            .read()
-            .map_err(|e| {
-                StorageError::BackendError(
-                    format!("Failed to acquire read lock for functions: {}", e).into(),
-                )
-            })
-            .map(|f| {
-                f.values()
-                    .filter(|function| {
-                        // Name
-                        filters.name.as_ref().map_or(true, |filter| {
-                            filter.exact_match && function.name == filter.pattern
-                                || function.name.contains(&filter.pattern)
-                        })
-                    })
-                    .filter(|function| {
-                        // Version requirement
-                        filters
-                            .version_requirement
-                            .as_ref()
-                            .map_or(true, |requirement| requirement.matches(&function.version))
-                    })
-                    .filter(|fun| {
-                        // Metadata
-                        filters.metadata.iter().all(|(k, v)| match v {
-                            None => fun.metadata.contains_key(k),
-                            value => fun.metadata.get(k) == value.as_ref(),
-                        })
-                    })
-                    .cloned()
-                    .collect::<Vec<Function>>()
-            })
-            .map(|mut hits| {
-                let order = filters.order.as_ref().cloned().unwrap_or_default();
-                hits.sort_unstable_by(|a, b| match order.key {
-                    firm_types::functions::OrderingKey::NameVersion => match a.name.cmp(&b.name) {
-                        std::cmp::Ordering::Equal => b.version.cmp(&a.version),
-                        o => o,
-                    },
-                });
+        MemoryStorage::list(self, filters, true)
+    }
 
-                if order.reverse {
-                    hits.into_iter()
-                        .rev()
-                        .skip(order.offset)
-                        .take(order.limit)
-                        .collect()
-                } else {
-                    hits.into_iter()
-                        .skip(order.offset)
-                        .take(order.limit)
-                        .collect()
-                }
-            })
+    async fn list_versions(&self, filters: &super::Filters) -> Result<Vec<Function>, StorageError> {
+        MemoryStorage::list(self, filters, false)
     }
 }

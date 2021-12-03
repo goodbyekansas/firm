@@ -55,6 +55,12 @@ mod system {
         }
         .map(|p| p.join("bendini"))
     }
+
+    pub fn reset_sigpipe() {
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -80,6 +86,10 @@ mod system {
         std::env::var("LOCALAPPDATA")
             .ok()
             .map(|p| PathBuf::from(p).join("bendini"))
+    }
+
+    pub fn reset_sigpipe() {
+        // noop on windows
     }
 }
 
@@ -199,12 +209,55 @@ enum AuthCommand {
     },
 }
 
+impl FromStr for formatting::DisplayFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
+            "json" => formatting::DisplayFormat::Json,
+            "short" => formatting::DisplayFormat::Short,
+            _ => formatting::DisplayFormat::Long,
+        })
+    }
+}
+
+impl Default for formatting::DisplayFormat {
+    fn default() -> Self {
+        formatting::DisplayFormat::Long
+    }
+}
+
+impl Display for formatting::DisplayFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "{}",
+            match self {
+                formatting::DisplayFormat::Short => "short",
+                formatting::DisplayFormat::Long => "long",
+                formatting::DisplayFormat::Json => "json",
+            }
+        )
+    }
+}
+
 #[derive(StructOpt, Debug)]
 enum Command {
     /// List available functions
     List {
-        #[structopt(short, long)]
-        pipeable_output: bool,
+        /// Display format to use
+        #[structopt(short, long, default_value)]
+        format: formatting::DisplayFormat,
+    },
+
+    /// List versions of a function
+    ListVersions {
+        /// Name of the function to list versions for
+        name: String,
+
+        /// Display format to use
+        #[structopt(short, long, default_value)]
+        format: formatting::DisplayFormat,
     },
 
     /// List available runtimes
@@ -272,6 +325,11 @@ fn parse_key_val(s: &str) -> Result<(String, String), Box<dyn std::error::Error>
 
 #[tokio::main]
 async fn main() {
+    // rust ignores sigpipe by default which
+    // causes problems when output is piped
+    // to other programs, something we expect
+    // to be done. See: https://github.com/rust-lang/rust/issues/46016
+    let _ = system::reset_sigpipe();
     #[cfg(windows)]
     if atty::is(atty::Stream::Stdout) {
         if let Err(e) = ansi_term::enable_ansi_support() {
@@ -489,7 +547,11 @@ async fn run() -> Result<(), error::BendiniError> {
     );
 
     match args.cmd {
-        Command::List { .. } => commands::list::run(registry_client).await,
+        Command::List { format } => commands::list::functions(registry_client, format).await,
+
+        Command::ListVersions { name, format } => {
+            commands::list::versions(registry_client, &name, format).await
+        }
 
         Command::Register {
             manifest,

@@ -1,11 +1,12 @@
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     fs,
     io::Write,
     path::PathBuf,
     sync::{Arc, RwLock},
 };
 
+use either::Either;
 use futures::{Stream, StreamExt};
 use regex::Regex;
 use semver::{Version, VersionReq};
@@ -259,14 +260,8 @@ impl RegistryService {
             }),
         })
     }
-}
 
-#[tonic::async_trait]
-impl Registry for RegistryService {
-    async fn list(
-        &self,
-        list_request: tonic::Request<Filters>,
-    ) -> Result<tonic::Response<Functions>, tonic::Status> {
+    fn list(&self, filters: Filters, group_by_version: bool) -> Result<Functions, tonic::Status> {
         let reader = self.functions.read().map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
@@ -274,16 +269,15 @@ impl Registry for RegistryService {
             )
         })?;
 
-        let payload = list_request.into_inner();
-        let required_metadata = if payload.metadata.is_empty() {
+        let required_metadata = if filters.metadata.is_empty() {
             None
         } else {
-            Some(payload.metadata.clone())
+            Some(filters.metadata.clone())
         };
 
-        let name_filter = payload.name.unwrap_or_default();
+        let name_filter = filters.name;
 
-        let order = payload.order.unwrap_or_else(|| Ordering {
+        let order = filters.order.unwrap_or_else(|| Ordering {
             key: OrderingKey::NameVersion as i32,
             reverse: false,
             offset: 0,
@@ -292,7 +286,7 @@ impl Registry for RegistryService {
 
         let offset: usize = order.offset as usize;
         let limit: usize = order.limit as usize;
-        let version_req = payload
+        let version_req = filters
             .version_requirement
             .map(|vr| {
                 VersionReq::parse_compat(&vr.expression, semver::Compat::Npm).map_err(|e| {
@@ -303,28 +297,54 @@ impl Registry for RegistryService {
                 })
             })
             .map_or(Ok(None), |v| v.map(Some))?;
-        let mut filtered_functions = reader
-            .iter()
-            .filter(|func| {
-                (match name_filter.exact_match {
-                    true => func.name == name_filter.pattern,
-                    false => func.name.contains(&name_filter.pattern),
-                }) && version_req.as_ref().map_or(true, |ver_req| {
-                    let res = ver_req.matches(&func.version);
-                    debug!(
-                        self.logger,
-                        "Matching \"{}\" with \"{}\": {}", &ver_req, &func.version, res,
-                    );
-                    res
-                }) && required_metadata.as_ref().map_or(true, |filters| {
-                    filters.iter().all(|filter| {
-                        func.metadata
-                            .iter()
-                            .any(|(k, v)| filter.0 == k && (filter.1.is_empty() || filter.1 == v))
-                    })
-                })
+        let filtered_functions = reader.iter().filter(|func| {
+            (match group_by_version {
+                false => func.name == name_filter,
+                true => func.name.contains(&name_filter),
+            }) && version_req.as_ref().map_or(true, |ver_req| {
+                let res = ver_req.matches(&func.version);
+                debug!(
+                    self.logger,
+                    "Matching \"{}\" with \"{}\": {}", &ver_req, &func.version, res,
+                );
+                res
             })
-            .collect::<Vec<&Function>>();
+        });
+        let mut filtered_functions = (if group_by_version {
+            Either::Left(
+                filtered_functions
+                    .fold(
+                        HashMap::new(),
+                        |mut map: HashMap<String, &Function>, function| match map
+                            .entry(function.name.clone())
+                        {
+                            Entry::Occupied(mut entry) => {
+                                if entry.get().version < function.version {
+                                    entry.insert(function);
+                                }
+                                map
+                            }
+                            Entry::Vacant(entry) => {
+                                entry.insert(function);
+                                map
+                            }
+                        },
+                    )
+                    .into_values(),
+            )
+        } else {
+            Either::Right(filtered_functions)
+        })
+        .filter(|func| {
+            required_metadata.as_ref().map_or(true, |filters| {
+                filters.iter().all(|filter| {
+                    func.metadata
+                        .iter()
+                        .any(|(k, v)| filter.0 == k && (filter.1.is_empty() || filter.1 == v))
+                })
+            }) && func.publisher.email.contains(&filters.publisher_email)
+        })
+        .collect::<Vec<&Function>>();
 
         if OrderingKey::from_i32(order.key).is_none() {
             warn!(
@@ -340,7 +360,7 @@ impl Registry for RegistryService {
             },
         });
 
-        Ok(tonic::Response::new(Functions {
+        Ok(Functions {
             functions: if order.reverse {
                 filtered_functions
                     .iter()
@@ -357,7 +377,24 @@ impl Registry for RegistryService {
                     .filter_map(|f| self.get_function(*f).ok())
                     .collect::<Vec<_>>()
             },
-        }))
+        })
+    }
+}
+
+#[tonic::async_trait]
+impl Registry for RegistryService {
+    async fn list(
+        &self,
+        list_request: tonic::Request<Filters>,
+    ) -> Result<tonic::Response<Functions>, tonic::Status> {
+        RegistryService::list(self, list_request.into_inner(), true).map(tonic::Response::new)
+    }
+
+    async fn list_versions(
+        &self,
+        list_request: tonic::Request<firm_types::functions::Filters>,
+    ) -> Result<tonic::Response<firm_types::functions::Functions>, tonic::Status> {
+        RegistryService::list(self, list_request.into_inner(), false).map(tonic::Response::new)
     }
 
     async fn get(

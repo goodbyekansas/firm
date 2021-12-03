@@ -14,9 +14,8 @@ use firm_types::{
         execution_result::Result as ProtoResult,
         execution_server::Execution as ExecutionServiceTrait, registry_server::Registry,
         Attachment, AuthMethod, ExecutionError, ExecutionId, ExecutionParameters, ExecutionResult,
-        Filters, Function, FunctionOutputChunk, NameFilter, Ordering, OrderingKey,
-        Runtime as ProtoRuntime, RuntimeFilters, RuntimeList, Stream as ValueStream,
-        VersionRequirement,
+        Filters, Function, FunctionOutputChunk, Ordering, OrderingKey, Runtime as ProtoRuntime,
+        RuntimeFilters, RuntimeList, Stream as ValueStream, VersionRequirement,
     },
     stream::StreamExt,
     tonic,
@@ -146,10 +145,7 @@ impl ExecutionServiceTrait for ExecutionService {
         let function = self
             .registry
             .list(tonic::Request::new(Filters {
-                name: Some(NameFilter {
-                    pattern: payload.name.clone(),
-                    exact_match: true,
-                }),
+                name: payload.name.clone(),
                 version_requirement: Some(VersionRequirement {
                     expression: payload.version_requirement.clone(),
                 }),
@@ -160,6 +156,7 @@ impl ExecutionServiceTrait for ExecutionService {
                     offset: 0,
                     limit: 1,
                 }),
+                publisher_email: String::new(),
             }))
             .await?
             .into_inner()

@@ -631,16 +631,7 @@ impl storage::FunctionStorage for PostgresStorage {
             .query(
                 "select list_functions($1, $2, $3, $4, $5, $6, $7, $8)",
                 &[
-                    &filters
-                        .name
-                        .as_ref()
-                        .map(|n| n.pattern.clone())
-                        .unwrap_or_default(),
-                    &filters
-                        .name
-                        .as_ref()
-                        .map(|n| n.exact_match)
-                        .unwrap_or_default(),
+                    &filters.name,
                     &filters.metadata,
                     &(order.offset as i64),
                     &(order.limit as i64),
@@ -662,6 +653,55 @@ impl storage::FunctionStorage for PostgresStorage {
                                 Some(version_filters)
                             }
                         }),
+                    &filters.publisher_email,
+                ],
+            )
+            .await
+            .map_err(|e| {
+                storage::StorageError::BackendError(
+                    format!("Failed to list functions: {}", e).into(),
+                )
+            })
+            .and_then(|rows| {
+                rows.into_iter()
+                    .map(|row| row.get::<_, FunctionWithAttachments>(0).try_into())
+                    .collect()
+            })
+    }
+
+    async fn list_versions(
+        &self,
+        filters: &storage::Filters,
+    ) -> Result<Vec<storage::Function>, storage::StorageError> {
+        let order = filters.order.as_ref().cloned().unwrap_or_default();
+        self.get_connection()
+            .await?
+            .query(
+                "select list_versions($1, $2, $3, $4, $5, $6, $7, $8)",
+                &[
+                    &filters.name,
+                    &filters.metadata,
+                    &(order.offset as i64),
+                    &(order.limit as i64),
+                    &StringAdapter(order.key).to_string(),
+                    &order.reverse,
+                    &filters
+                        .version_requirement
+                        .as_ref()
+                        .map(|vr| {
+                            VersionRequirements::try_from(vr)
+                                .map_err(|e: String| storage::StorageError::BackendError(e.into()))
+                                .map(|vreq| vreq.0)
+                        })
+                        .transpose()?
+                        .and_then(|version_filters| {
+                            if version_filters.is_empty() {
+                                None
+                            } else {
+                                Some(version_filters)
+                            }
+                        }),
+                    &filters.publisher_email,
                 ],
             )
             .await
@@ -1216,10 +1256,19 @@ mod tests {
             // Test filtering
             let res = storage
                 .list(&storage::Filters {
-                    name: Some(storage::NameFilter {
-                        pattern: "A".to_owned(),
-                        ..Default::default()
-                    }),
+                    name: String::from("A"),
+                    ..Default::default()
+                })
+                .await;
+            assert!(res.is_ok());
+
+            let rows = res.unwrap();
+            assert_eq!(rows.len(), 1);
+
+            // publisher
+            let res = storage
+                .list(&storage::Filters {
+                    publisher_email: String::from("@sune.com"),
                     ..Default::default()
                 })
                 .await;
@@ -1231,10 +1280,7 @@ mod tests {
             // Test not finding
             let res = storage
                 .list(&storage::Filters {
-                    name: Some(storage::NameFilter {
-                        pattern: "B".to_owned(),
-                        ..Default::default()
-                    }),
+                    publisher_email: String::from("sune@suna.com"),
                     ..Default::default()
                 })
                 .await;
@@ -1243,13 +1289,10 @@ mod tests {
             let rows = res.unwrap();
             assert!(rows.is_empty());
 
-            // Test exact name match
+            // Test not finding publisher
             let res = storage
                 .list(&storage::Filters {
-                    name: Some(storage::NameFilter {
-                        pattern: "a".to_owned(),
-                        exact_match: true,
-                    }),
+                    name: String::from("B"),
                     ..Default::default()
                 })
                 .await;
@@ -1258,12 +1301,24 @@ mod tests {
             let rows = res.unwrap();
             assert!(rows.is_empty());
 
+            // Test versions (exact match on name)
+            let res = storage
+                .list_versions(&storage::Filters {
+                    name: String::from("a"),
+                    ..Default::default()
+                })
+                .await;
+            assert!(res.is_ok());
+
+            let rows = res.unwrap();
+            assert!(
+                rows.is_empty(),
+                "Expected exact name match on non-existing function to return nothing"
+            );
+
             let res = storage
                 .list(&storage::Filters {
-                    name: Some(storage::NameFilter {
-                        pattern: "Aaa".to_owned(),
-                        ..Default::default()
-                    }),
+                    name: String::from("Aaa"),
                     ..Default::default()
                 })
                 .await;
@@ -1431,13 +1486,12 @@ mod tests {
 
             let function2_1_1_1_id =
                 storage::FunctionId::from(&storage.insert(function2_1_1_1).await.unwrap());
-            let function2_1_0_0_id =
-                storage::FunctionId::from(&storage.insert(function2_1_0_0).await.unwrap());
+            storage::FunctionId::from(&storage.insert(function2_1_0_0).await.unwrap());
 
             let res = storage
                 .list(&storage::Filters {
                     order: Some(storage::Ordering {
-                        offset: 2,
+                        offset: 1,
                         limit: 2,
                         ..Default::default()
                     }),
@@ -1446,11 +1500,11 @@ mod tests {
                 .await;
             assert!(res.is_ok());
             let res = res.unwrap();
-            assert_eq!(res.len(), 2);
+            assert_eq!(res.len(), 1);
             assert_eq!(res.first().map(|f| f.name.as_ref()), Some("function2"));
             assert_eq!(
-                res.first().map(storage::FunctionId::from),
-                Some(function2_1_1_1_id)
+                res.first().map(storage::FunctionId::from).as_ref(),
+                Some(&function2_1_1_1_id)
             );
 
             // reverse
@@ -1466,10 +1520,12 @@ mod tests {
                 .await;
             assert!(res.is_ok());
             let res = res.unwrap();
+            assert_eq!(res.len(), 1);
             assert_eq!(res.first().map(|f| f.name.as_ref()), Some("function2"));
             assert_eq!(
                 res.first().map(storage::FunctionId::from),
-                Some(function2_1_0_0_id)
+                Some(function2_1_1_1_id),
+                "Expected reverse ordering to still return latest version (list reverses name sorting)"
             );
         });
 
@@ -1526,7 +1582,12 @@ mod tests {
             let _function2_1_2_0_id =
                 storage::FunctionId::from(&storage.insert(function2_1_2_0).await.unwrap());
 
-            let res = storage.list(&storage::Filters::default()).await;
+            let res = storage
+                .list_versions(&storage::Filters {
+                    name: String::from("function2"),
+                    ..Default::default()
+                })
+                .await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(
@@ -1584,7 +1645,8 @@ mod tests {
                 storage::FunctionId::from(&storage.insert(function2_1_10_0_jaws).await.unwrap());
 
             let res = storage
-                .list(&storage::Filters {
+                .list_versions(&storage::Filters {
+                    name: String::from("function2"),
                     order: Some(storage::Ordering {
                         limit: 3,
                         ..Default::default()
@@ -1782,10 +1844,11 @@ mod tests {
 
             // Exact match
             let mut filter = storage::Filters {
+                name: String::from("birb"),
                 version_requirement: Some(VersionReq::parse("=1.0.0").unwrap()),
                 ..Default::default()
             };
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 1);
@@ -1796,7 +1859,7 @@ mod tests {
 
             // Less than on full version
             filter.version_requirement = Some(VersionReq::parse("<1.2.0").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 3);
@@ -1807,7 +1870,7 @@ mod tests {
 
             // Less than on minor version
             filter.version_requirement = Some(VersionReq::parse("<1.10.0 >=1.0.0").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 4);
@@ -1818,7 +1881,7 @@ mod tests {
 
             // Less than on major version
             filter.version_requirement = Some(VersionReq::parse("<2.0.0").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(
@@ -1831,7 +1894,7 @@ mod tests {
 
             // Less or equal
             filter.version_requirement = Some(VersionReq::parse("<=1.1.1").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(
@@ -1841,7 +1904,7 @@ mod tests {
 
             // Greater
             filter.version_requirement = Some(VersionReq::parse(">1.1.1").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(
@@ -1851,7 +1914,7 @@ mod tests {
 
             // Greater or equal
             filter.version_requirement = Some(VersionReq::parse(">=1.1.1").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(
@@ -1861,7 +1924,7 @@ mod tests {
 
             // Pre release only on exact match
             filter.version_requirement = Some(VersionReq::parse("=1.2.0-beta").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 1);
@@ -1872,7 +1935,7 @@ mod tests {
 
             // ~
             filter.version_requirement = Some(VersionReq::parse("~1").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 5);
@@ -1882,7 +1945,7 @@ mod tests {
             );
 
             filter.version_requirement = Some(VersionReq::parse("~1.1").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 2);
@@ -1892,7 +1955,7 @@ mod tests {
             );
 
             filter.version_requirement = Some(VersionReq::parse("~1.1.0").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 2);
@@ -1903,7 +1966,7 @@ mod tests {
 
             // ^
             filter.version_requirement = Some(VersionReq::parse("^1.2.3").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 1);
@@ -1914,7 +1977,7 @@ mod tests {
 
             // *
             filter.version_requirement = Some(VersionReq::parse("1.*").unwrap());
-            let res = storage.list(&filter).await;
+            let res = storage.list_versions(&filter).await;
             assert!(res.is_ok());
             let res = res.unwrap();
             assert_eq!(res.len(), 5);

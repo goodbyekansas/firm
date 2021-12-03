@@ -127,6 +127,21 @@ macro_rules! function_data {
             {$($key => $value),*})
     }};
 
+    ($name:expr, $version:expr, $runtime_spec:expr, $code:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}, $email:expr) => {{
+        $crate::function_data!(
+            $name,
+            $version,
+            $runtime_spec,
+            $code,
+            ::std::collections::HashMap::new(),
+            ::std::collections::HashMap::new(),
+            ::std::collections::HashMap::new(),
+            "Someone",
+            $email,
+            [$($attach),*],
+            {$($key => $value),*})
+    }};
+
     ($name:expr,
      $version:expr,
      $runtime_spec:expr,
@@ -235,7 +250,11 @@ macro_rules! filters {
         $crate::filters!($name, $limit, $offset, {$($key => $value),*}, [])
     }};
 
-    ($name:expr, $limit:expr, $offset:expr, {$($key:expr => $value:expr),*}, [$($only_key:expr),*]) =>
+    ($name:expr, $limit:expr, $offset:expr, {$($key:expr => $value:expr),*}, [$($only_key:expr),*]) => {{
+        $crate::filters!($name, $limit, $offset, {$($key => $value),*}, [$($only_key),*], "")
+    }};
+
+    ($name:expr, $limit:expr, $offset:expr, {$($key:expr => $value:expr),*}, [$($only_key:expr),*], $publisher_email:expr) =>
     {{
         let mut metadata = ::std::collections::HashMap::new();
         $(
@@ -246,10 +265,7 @@ macro_rules! filters {
             metadata.insert(String::from($only_key), String::new());
          )*
         $crate::functions::Filters {
-            name: Some($crate::functions::NameFilter {
-                pattern: String::from($name),
-                exact_match: false,
-            }),
+            name: String::from($name),
             metadata: metadata,
             order: Some($crate::functions::Ordering {
                 reverse: false,
@@ -258,6 +274,7 @@ macro_rules! filters {
                 limit: $limit as u32,
             }),
             version_requirement: None,
+            publisher_email: String::from($publisher_email),
         }
     }};
 }

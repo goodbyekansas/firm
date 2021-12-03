@@ -9,11 +9,15 @@ use firm_types::{
     auth::RemoteAccessRequest,
     functions::{
         channel::Value, execution_result::Result as FunctionResult, Channel, ChannelSpec,
-        ChannelType, ExecutionResult, Function, Runtime, RuntimeSpec, Stream,
+        ChannelType, ExecutionResult, Function, Functions, Runtime, RuntimeSpec, Stream,
     },
 };
 use futures::{future::join, Future};
 use indicatif::MultiProgress;
+use serde::{
+    ser::{SerializeSeq, SerializeStruct},
+    Serialize, Serializer,
+};
 use tokio::task;
 
 const INDENT: &str = "  ";
@@ -35,12 +39,85 @@ pub trait DisplayExt<'a, T> {
     fn display_format(&'a self, format: DisplayFormat) -> Displayer<T>;
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum DisplayFormat {
-    // Short,
+    Short,
     Long,
-    // Full,
+    // Full, TODO
     Json,
+}
+
+impl Serialize for Displayer<'_, Function> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer
+            .serialize_struct("Function", if self.publisher.is_some() { 9 } else { 8 })?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("version", &self.version)?;
+        state.serialize_field(
+            "runtime",
+            &self
+                .runtime
+                .as_ref()
+                .unwrap_or(&RuntimeSpec {
+                    name: "n/a".to_string(),
+                    arguments: HashMap::default(),
+                    entrypoint: "n/a".to_string(),
+                })
+                .name,
+        )?;
+        state.serialize_field(
+            "created",
+            &Utc.timestamp(self.created_at as i64, 0)
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string(),
+        )?;
+        state.serialize_field("metadata", &self.metadata)?;
+        if let Some(p) = self.publisher.as_ref() {
+            state.serialize_field("publisher", &format!("{} <{}>", p.name, p.email))?;
+        }
+        state.serialize_field(
+            "required_inputs",
+            &self
+                .required_inputs
+                .iter()
+                .map(|(k, i)| (k.clone(), ChannelSpecSerializer(i.clone())))
+                .collect::<HashMap<String, ChannelSpecSerializer>>(),
+        )?;
+        state.serialize_field(
+            "optional_inputs",
+            &self
+                .optional_inputs
+                .iter()
+                .map(|(k, i)| (k.clone(), ChannelSpecSerializer(i.clone())))
+                .collect::<HashMap<String, ChannelSpecSerializer>>(),
+        )?;
+        state.serialize_field(
+            "outputs",
+            &self
+                .outputs
+                .iter()
+                .map(|(k, i)| (k.clone(), ChannelSpecSerializer(i.clone())))
+                .collect::<HashMap<String, ChannelSpecSerializer>>(),
+        )?;
+        state.end()
+    }
+}
+
+impl Serialize for Displayer<'_, Functions> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(self.functions.len()))?;
+        for e in self.functions.iter() {
+            SerializeSeq::serialize_element(&mut seq, &e.display())?;
+        }
+        seq.end()
+    }
 }
 
 impl<'a, U> DisplayExt<'a, U> for U {
@@ -92,104 +169,144 @@ where
     .0
 }
 
-// impl display of listed functions
-impl Display for Displayer<'_, Function> {
+fn fmt_json<T: Serialize>(o: &T, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    if atty::is(atty::Stream::Stdout) {
+        serde_json::to_string_pretty(o)
+    } else {
+        serde_json::to_string(o)
+    }
+    .map_err(|_| fmt::Error {})
+    .and_then(|s| writeln!(f, "{}", s))
+}
+
+impl Display for Displayer<'_, Functions> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.format == DisplayFormat::Json {
-            // TODO: return write!(f, "{}", self.serialize());
-            return Ok(());
-        }
-
-        writeln!(f, "{}", Green.paint(&self.name))?;
-        writeln!(f, "{}version: {}", INDENT, &self.version)?;
-
-        if self.format == DisplayFormat::Long {
-            writeln!(
-                f,
-                "{}runtime: {}",
-                INDENT,
-                self.runtime
-                    .as_ref()
-                    .unwrap_or(&RuntimeSpec {
-                        name: "n/a".to_string(),
-                        arguments: HashMap::default(),
-                        entrypoint: "n/a".to_string(),
-                    })
-                    .name
-            )?;
-
-            writeln!(
-                f,
-                "{}codeUrl: {}",
-                INDENT,
-                self.code
-                    .as_ref()
-                    .and_then(|c| c.url.clone())
-                    .map_or_else(|| String::from("n/a"), |code| code.url)
-            )?;
-
-            write!(
-                f,
-                "{}required inputs:{}",
-                INDENT,
-                self.required_inputs.display()
-            )?;
-            write!(
-                f,
-                "{}optional inputs:{}",
-                INDENT,
-                self.optional_inputs.display()
-            )?;
-            write!(f, "{}outputs:{}", INDENT, self.outputs.display())?;
-
-            if self.metadata.is_empty() {
-                writeln!(f, "{}metadata: n/a", INDENT)?;
-            } else {
-                writeln!(f, "{}metadata:", INDENT)?;
-                self.metadata
-                    .clone()
-                    .iter()
-                    .try_for_each(|(x, y)| writeln!(f, "{}{}:{}", INDENT.repeat(2), x, y))?;
-            }
-            writeln!(
-                f,
-                "{}published by: {}<{}>",
-                INDENT,
-                self.publisher
-                    .as_ref()
-                    .map(|p| p.name.as_str())
-                    .unwrap_or("Unknown"),
-                self.publisher
-                    .as_ref()
-                    .map(|p| p.email.as_str())
-                    .unwrap_or("un@known.com")
-            )
-        } else {
-            Ok(())
+        match self.format {
+            DisplayFormat::Json => fmt_json(self, f),
+            _ => self
+                .functions
+                .iter()
+                .try_for_each(|func| writeln!(f, "{}", func.display_format(self.format.clone()))),
         }
     }
 }
 
-impl Display for Displayer<'_, HashMap<String, ChannelSpec>> {
+// impl display of listed functions
+impl Display for Displayer<'_, Function> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_empty() {
-            writeln!(f, " n/a")
-        } else {
-            writeln!(f)?;
-            self.iter().try_for_each(|(name, channel_spec)| {
+        match self.format {
+            DisplayFormat::Long => {
+                writeln!(f, "{}", Green.paint(&self.name))?;
+                writeln!(f, "{}version: {}", INDENT, &self.version)?;
                 writeln!(
                     f,
-                    "{tab}{name}:{type}{description}",
-                    tab = INDENT.repeat(2),
-                    r#type = channel_spec.r#type.display(),
-                    name = name,
-                    description = if channel_spec.description.is_empty() {
-                        String::new()
-                    } else {
-                        format!(":{}", channel_spec.description)
-                    }
-                )
-            })
+                    "{}runtime: {}",
+                    INDENT,
+                    self.runtime
+                        .as_ref()
+                        .unwrap_or(&RuntimeSpec {
+                            name: "n/a".to_string(),
+                            arguments: HashMap::default(),
+                            entrypoint: "n/a".to_string(),
+                        })
+                        .name
+                )?;
+
+                writeln!(
+                    f,
+                    "{}codeUrl: {}",
+                    INDENT,
+                    self.code
+                        .as_ref()
+                        .and_then(|c| c.url.clone())
+                        .map_or_else(|| String::from("n/a"), |code| code.url)
+                )?;
+
+                write!(
+                    f,
+                    "{}required inputs:{}",
+                    INDENT,
+                    self.required_inputs.display()
+                )?;
+                write!(
+                    f,
+                    "{}optional inputs:{}",
+                    INDENT,
+                    self.optional_inputs.display()
+                )?;
+                write!(f, "{}outputs:{}", INDENT, self.outputs.display())?;
+
+                if self.metadata.is_empty() {
+                    writeln!(f, "{}metadata: n/a", INDENT)?;
+                } else {
+                    writeln!(f, "{}metadata:", INDENT)?;
+                    self.metadata
+                        .clone()
+                        .iter()
+                        .try_for_each(|(x, y)| writeln!(f, "{}{}: {}", INDENT.repeat(2), x, y))?;
+                }
+
+                if let Some(p) = self.publisher.as_ref() {
+                    writeln!(f, "{}published by: {}<{}>", INDENT, p.name, p.email)
+                } else {
+                    Ok(())
+                }
+            }
+            DisplayFormat::Short => {
+                writeln!(f, "{}", Green.paint(&self.name))?;
+                writeln!(f, "{}version: {}", INDENT, &self.version)
+            }
+            DisplayFormat::Json => fmt_json(self, f),
+        }
+    }
+}
+
+impl Serialize for ChannelSpecSerializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("ChannelSpec", 2)?;
+        state.serialize_field("description", &self.0.description)?;
+        state.serialize_field("type", &self.0.r#type.display().to_string())?;
+        state.end()
+    }
+}
+
+pub struct ChannelSpecSerializer(ChannelSpec);
+
+impl Display for Displayer<'_, HashMap<String, ChannelSpec>> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.format {
+            DisplayFormat::Short => Ok(()),
+            DisplayFormat::Long => {
+                if self.is_empty() {
+                    writeln!(f, " none")
+                } else {
+                    writeln!(f)?;
+                    self.iter().try_for_each(|(name, channel_spec)| {
+                        writeln!(
+                            f,
+                            "{tab}{name}[{type}]{description}",
+                            tab = INDENT.repeat(2),
+                            r#type = channel_spec.r#type.display(),
+                            name = name,
+                            description = if channel_spec.description.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" - {}", channel_spec.description)
+                            }
+                        )
+                    })
+                }
+            }
+            DisplayFormat::Json => fmt_json(
+                &self
+                    .iter()
+                    .map(|(k, v)| (k.clone(), ChannelSpecSerializer(v.clone())))
+                    .collect::<HashMap<String, ChannelSpecSerializer>>(),
+                f,
+            ),
         }
     }
 }

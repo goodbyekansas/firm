@@ -57,6 +57,28 @@ impl Registry for RegistryService {
             .map_err(|e| e.into())
             .await
     }
+
+    async fn list_versions(
+        &self,
+        request: tonic::Request<firm_types::functions::Filters>,
+    ) -> Result<tonic::Response<firm_types::functions::Functions>, tonic::Status> {
+        self.function_storage
+            .list_versions(&storage::Filters::try_from(request.into_inner())?)
+            .and_then(|functions| async move {
+                futures::future::try_join_all(functions.into_iter().map(|f| async move {
+                    f.resolve_function(
+                        self.function_storage.as_ref(),
+                        self.attachment_storage.as_ref(),
+                    )
+                    .await
+                }))
+                .await
+            })
+            .map_ok(|functions| tonic::Response::new(Functions { functions }))
+            .map_err(|e| e.into())
+            .await
+    }
+
     async fn get(
         &self,
         request: tonic::Request<FunctionId>,
@@ -96,6 +118,7 @@ impl Registry for RegistryService {
             .await
             .map(tonic::Response::new)
     }
+
     async fn register_attachment(
         &self,
         request: tonic::Request<AttachmentData>,
@@ -119,6 +142,7 @@ impl Registry for RegistryService {
                 }))
             })
     }
+
     async fn upload_streamed_attachment(
         &self,
         _request: tonic::Request<tonic::Streaming<AttachmentStreamUpload>>,

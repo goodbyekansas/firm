@@ -1048,6 +1048,7 @@ dependencies = [
  "bb8",
  "bb8-postgres",
  "config",
+ "either",
  "firm-types",
  "futures",
  "lazy_static",

@@ -54,11 +54,7 @@ impl TryFrom<Filters> for storage::Filters {
 
     fn try_from(req: Filters) -> Result<Self, Self::Error> {
         Ok(Self {
-            name: req.name.map(|nf| storage::NameFilter {
-                pattern: nf.pattern,
-                exact_match: nf.exact_match,
-            }),
-
+            name: req.name,
             metadata: req
                 .metadata
                 .into_iter()
@@ -84,6 +80,7 @@ impl TryFrom<Filters> for storage::Filters {
                     })
                 })
                 .transpose()?,
+            publisher_email: req.publisher_email,
         })
     }
 }
