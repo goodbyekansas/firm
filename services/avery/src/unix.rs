@@ -42,6 +42,20 @@ pub fn global_config_path() -> Option<PathBuf> {
     Some(PathBuf::from("/etc/avery"))
 }
 
+fn user_runtime_path() -> Option<PathBuf> {
+    match std::env::var("XDG_RUNTIME_DIR").ok() {
+        Some(p) => Some(PathBuf::from(p).join("avery.sock")),
+        None => get_current_username()
+            .map(|username| {
+                format!(
+                    "/tmp/avery-{username}.sock",
+                    username = username.to_string_lossy()
+                )
+            })
+            .map(PathBuf::from),
+    }
+}
+
 pub fn user_config_path() -> Option<PathBuf> {
     match std::env::var("XDG_CONFIG_HOME").ok() {
         Some(p) => Some(PathBuf::from(p)),
@@ -123,16 +137,12 @@ pub async fn create_listener(
         .map_err(|e| format!("Failed to convert Unix listener from std: {}", e))
         .map(|uds| (uds, None))
     } else {
-        let socket_path = format!(
-            "/tmp/avery-{username}.sock",
-            username = get_current_username()
-                .ok_or_else(|| "Failed to determine current unix user name.".to_owned())?
-                .to_string_lossy()
-        );
+        let socket_path = user_runtime_path().ok_or("Failed to determine user socket path.")?;
 
         info!(
             log,
-            "👨⚖️ The Firm is listening for requests on socket {}", &socket_path
+            "👨⚖️ The Firm is listening for requests on socket {}",
+            &socket_path.display()
         );
 
         UnixListener::bind(&socket_path)

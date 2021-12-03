@@ -588,13 +588,17 @@ impl AuthService {
                 .and_then(|oidc_client| async move {
                     match token_cache.get_as_token(&provider_scope_key) {
                         // We're done. Got a cached token.
-                        Some(token) => {
+                        Some(token)
+                            if (token.claim("email").is_some() && token.claim("name").is_some()) =>
+                        {
                             debug!(logger, "Found cached token");
                             Ok(token)
                         }
-
                         // We currently do not have a token cached and need to create one
-                        None => {
+                        t => {
+                            if t.is_some() {
+                                debug!(logger, "Found token without userprofile information. Generating new token.");
+                            }
                             debug!(logger, "Obtaining token");
                             oidc_client
                                 .authenticate()
@@ -625,6 +629,7 @@ impl AuthService {
                 })
                 .await?
             }
+
             IdentityProvider::Username => username_provider().map(|name| Identity {
                 email: format!("{}@unknown", &name),
                 name,
