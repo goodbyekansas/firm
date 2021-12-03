@@ -115,6 +115,7 @@ dependencies = [
  "base64 0.13.0",
  "chrono",
  "config",
+ "either",
  "firm-types",
  "flate2",
  "futures",

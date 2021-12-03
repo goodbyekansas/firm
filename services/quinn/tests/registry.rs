@@ -1,5 +1,5 @@
 use firm_types::{
-    functions::{registry_server::Registry, Filters, FunctionId, NameFilter, Ordering},
+    functions::{registry_server::Registry, Filters, FunctionId, Ordering},
     tonic,
 };
 use quinn::{config, registry::RegistryService, storage::OrderingKey};
@@ -309,22 +309,56 @@ fn offset_and_limit() {
 fn sorting() {
     // yer a wizard harry
     let registry = registry_with_memory_storage!();
-
-    futures::executor::block_on(
-        registry.register(tonic::Request::new(function_data!("my-name-a", "1.0.0"))),
-    )
+    // ($name:expr, $version:expr, $runtime_spec:expr, $code:expr, [$($attach:expr),*], {$($key:expr => $value:expr),*}, $email:expr)
+    futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
+        "my-name-a",
+        "1.0.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "legs.mcrunfast@people.com"
+    ))))
     .unwrap();
-    futures::executor::block_on(
-        registry.register(tonic::Request::new(function_data!("my-name-a", "1.0.1"))),
-    )
+    futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
+        "my-name-a",
+        "1.0.1",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "legs.mcrunfast@people.com"
+    ))))
     .unwrap();
-    futures::executor::block_on(
-        registry.register(tonic::Request::new(function_data!("my-name-b", "1.0.2"))),
-    )
+    futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
+        "my-name-a",
+        "1.0.2",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "slab.bulkhhead@people.com"
+    ))))
     .unwrap();
-    futures::executor::block_on(
-        registry.register(tonic::Request::new(function_data!("my-name-c", "1.1.0"))),
-    )
+    futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
+        "my-name-b",
+        "1.0.2",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "legs.mcrunfast@people.com"
+    ))))
+    .unwrap();
+    futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
+        "my-name-c",
+        "1.1.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "slab.bulkhhead@people.com"
+    ))))
     .unwrap();
 
     // No filter specified
@@ -332,78 +366,131 @@ fn sorting() {
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
-    assert_eq!(4, functions.len());
+    assert_eq!(
+        3,
+        functions.len(),
+        "Expected to get 3/5 functions without filter since versions are grouped"
+    );
     assert_eq!("my-name-a", functions.first().unwrap().name);
-    assert_eq!("1.0.1", functions.first().unwrap().version);
+    assert_eq!(
+        "1.0.2",
+        functions.first().unwrap().version,
+        "Expected 1.0.2 because that is the latest version by any publisher"
+    );
 
     // reverse
-    let list_request = futures::executor::block_on(registry.list(tonic::Request::new(Filters {
-        name: Some(NameFilter {
-            pattern: "my-name-a".to_owned(),
-            exact_match: true,
-        }),
-        metadata: HashMap::new(),
-        order: Some(Ordering {
-            offset: 0,
-            limit: 10,
-            reverse: true,
-            key: OrderingKey::NameVersion as i32,
-        }),
+    let list_request =
+        futures::executor::block_on(registry.list_versions(tonic::Request::new(Filters {
+            name: String::from("my-name-a"),
+            metadata: HashMap::new(),
+            order: Some(Ordering {
+                offset: 0,
+                limit: 10,
+                reverse: true,
+                key: OrderingKey::NameVersion as i32,
+            }),
 
-        version_requirement: None,
-    })));
+            version_requirement: None,
+            publisher_email: String::from("legs.mcrunfast@people.com"),
+        })));
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
-    assert_eq!(2, functions.len());
-    assert_eq!("1.0.0", functions.first().unwrap().version);
+    assert_eq!(
+        2,
+        functions.len(),
+        "Legs McRunfast should have 2 functions in the registry called my-name-a"
+    );
+    assert_eq!(
+        "1.0.0",
+        functions.first().unwrap().version,
+        "With reversed 1.0.0 is expected since it's Legs' first version"
+    );
 
     // not reverse
-    let list_request = futures::executor::block_on(registry.list(tonic::Request::new(Filters {
-        name: Some(NameFilter {
-            pattern: "my-name-a".to_owned(),
-            exact_match: true,
-        }),
-        metadata: HashMap::new(),
-        order: Some(Ordering {
-            offset: 0,
-            limit: 10,
-            reverse: false,
-            key: OrderingKey::NameVersion as i32,
-        }),
+    let list_request =
+        futures::executor::block_on(registry.list_versions(tonic::Request::new(Filters {
+            name: String::from("my-name-a"),
+            metadata: HashMap::new(),
+            order: Some(Ordering {
+                offset: 0,
+                limit: 10,
+                reverse: false,
+                key: OrderingKey::NameVersion as i32,
+            }),
 
-        version_requirement: None,
-    })));
+            version_requirement: None,
+            publisher_email: String::from("legs.mcrunfast@people.com"),
+        })));
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
-    assert_eq!(2, functions.len());
-    assert_eq!("1.0.1", functions.first().unwrap().version);
+    assert_eq!(
+        2,
+        functions.len(),
+        "Legs McRunfast should have 2 functions in the registry called my-name-a"
+    );
+    assert_eq!(
+        "1.0.1",
+        functions.first().unwrap().version,
+        "Without reversed 1.0.1 is expected since it's Legs' latest version"
+    );
 
-    // testing swedish idioms
+    // testing partial name (list) match and reverse
     let registry = registry_with_memory_storage!();
-    futures::executor::block_on(
-        registry.register(tonic::Request::new(function_data!("sune-a", "1.0.0"))),
-    )
+    futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
+        "sune-a",
+        "1.0.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "smash.limpjaw@employee.com"
+    ))))
     .unwrap();
-    futures::executor::block_on(
-        registry.register(tonic::Request::new(function_data!("sune-a", "2.1.0"))),
-    )
+    futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
+        "sune-a",
+        "2.1.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "smash.limpjaw@employee.com"
+    ))))
     .unwrap();
-    futures::executor::block_on(
-        registry.register(tonic::Request::new(function_data!("sune-b", "2.0.0"))),
-    )
+    futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
+        "sune-b",
+        "1.1.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "smash.limpjaw@employee.com"
+    ))))
     .unwrap();
-    futures::executor::block_on(
-        registry.register(tonic::Request::new(function_data!("sune-b", "1.1.0"))),
-    )
+    futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
+        "sune-b",
+        "1.0.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "smash.limpjaw@employee.com"
+    ))))
+    .unwrap();
+    futures::executor::block_on(registry.register(tonic::Request::new(function_data!(
+        "sune-c",
+        "7.0.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "brick.hardmeat@employee.com"
+    ))))
     .unwrap();
 
     let list_request = futures::executor::block_on(registry.list(tonic::Request::new(Filters {
-        name: Some(NameFilter {
-            pattern: "sune".to_owned(),
-            exact_match: true,
-        }),
+        name: String::from("sune"),
         metadata: HashMap::new(),
         order: Some(Ordering {
             offset: 0,
@@ -413,11 +500,22 @@ fn sorting() {
         }),
 
         version_requirement: None,
+        publisher_email: String::from("smash.limpjaw@employee.com"),
     })));
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
-    assert_eq!(4, functions.len());
+    assert_eq!(
+        2,
+        functions.len(),
+        "Expected 2/3 functions because Brick Hardmeat published the latest sune-c"
+    );
     let first_function = functions.first().unwrap();
-    assert_eq!("sune-b", first_function.name);
-    assert_eq!("1.1.0", first_function.version);
+    assert_eq!(
+        "sune-b", first_function.name,
+        "Reversed sorting of functions should but sune-b at the front"
+    );
+    assert_eq!(
+        "1.1.0", first_function.version,
+        "Reversed sorting of functions should put 1.1.0 first"
+    );
 }

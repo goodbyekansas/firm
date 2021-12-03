@@ -4,7 +4,7 @@ use firm_types::{
     functions::{
         execution_client::ExecutionClient, execution_result::Result as FunctionResult,
         registry_client::RegistryClient, ChannelSpec, ChannelType, ExecutionParameters, Filters,
-        NameFilter, Ordering, OrderingKey, Stream, VersionRequirement,
+        Ordering, OrderingKey, Stream, VersionRequirement,
     },
     stream::ToChannel,
     tonic::{
@@ -148,12 +148,11 @@ where
             _ => Err(BendiniError::FailedToParseFunction(function_id)),
         }?;
 
+    // use `list_versions` here since we want to run
+    // a matching version of one specific function
     let input_values = registry_client
-        .list(tonic::Request::new(Filters {
-            name: Some(NameFilter {
-                pattern: function_name.to_owned(),
-                exact_match: true,
-            }),
+        .list_versions(tonic::Request::new(Filters {
+            name: function_name.to_owned(),
             version_requirement: Some(VersionRequirement {
                 expression: function_version.to_owned(),
             }),
@@ -164,6 +163,7 @@ where
                 reverse: false,
                 key: OrderingKey::NameVersion as i32,
             }),
+            publisher_email: String::new(),
         }))
         .await?
         .into_inner()

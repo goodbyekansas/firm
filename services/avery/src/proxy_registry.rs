@@ -4,19 +4,23 @@ use firm_types::{
     auth::authentication_server::Authentication,
     auth::AcquireTokenParameters,
     functions::{
-        registry_client::RegistryClient, registry_server::Registry, Functions, Ordering,
+        registry_client::RegistryClient, registry_server::Registry, AttachmentData,
+        AttachmentHandle, AttachmentStreamUpload, Filters, Function, Functions, Nothing, Ordering,
         OrderingKey,
     },
-    tonic::{self, codegen::InterceptedService, service::Interceptor, Status},
+    tonic::{
+        self,
+        codegen::InterceptedService,
+        metadata::AsciiMetadataValue,
+        service::Interceptor,
+        transport::{ClientTlsConfig, Endpoint, Error as TonicTransportError},
+        Code, Request, Response, Status, Streaming,
+    },
 };
 use futures::{stream, StreamExt, TryStreamExt};
 use slog::{o, warn, Logger};
 use thiserror::Error;
 use tokio::runtime::Handle;
-use tonic::{
-    metadata::AsciiMetadataValue,
-    transport::{ClientTlsConfig, Endpoint},
-};
 use tonic_middleware::HttpStatusInterceptor;
 use url::Url;
 
@@ -52,7 +56,7 @@ pub struct ExternalRegistry {
 #[derive(Error, Debug)]
 pub enum ProxyRegistryError {
     #[error("Connection Error: {0}")]
-    ConnectionError(#[from] tonic::transport::Error),
+    ConnectionError(#[from] TonicTransportError),
 
     #[error("Invalid URI: {0}")]
     InvalidUri(String),
@@ -60,8 +64,11 @@ pub enum ProxyRegistryError {
     #[error("Invalid Oauth token: {0}")]
     InvalidOauthToken(String),
 
-    #[error("Conflicting version name pair: {0}")] //TODO send info on registry names
-    ConflictingFunctions(String),
+    #[error(r#"Conflicting version name pair: "{0}" in registries "{1}" and "{2}""#)]
+    ConflictingFunctions(String, String, String),
+
+    #[error("Version parse error: {0}")]
+    VersionParseError(String),
 }
 
 #[derive(Debug, Clone)]
@@ -71,8 +78,13 @@ struct AcquireAuthInterceptor {
     endpoint: Endpoint,
 }
 
+pub enum ListFunction {
+    Functions,
+    Versions,
+}
+
 impl Interceptor for AcquireAuthInterceptor {
-    fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+    fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
         /*
          * TODO: Block on calls are really ugly. Unfortunately Interceptor does
          * not take async block and we need to use async functionality.
@@ -197,46 +209,122 @@ impl ProxyRegistry {
             log,
         })
     }
-}
 
-/// Implementation of Registry as a proxy
-///
-/// This basically forwards all calls to an internal registry except
-/// `list` and `get` where external registries and internal is combined
-#[tonic::async_trait]
-impl Registry for ProxyRegistry {
-    async fn list(
+    fn try_insert_function(
         &self,
-        request: firm_types::tonic::Request<firm_types::functions::Filters>,
-    ) -> Result<
-        firm_types::tonic::Response<firm_types::functions::Functions>,
-        firm_types::tonic::Status,
-    > {
-        let payload = request.into_inner();
+        mut hashmap: HashMap<String, Function>,
+        function: Function,
+    ) -> Result<HashMap<String, Function>, ProxyRegistryError> {
+        match hashmap.entry(function.name.clone()) {
+            Entry::Occupied(mut existing) => {
+                let version = semver::Version::parse(&function.version)
+                    .map_err(|e| ProxyRegistryError::VersionParseError(e.to_string()))?;
+                match semver::Version::parse(&existing.get().version) {
+                    Ok(existing_version) if existing_version < version => {
+                        existing.insert(function);
+                        Ok(hashmap)
+                    }
+                    Ok(existing_version) if existing_version == version => {
+                        match self.conflict_resolution {
+                            ConflictResolutionMethod::Error => {
+                                Err(ProxyRegistryError::ConflictingFunctions(
+                                    existing.key().clone(),
+                                    function
+                                        .metadata
+                                        .get("registry")
+                                        .unwrap_or(&String::from("unknown"))
+                                        .to_owned(),
+                                    existing
+                                        .get()
+                                        .metadata
+                                        .get("registry")
+                                        .unwrap_or(&String::from("unknown"))
+                                        .to_owned(),
+                                ))
+                            }
+                            ConflictResolutionMethod::UsePriority => Ok(hashmap),
+                        }
+                    }
+                    _ => Ok(hashmap),
+                }
+            }
+            Entry::Vacant(vacant) => {
+                vacant.insert(function);
+                Ok(hashmap)
+            }
+        }
+    }
+
+    fn try_insert_version(
+        &self,
+        mut hashmap: HashMap<String, Function>,
+        function: Function,
+    ) -> Result<HashMap<String, Function>, ProxyRegistryError> {
+        match hashmap.entry(format!("{}:{}", function.name, function.version)) {
+            Entry::Occupied(existing) => match self.conflict_resolution {
+                ConflictResolutionMethod::Error => Err(ProxyRegistryError::ConflictingFunctions(
+                    existing.key().clone(),
+                    function
+                        .metadata
+                        .get("registry")
+                        .unwrap_or(&String::from("unknown"))
+                        .to_owned(),
+                    existing
+                        .get()
+                        .metadata
+                        .get("registry")
+                        .unwrap_or(&String::from("unknown"))
+                        .to_owned(),
+                )),
+                ConflictResolutionMethod::UsePriority => Ok(hashmap),
+            },
+            Entry::Vacant(vacant) => {
+                vacant.insert(function);
+                Ok(hashmap)
+            }
+        }
+    }
+
+    pub async fn list(
+        &self,
+        filters: Filters,
+        list_function: &ListFunction,
+    ) -> Result<Functions, tonic::Status> {
+        let insert_function = match list_function {
+            ListFunction::Functions => ProxyRegistry::try_insert_function,
+            ListFunction::Versions => ProxyRegistry::try_insert_version,
+        };
         let mut functions = stream::iter(
             self.connections
                 .iter()
-                .map(|connection| (connection.clone(), payload.clone())),
+                .map(|connection| (connection.clone(), filters.clone())),
         )
-        .then(|(mut connection, payload)| async move {
-            connection
-                .client
-                .list(tonic::Request::new(payload))
-                .await
-                .map(|functions| (connection.name.clone(), functions))
+        .then(|(mut connection, filters)| async move {
+            match list_function {
+                ListFunction::Functions => connection
+                    .client
+                    .list(tonic::Request::new(filters))
+                    .await
+                    .map(|functions| (connection.name.clone(), functions)),
+                ListFunction::Versions => connection
+                    .client
+                    .list_versions(tonic::Request::new(filters))
+                    .await
+                    .map(|functions| (connection.name.clone(), functions)),
+            }
         })
         .chain(
             stream::once(
                 self.internal_registry
-                    .list(tonic::Request::new(payload.clone())),
+                    .list(tonic::Request::new(filters.clone())),
             )
             .map(|f| f.map(|functions| (String::from("internal"), functions))),
         )
-        .try_collect::<Vec<(String, tonic::Response<firm_types::functions::Functions>)>>()
+        .try_collect::<Vec<(String, tonic::Response<Functions>)>>()
         .await?
         .into_iter()
         .map(|(name, mut functions)| {
-            // insert metadata
+            // insert registry into metadata
             functions
                 .get_mut()
                 .functions
@@ -250,23 +338,10 @@ impl Registry for ProxyRegistry {
             functions
         })
         .flat_map(|functions| functions.into_inner().functions)
-        .try_fold(HashMap::new(), |mut hashmap, function| {
-            match hashmap.entry(format!("{}:{}", function.name, function.version)) {
-                Entry::Occupied(existing) => match self.conflict_resolution {
-                    ConflictResolutionMethod::Error => Err(
-                        ProxyRegistryError::ConflictingFunctions(existing.key().clone()),
-                    ),
-                    ConflictResolutionMethod::UsePriority => Ok(hashmap),
-                },
-                Entry::Vacant(vacant) => {
-                    vacant.insert(function);
-                    Ok(hashmap)
-                }
-            }
-        })
+        .try_fold(HashMap::new(), |map, func| insert_function(self, map, func))
         .map_err(|e| tonic::Status::already_exists(e.to_string()))?
-        .into_iter()
-        .map(|(_, function)| {
+        .into_values()
+        .map(|function| {
             (
                 // The version is only used for sorting so if something is wrong with it,
                 // jus sort it last. This error is also very unlikely since the version is parsed
@@ -280,12 +355,12 @@ impl Registry for ProxyRegistry {
                 function,
             )
         })
-        .collect::<Vec<(semver::Version, firm_types::functions::Function)>>();
+        .collect::<Vec<(semver::Version, Function)>>();
 
         // redo sorting, offset and limit since we do not know
         // anything about the relational ordering between different
         // registries
-        let order = payload.order.unwrap_or_else(|| Ordering {
+        let order = filters.order.unwrap_or_else(|| Ordering {
             key: OrderingKey::NameVersion as i32,
             reverse: false,
             offset: 0,
@@ -312,7 +387,7 @@ impl Registry for ProxyRegistry {
             }
         });
 
-        Ok(tonic::Response::new(Functions {
+        Ok(Functions {
             functions: if order.reverse {
                 functions
                     .into_iter()
@@ -329,16 +404,35 @@ impl Registry for ProxyRegistry {
                     .take(limit)
                     .collect::<Vec<_>>()
             },
-        }))
+        })
+    }
+}
+
+/// Implementation of Registry as a proxy
+///
+/// This basically forwards all calls to an internal registry except
+/// `list` and `get` where external registries and internal is combined
+#[tonic::async_trait]
+impl Registry for ProxyRegistry {
+    async fn list(&self, request: Request<Filters>) -> Result<Response<Functions>, Status> {
+        ProxyRegistry::list(self, request.into_inner(), &ListFunction::Functions)
+            .await
+            .map(tonic::Response::new)
+    }
+
+    async fn list_versions(
+        &self,
+        request: Request<Filters>,
+    ) -> Result<Response<Functions>, Status> {
+        ProxyRegistry::list(self, request.into_inner(), &ListFunction::Versions)
+            .await
+            .map(Response::new)
     }
 
     async fn get(
         &self,
-        request: firm_types::tonic::Request<firm_types::functions::FunctionId>,
-    ) -> Result<
-        firm_types::tonic::Response<firm_types::functions::Function>,
-        firm_types::tonic::Status,
-    > {
+        request: Request<firm_types::functions::FunctionId>,
+    ) -> Result<Response<Function>, Status> {
         let payload = request.into_inner();
 
         let res = stream::iter(
@@ -349,43 +443,56 @@ impl Registry for ProxyRegistry {
         .then(|(mut connection, payload)| async move {
             connection
                 .client
-                .get(tonic::Request::new(payload))
+                .get(Request::new(payload))
                 .await
                 .map(|functions| (connection.name.clone(), functions))
         })
         .chain(
-            stream::once(
-                self.internal_registry
-                    .get(tonic::Request::new(payload.clone())),
-            )
-            .map(|f| f.map(|functions| (String::from("internal"), functions))),
+            stream::once(self.internal_registry.get(Request::new(payload.clone())))
+                .map(|f| f.map(|functions| (String::from("internal"), functions))),
         )
-        .collect::<Vec<Result<(String, tonic::Response<firm_types::functions::Function>), tonic::Status>>>()
+        .collect::<Vec<Result<(String, Response<Function>), Status>>>()
         .await
         .into_iter()
-        .filter(|v| !matches!(v, Err(e) if e.code() == tonic::Code::NotFound))
-        .collect::<Result<Vec<(String, tonic::Response<firm_types::functions::Function>)>, tonic::Status>>()?
+        .filter(|v| !matches!(v, Err(e) if e.code() == Code::NotFound))
+        .collect::<Result<Vec<(String, Response<Function>)>, Status>>()?
         .into_iter()
         .map(|(registry_name, response)| {
             let mut r = response.into_inner();
             r.metadata.insert("registry".to_owned(), registry_name);
             r
         })
-        .try_fold(HashMap::new(), |mut hashmap, function| {
-            match hashmap.entry(format!("{}:{}", function.name, function.version)) {
+        .try_fold(
+            HashMap::new(),
+            |mut hashmap: HashMap<String, Function>, function| match hashmap
+                .entry(format!("{}:{}", function.name, function.version))
+            {
                 Entry::Occupied(existing) => match self.conflict_resolution {
-                    ConflictResolutionMethod::Error => Err(
-                        ProxyRegistryError::ConflictingFunctions(existing.key().clone()),
-                    ),
+                    ConflictResolutionMethod::Error => {
+                        Err(ProxyRegistryError::ConflictingFunctions(
+                            existing.key().clone(),
+                            function
+                                .metadata
+                                .get("registry")
+                                .unwrap_or(&String::from("unknown"))
+                                .to_owned(),
+                            existing
+                                .get()
+                                .metadata
+                                .get("registry")
+                                .unwrap_or(&String::from("unknown"))
+                                .to_owned(),
+                        ))
+                    }
                     ConflictResolutionMethod::UsePriority => Ok(hashmap),
                 },
                 Entry::Vacant(vacant) => {
                     vacant.insert(function);
                     Ok(hashmap)
                 }
-            }
-        })
-        .map_err(|e| tonic::Status::already_exists(e.to_string()))?
+            },
+        )
+        .map_err(|e| Status::already_exists(e.to_string()))?
         .into_iter()
         .map(|(_, v)| v)
         .next()
@@ -400,33 +507,22 @@ impl Registry for ProxyRegistry {
 
     async fn register(
         &self,
-        request: firm_types::tonic::Request<firm_types::functions::FunctionData>,
-    ) -> Result<
-        firm_types::tonic::Response<firm_types::functions::Function>,
-        firm_types::tonic::Status,
-    > {
+        request: Request<firm_types::functions::FunctionData>,
+    ) -> Result<Response<Function>, Status> {
         self.internal_registry.register(request).await
     }
 
     async fn register_attachment(
         &self,
-        request: firm_types::tonic::Request<firm_types::functions::AttachmentData>,
-    ) -> Result<
-        firm_types::tonic::Response<firm_types::functions::AttachmentHandle>,
-        firm_types::tonic::Status,
-    > {
+        request: Request<AttachmentData>,
+    ) -> Result<Response<AttachmentHandle>, Status> {
         self.internal_registry.register_attachment(request).await
     }
 
     async fn upload_streamed_attachment(
         &self,
-        request: firm_types::tonic::Request<
-            firm_types::tonic::Streaming<firm_types::functions::AttachmentStreamUpload>,
-        >,
-    ) -> Result<
-        firm_types::tonic::Response<firm_types::functions::Nothing>,
-        firm_types::tonic::Status,
-    > {
+        request: Request<Streaming<AttachmentStreamUpload>>,
+    ) -> Result<Response<Nothing>, Status> {
         self.internal_registry
             .upload_streamed_attachment(request)
             .await

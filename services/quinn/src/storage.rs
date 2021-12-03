@@ -92,12 +92,6 @@ pub struct FunctionAttachmentData {
     pub signature: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Default)]
-pub struct NameFilter {
-    pub pattern: String,
-    pub exact_match: bool,
-}
-
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Ordering {
     pub key: OrderingKey,
@@ -107,10 +101,11 @@ pub struct Ordering {
 }
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct Filters {
-    pub name: Option<NameFilter>,
+    pub name: String,
     pub version_requirement: Option<semver::VersionReq>,
     pub order: Option<Ordering>,
     pub metadata: HashMap<String, Option<String>>,
+    pub publisher_email: String,
 }
 
 impl Default for Ordering {
@@ -181,6 +176,7 @@ pub trait FunctionStorage: Send + Sync {
     async fn get(&self, id: &FunctionId) -> Result<Function, StorageError>;
     async fn get_attachment(&self, id: &Uuid) -> Result<FunctionAttachment, StorageError>;
     async fn list(&self, filters: &Filters) -> Result<Vec<Function>, StorageError>;
+    async fn list_versions(&self, filters: &Filters) -> Result<Vec<Function>, StorageError>;
 }
 
 pub trait AttachmentStorage: Send + Sync + std::fmt::Debug {

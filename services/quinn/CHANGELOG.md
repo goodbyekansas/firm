@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Quinn stores publisher, with name and email
+- Implementation of ListVersions endpoint
+- Added publisher email filter for List and ListVersion
+
+### Changed
+- Publisher table added, without migrating existing data
 
 ## [1.0.0] - 2021-07-03
 

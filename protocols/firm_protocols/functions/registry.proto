@@ -4,36 +4,59 @@ package firm_protocols.functions;
 
 import "firm_protocols/functions/functions.proto";
 
+/**
+ * Function registry is a searchable of published functions.
+ */
 service Registry {
+  /**
+   * List the latest versions of functions matching the search criteria.
+   */
   rpc List(Filters) returns (functions.Functions);
+  /**
+   * List versions of a specific function, matching the criteria.
+   */
+  rpc ListVersions(Filters) returns (functions.Functions);
+  /**
+   * Get exactly one function, matching the name and version.
+   */
   rpc Get(FunctionId) returns (functions.Function);
+  /**
+   * Register a new function.
+   */
   rpc Register(FunctionData) returns (functions.Function);
+  /**
+   * Register an attachment. Attachments can be associated with functions when registering.
+   */
   rpc RegisterAttachment(AttachmentData) returns (AttachmentHandle);
-  // TODO remove this endpoint, all attachments should be up/downloaded over http
+  // TODO evaluate removing this endpoint, all attachments should be up/downloaded over http
   rpc UploadStreamedAttachment(stream AttachmentStreamUpload) returns (Nothing);
 }
 
 
 message Nothing {}
 
-
+/**
+ * Filters for List and ListVersions
+ */
 message Filters {
-  NameFilter name = 1;
+  /**
+   * The name to match against, on List this is a substring match; on ListVersions
+   * this is an exact name.
+   */
+  string name = 1;
+  // A semver version requirement to match
   VersionRequirement version_requirement = 2;
+  // A Hashmap of key, value pairs to match against. An empty field matches anything.
   map<string, string> metadata = 3;
   Ordering order = 4;
+  // Substring match on publisher email
+  string publisher_email = 5;
 }
 
 
 message FunctionId {
   string name = 1;
   string version = 2;
-}
-
-
-message NameFilter {
-  string pattern = 1;
-  bool exact_match = 2;
 }
 
 
@@ -50,6 +73,8 @@ message Ordering {
 }
 
 
+// ListVersion sorts by version and List sorts by name, these could be broken up if more
+// keys are needed
 enum OrderingKey { NAME_VERSION = 0; }
 
 

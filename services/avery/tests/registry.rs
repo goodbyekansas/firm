@@ -7,7 +7,7 @@ use url::Url;
 use firm_types::{
     functions::{
         registry_server::Registry, AttachmentId, AttachmentStreamUpload, Filters, FunctionId,
-        NameFilter, Ordering, OrderingKey,
+        Ordering, OrderingKey,
     },
     tonic,
 };
@@ -170,6 +170,76 @@ fn test_list_metadata_key_filtering() {
 }
 
 #[test]
+fn test_publisher_filtering() {
+    let fr = registry!();
+
+    futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
+        "random",
+        "1.0.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "lasse-gurra@aktersnurra.se"
+    ))))
+    .unwrap();
+    futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
+        "random",
+        "1.1.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "aaa@aktersnurra.se"
+    ))))
+    .unwrap();
+    futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
+        "bandom",
+        "1.1.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "lasse-gurra@aktersnurra.se"
+    ))))
+    .unwrap();
+    futures::executor::block_on(fr.register(tonic::Request::new(function_data!(
+        "bandom",
+        "1.0.0",
+        runtime_spec!(),
+        None,
+        [],
+        {},
+        "aaa@aktersnurra.se"
+    ))))
+    .unwrap();
+
+    // Test filtering with publisher
+    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!(
+        "",
+        100,
+        0,
+        {},
+        [],
+        "lasse-gurra"
+    ))));
+
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(1, functions.len());
+    assert_eq!("bandom", functions.first().unwrap().name);
+
+    let list_request = futures::executor::block_on(fr.list_versions(tonic::Request::new(
+        filters!("random", 100, 0, {}, [], "lasse-gurra"),
+    )));
+
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(1, functions.len());
+    assert_eq!("1.0.0-dev", functions.first().unwrap().version);
+}
+
+#[test]
 fn test_offset_and_limit() {
     let fr = registry!();
     let count: usize = 10;
@@ -231,29 +301,39 @@ fn test_sorting() {
     .unwrap();
 
     // No filter specified
+    // listing functions
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(filters!())));
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
-    assert_eq!(4, functions.len());
+    assert_eq!(3, functions.len());
+    assert_eq!("my-name-a", functions.first().unwrap().name);
+    assert_eq!("1.0.1-dev", functions.first().unwrap().version);
+
+    // listing versions
+    let list_request =
+        futures::executor::block_on(fr.list_versions(tonic::Request::new(filters!("my-name-a"))));
+
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(2, functions.len());
     assert_eq!("my-name-a", functions.first().unwrap().name);
     assert_eq!("1.0.1-dev", functions.first().unwrap().version);
 
     // Reverse version sorting
-    let list_request = futures::executor::block_on(fr.list(tonic::Request::new(Filters {
-        name: Some(NameFilter {
-            pattern: "my-name-a".to_owned(),
-            exact_match: true,
-        }),
-        metadata: HashMap::new(),
-        order: Some(Ordering {
-            offset: 0,
-            limit: 10,
-            reverse: true,
-            key: OrderingKey::NameVersion as i32,
-        }),
-        version_requirement: None,
-    })));
+    let list_request =
+        futures::executor::block_on(fr.list_versions(tonic::Request::new(Filters {
+            name: "my-name-a".to_owned(),
+            metadata: HashMap::new(),
+            order: Some(Ordering {
+                offset: 0,
+                limit: 10,
+                reverse: true,
+                key: OrderingKey::NameVersion as i32,
+            }),
+            version_requirement: None,
+            publisher_email: String::new(),
+        })));
 
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
@@ -278,11 +358,9 @@ fn test_sorting() {
         fr.register(tonic::Request::new(function_data!("sune-b", "1.1.0"))),
     )
     .unwrap();
+    // list functions
     let list_request = futures::executor::block_on(fr.list(tonic::Request::new(Filters {
-        name: Some(NameFilter {
-            pattern: "sune".to_owned(),
-            exact_match: false,
-        }),
+        name: "sune".to_owned(),
         metadata: HashMap::new(),
         order: Some(Ordering {
             key: OrderingKey::NameVersion as i32,
@@ -291,13 +369,35 @@ fn test_sorting() {
             limit: 10,
         }),
         version_requirement: None,
+        publisher_email: String::new(),
     })));
     assert!(list_request.is_ok());
     let functions = list_request.unwrap().into_inner().functions;
-    assert_eq!(4, functions.len());
+    assert_eq!(2, functions.len());
     let first_function = functions.first().unwrap();
     assert_eq!("sune-b", first_function.name);
-    assert_eq!("1.1.0-dev", first_function.version);
+    assert_eq!("2.0.0-dev", first_function.version);
+
+    // list versions
+    let list_request =
+        futures::executor::block_on(fr.list_versions(tonic::Request::new(Filters {
+            name: "sune-a".to_owned(),
+            metadata: HashMap::new(),
+            order: Some(Ordering {
+                key: OrderingKey::NameVersion as i32,
+                reverse: true,
+                offset: 0,
+                limit: 10,
+            }),
+            version_requirement: None,
+            publisher_email: String::new(),
+        })));
+    assert!(list_request.is_ok());
+    let functions = list_request.unwrap().into_inner().functions;
+    assert_eq!(2, functions.len());
+    let first_function = functions.first().unwrap();
+    assert_eq!("sune-a", first_function.name);
+    assert_eq!("1.0.0-dev", first_function.version);
 }
 
 #[test]
