@@ -82,7 +82,9 @@ where
         config.auth.identity,
         config.auth.key_store,
         config.auth.allow,
-        crate::system::user_data_path(),
+        crate::system::user_data_path().ok_or_else(|| {
+            String::from("Failed to determine user data path for storing generated keys")
+        })?,
         log.new(o!("service" => "auth")),
     )
     .await?;

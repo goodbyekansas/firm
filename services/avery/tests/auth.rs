@@ -22,6 +22,7 @@ const PUBLIC_KEY: &str = r#"-----BEGIN PUBLIC KEY-----
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEhaadwO6uGY7Z4p/aQ6EjM6aSHM0vjuVJHijOlq/B4IRyP5qBnVmJGxqlD53diU5s/GG6RqF89insKUUOJ6OHMQ==
 -----END PUBLIC KEY-----"#;
 
+#[derive(Debug)]
 struct FakeKeyStore {
     key_data: Vec<u8>,
 }
@@ -517,7 +518,7 @@ async fn test_get_identity() {
         },
         ConfigKeyStore::None,
         AllowConfig::default(),
-        Some(tempdir().unwrap().into_path()),
+        tempdir().unwrap().into_path(),
         null_logger!(),
     )
     .await;
@@ -533,11 +534,11 @@ async fn test_get_identity() {
         }
     );
 
-    // Test empty identity
+    // Test default (should use the default identity provider "user")
     let service = auth_service!();
     let identity = service.get_identity(tonic::Request::new(())).await;
     assert!(
-        identity.is_err(),
-        "Expected empty identity from default auth service"
+        identity.is_ok(),
+        "Expected default identity from default auth service"
     )
 }

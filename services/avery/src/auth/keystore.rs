@@ -1,12 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use futures::TryFutureExt;
 use serde::Deserialize;
 use slog::{debug, Logger};
 use thiserror::Error;
 use tokio::sync::RwLock;
-
-use crate::config::AuthConfig;
 
 #[derive(Error, Debug)]
 pub enum KeyStoreError {
@@ -21,7 +19,7 @@ pub enum KeyStoreError {
 }
 
 #[async_trait::async_trait]
-pub trait KeyStore: Send + Sync {
+pub trait KeyStore: Send + Sync + std::fmt::Debug {
     async fn get(&self, id: &str) -> Result<Vec<u8>, KeyStoreError>;
     async fn set(&self, id: &str, key_data: &[u8]) -> Result<(), KeyStoreError>;
 }
@@ -35,21 +33,26 @@ pub struct SimpleKeyStore {
     url: String,
     token_source: Arc<RwLock<super::TokenStore>>,
     logger: Logger,
-    scope_mappings: HashMap<String, AuthConfig>,
+}
+
+impl std::fmt::Debug for SimpleKeyStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SimpleKeyStore")
+            .field("url", &self.url)
+            .finish()
+    }
 }
 
 impl SimpleKeyStore {
     pub(super) fn new(
         url: &str,
         token_source: Arc<RwLock<super::TokenStore>>,
-        scope_mappings: HashMap<String, AuthConfig>,
         logger: Logger,
     ) -> Self {
         Self {
             url: url.to_owned(),
             token_source,
             logger,
-            scope_mappings,
         }
     }
 }
@@ -82,7 +85,7 @@ impl KeyStore for SimpleKeyStore {
                 self.token_source
                     .write()
                     .await
-                    .acquire_token(&scope, &self.scope_mappings, &self.logger)
+                    .acquire_token(&scope, &self.logger)
                     .await
                     .map_err(move |e| {
                         KeyStoreError::AuthenticationError(format!(
@@ -90,7 +93,7 @@ impl KeyStore for SimpleKeyStore {
                             scope, e
                         ))
                     })
-                    .map(|token| (url, token.token().to_owned()))
+                    .map(|token| (url, token.as_mut().token().to_owned()))
             })
         })
         .and_then(|(url, token)| {
@@ -140,7 +143,7 @@ impl KeyStore for SimpleKeyStore {
             self.token_source
                 .write()
                 .await
-                .acquire_token(&scope, &self.scope_mappings, &self.logger)
+                .acquire_token(&scope, &self.logger)
                 .await
                 .map_err(move |e| {
                     KeyStoreError::AuthenticationError(format!(
@@ -148,7 +151,7 @@ impl KeyStore for SimpleKeyStore {
                         scope, e
                     ))
                 })
-                .map(|token| (url, token.token().to_owned()))
+                .map(|token| (url, token.as_mut().token().to_owned()))
         })
         .and_then(|(url, token)| {
             futures::future::ready(String::from_utf8(key_data.to_vec()))
@@ -184,6 +187,7 @@ impl KeyStore for SimpleKeyStore {
     }
 }
 
+#[derive(Debug)]
 pub struct NullKeyStore {}
 
 #[async_trait::async_trait]
