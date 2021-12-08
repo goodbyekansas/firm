@@ -23,8 +23,8 @@ use slog::{debug, info, o, warn, Logger};
 use tokio::{sync::RwLock, time::Instant};
 
 pub use self::keystore::{KeyStore, KeyStoreError};
-use self::{aliasmap::AliasMap, oidc::Oidc};
-use crate::config::{AuthConfig, IdentityProvider, OidcProvider};
+use self::{aliasmap::AliasMap, internal::SelfSignedTokenError, oidc::Oidc};
+use crate::config::{self, AuthConfig, IdentityProvider, OidcProvider};
 
 mod aliasmap;
 mod expiremap;
@@ -54,7 +54,6 @@ pub struct AuthService {
     logger: Logger,
     token_store: Arc<RwLock<TokenStore>>,
     key_store: Arc<dyn KeyStore>,
-    scope_mappings: Arc<HashMap<String, AuthConfig>>,
     access_list: ExpireMap<String, ()>,
     pending_access_requests: ExpireMap<uuid::Uuid, PendingAccessRequest>,
     identity: Option<Identity>,
@@ -72,7 +71,6 @@ impl Default for AuthService {
             logger: slog::Logger::root(slog::Discard, slog::o!()),
             token_store: Arc::new(RwLock::new(TokenStore::default())),
             key_store: Arc::new(keystore::NullKeyStore {}),
-            scope_mappings: Arc::new(HashMap::new()),
             access_list: ExpireMap::default(),
             pending_access_requests: ExpireMap::default(),
             identity: Option::default(),
@@ -91,9 +89,9 @@ impl AuthenticationSource for AuthService {
         self.token_store
             .write()
             .await
-            .acquire_token(scope, &self.scope_mappings, &self.logger)
+            .acquire_token(scope, &self.logger)
             .await
-            .map(|t| t.token().to_owned())
+            .map(|t| t.as_mut().token().to_owned())
     }
 }
 
@@ -101,16 +99,123 @@ impl AuthenticationSource for AuthService {
 struct TokenStore {
     token_cache: TokenCache,
     token_providers: TokenProviders,
+    identity: Option<Identity>,
+    identity_provider_config: IdentityProvider,
 }
 
 impl TokenStore {
+    async fn get_identity<F>(
+        &mut self,
+        username_provider: F,
+        logger: &Logger,
+    ) -> Result<Identity, String>
+    where
+        F: FnOnce() -> Option<String>,
+    {
+        let identity = match self.identity.take() {
+            Some(i) => Ok(i),
+            None => {
+                let provider_scope_key = self.identity_provider_config.scope_key();
+                match &self.identity_provider_config {
+                    IdentityProvider::Oidc { provider } => {
+                        let logger = logger.new(o!(
+                            "provider-type" => "oidc",
+                            "provider-name" => provider.clone(),
+                            "scope-key" => provider_scope_key.clone()
+                        ));
+                        futures::future::ready(
+                            self.token_providers
+                                .oidc
+                                .get(provider)
+                                .cloned()
+                                .ok_or_else(|| format!("OIDC provider \"{}\" not found", provider)),
+                        )
+                        .and_then(|oidc_client| {
+                            let token_cache = &mut self.token_cache;
+                            async move {
+                                match token_cache.get_as_token(&provider_scope_key) {
+                                    // We're done. Got a cached token.
+                                    Some(token)
+                                        if (token.claim("email").is_some()
+                                            && token.claim("name").is_some()) =>
+                                    {
+                                        debug!(logger, "Found cached token");
+                                        Ok(token)
+                                    }
+                                    // We currently do not have a token cached and need to create one
+                                    t => {
+                                        if t.is_some() {
+                                            debug!(
+                                                logger,
+                                                "Found token without user profile information. \
+                                             Generating new token."
+                                            );
+                                        }
+                                        debug!(logger, "Obtaining token");
+                                        oidc_client
+                                            .authenticate()
+                                            .map_err(|e| e.to_string())
+                                            .map_ok(move |token| {
+                                                token_cache
+                                                    .insert(
+                                                        &provider_scope_key,
+                                                        TypedToken::Oidc(token),
+                                                    )
+                                                    .as_mut()
+                                            })
+                                            .await
+                                    }
+                                }
+                                .map(|token| {
+                                    match (
+                                        token
+                                            .claim("name")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_owned()),
+                                        token
+                                            .claim("email")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_owned()),
+                                    ) {
+                                        (Some(name), Some(email)) => Some(Identity { name, email }),
+                                        _ => None,
+                                    }
+                                })
+                            }
+                        })
+                        .await?
+                    }
+
+                    IdentityProvider::Username => username_provider().map(|name| Identity {
+                        email: format!("{}@unknown", &name),
+                        name,
+                    }),
+                    IdentityProvider::UsernameSuffix { suffix } => {
+                        username_provider().map(|name| Identity {
+                            email: format!("{}{}", &name, &suffix),
+                            name,
+                        })
+                    }
+                    IdentityProvider::Override { name, email } => Some(Identity {
+                        name: name.to_owned(),
+                        email: email.to_owned(),
+                    }),
+                }
+                .ok_or_else(|| "Failed to determine identity".to_owned())
+            }
+        }?;
+
+        self.identity = Some(identity.clone());
+        Ok(identity)
+    }
+
     async fn acquire_token(
         &mut self,
         scope: &str,
-        scope_mappings: &HashMap<String, AuthConfig>,
         logger: &Logger,
-    ) -> Result<&mut dyn Token, String> {
-        match self.token_cache.entry(scope) {
+    ) -> Result<&mut TypedToken, String> {
+        let identity = self.get_identity(crate::system::user, logger).await?;
+        let typed_token = match self.token_cache.entry(scope) {
             std::collections::hash_map::Entry::Occupied(mut e) => {
                 debug!(
                     logger,
@@ -128,17 +233,25 @@ impl TokenStore {
                 );
                 e.insert(
                     self.token_providers
-                        .get_token(scope_mappings, scope)
+                        .get_token(
+                            &identity,
+                            scope,
+                            logger.new(o! { "scope" => "get-new-token" }),
+                        )
                         .await?,
                 )
             }
-        }
-        .as_mut()
+        };
+
         // always do refresh, the refresh methods of the providers
-        // are responsible for checking if it is needed
-        .refresh(logger)
-        .await
-        .map_err(|err| format!("Failed to refresh token for scope \"{}\": {}", scope, err))
+        // are responsible for checking if it is needed.
+        typed_token
+            .as_mut()
+            .refresh(logger)
+            .await
+            .map_err(|err| format!("Failed to refresh token for scope \"{}\": {}", scope, err))?;
+
+        Ok(typed_token)
     }
 }
 
@@ -173,6 +286,7 @@ impl Drop for TokenCache {
                             .filter(|(_, v)| match v {
                                 TypedToken::Oidc(_) => true,
                                 TypedToken::Internal(_) => false,
+                                TypedToken::InternalWithPublicKey { .. } => false,
                             })
                             .collect::<HashMap<&String, &TypedToken>>(),
                     )
@@ -285,42 +399,128 @@ impl Default for TokenCache {
 }
 
 #[derive(Debug, Default)]
+struct SelfSignedGenerator {
+    inner: Option<internal::TokenGenerator>,
+    key_path: PathBuf,
+}
+
+impl SelfSignedGenerator {
+    pub fn new(key_path: &Path) -> Self {
+        Self {
+            inner: None,
+            key_path: key_path.to_owned(),
+        }
+    }
+
+    fn create_self_signed_generator(
+        keystore_path: &Path,
+        logger: Logger,
+    ) -> Result<(bool, internal::TokenGenerator), String> {
+        let keystore_path = keystore_path.join("keys");
+
+        std::fs::create_dir_all(&keystore_path)
+            .map_err(|e| {
+                format!(
+                    "Failed to create keystore directory at \"{}\": {}",
+                    &keystore_path.display(),
+                    e
+                )
+            })
+            .and_then(|_| {
+                set_keyfolder_permissions(&keystore_path)
+                    .map_err(|e| format!("Failed to set permissions on keystore directory: {}", e))
+            })
+            .and_then(|_| {
+                let private_key_path = keystore_path.join("id_ecdsa.pem");
+                let public_key_path = keystore_path.join("id_ecdsa_pub.pem");
+                if private_key_path.exists() {
+                    info!(
+                        logger,
+                        "Using token signing private key from: {}",
+                        private_key_path.display()
+                    );
+                    internal::TokenGeneratorBuilder::new()
+                        .with_ecdsa_private_key_from_file(&private_key_path)
+                        .build()
+                        .map_err(|e| e.to_string())
+                        .map(|token_gen| (false, token_gen))
+                } else {
+                    internal::TokenGeneratorBuilder::new()
+                        .build()
+                        .map_err(|e| e.to_string())
+                        .and_then(|tg| {
+                            tg.save_keys(&private_key_path, &public_key_path)
+                                .map_err(|e| e.to_string())?;
+                            info!(
+                                logger,
+                                "Saved generated token signing keypair in {} and {}",
+                                private_key_path.display(),
+                                public_key_path.display()
+                            );
+                            Ok((true, tg))
+                        })
+                }
+                .map(|(new_key, tg)| (new_key, tg))
+            })
+    }
+
+    async fn generate<'a>(
+        &'a mut self,
+        subject: &'a str,
+        audience: &'a str,
+        logger: Logger,
+    ) -> Result<(internal::JwtToken, Option<Vec<u8>>), internal::SelfSignedTokenError> {
+        let (upload, inner) = match self.inner.take() {
+            None => Self::create_self_signed_generator(&self.key_path, logger)
+                .map_err(SelfSignedTokenError::GenericTokenGenerationError)?,
+            Some(inner) => (false, inner),
+        };
+
+        let res = inner
+            .generate(subject, audience)
+            .map(|t| (t, upload.then(|| inner.public_key()).flatten()));
+        self.inner = Some(inner);
+        res
+    }
+}
+
+#[derive(Debug, Default)]
 struct TokenProviders {
     oidc: HashMap<String, Oidc>,
-    self_signed: Option<internal::TokenGenerator>,
+    self_signed: SelfSignedGenerator,
     self_signed_with_file: HashMap<PathBuf, internal::TokenGenerator>,
+    scope_mappings: HashMap<String, AuthConfig>,
 }
 
 impl TokenProviders {
-    async fn get_token(
-        &self,
-        scope_mappings: &HashMap<String, AuthConfig>,
-        scope: &str,
+    async fn get_token<'a>(
+        &'a mut self,
+        identity: &'a Identity,
+        scope: &'a str,
+        logger: Logger,
     ) -> Result<TypedToken, String> {
-        match scope_mappings.get(scope) {
-            Some(AuthConfig::Oidc { provider }) => {
-                futures::future::ready(self.oidc.get(provider).ok_or_else(|| {
-                    format!("Oidc provider \"{}\" not found.", provider)
-                }))
-                .and_then(|oidc_client| {
-                    oidc_client
-                        .authenticate()
-                        .map_err(|e| e.to_string())
-                })
-                .await
-                .map(TypedToken::Oidc)
-            }
+        match self.scope_mappings.get(scope) {
+            Some(AuthConfig::Oidc { provider }) => futures::future::ready(
+                self.oidc
+                    .get(provider)
+                    .ok_or_else(|| format!("Oidc provider \"{}\" not found.", provider)),
+            )
+            .and_then(|oidc_client| oidc_client.authenticate().map_err(|e| e.to_string()))
+            .await
+            .map(TypedToken::Oidc),
             Some(AuthConfig::SelfSigned) | None => self
                 .self_signed
-                .as_ref()
-                .ok_or_else(|| {
-                    format!(
-                        "Scope mappings specify to use a self-signed token for scope \"{}\" but none has been configured",
-                        scope
-                    )
-                })
-                .and_then(|generator| generator.generate(scope).map_err(|e| e.to_string()))
-                .map(TypedToken::Internal),
+                .generate(
+                    &identity.email,
+                    scope,
+                    logger.new(o! { "scope" => "generate-self-signed" }),
+                )
+                .map_err(|e| e.to_string())
+                .await
+                .map(|(token, key_to_upload)| TypedToken::InternalWithPublicKey {
+                    token,
+                    public_key: key_to_upload,
+                }),
             Some(AuthConfig::KeyFile { path }) => self
                 .self_signed_with_file
                 .get(path)
@@ -332,7 +532,7 @@ impl TokenProviders {
                 })
                 .and_then(|generator| {
                     generator
-                        .generate(scope)
+                        .generate(&identity.email, scope)
                         .map_err(|e| e.to_string())
                 })
                 .map(TypedToken::Internal),
@@ -363,6 +563,12 @@ pub enum TypedToken {
 
     #[serde(skip)]
     Internal(internal::JwtToken),
+
+    #[serde(skip)]
+    InternalWithPublicKey {
+        token: internal::JwtToken,
+        public_key: Option<Vec<u8>>,
+    },
 }
 
 impl<'a> AsMut<dyn Token + 'a> for TypedToken {
@@ -370,6 +576,10 @@ impl<'a> AsMut<dyn Token + 'a> for TypedToken {
         match self {
             TypedToken::Oidc(token) => token,
             TypedToken::Internal(token) => token,
+            TypedToken::InternalWithPublicKey {
+                token,
+                public_key: _,
+            } => token,
         }
     }
 }
@@ -428,108 +638,63 @@ impl AuthService {
         oidc_providers: HashMap<String, OidcProvider>,
         auth_scopes: HashMap<String, AuthConfig>,
         identity_provider: IdentityProvider,
-        key_store_config: crate::config::KeyStore,
-        access_config: crate::config::AllowConfig,
-        keystore_path: Option<PathBuf>,
+        key_store_config: config::KeyStore,
+        access_config: config::AllowConfig,
+        keystore_path: PathBuf,
         logger: Logger,
     ) -> Result<Self, String> {
-        let mut token_cache = TokenCache::new(
-            Self::create_alias_map(&auth_scopes, &identity_provider),
-            logger.new(o!("scope" => "token-cache")),
-        )
-        .await;
-
-        let oidc_providers = oidc_providers
-            .into_iter()
-            .map(|(key, value)| {
-                (
-                    key.clone(),
-                    Oidc::new(&value, logger.new(o!("scope" => "oidc", "host" => key))),
-                )
-            })
-            .collect::<HashMap<String, Oidc>>();
-
-        let identity = Self::get_identity(
-            identity_provider,
-            &oidc_providers,
-            &mut token_cache,
-            crate::system::user,
-            logger.new(o!("scope" => "get-identity")),
-        )
-        .await?;
-
-        let self_signed_with_file = auth_scopes
-            .iter()
-            .filter_map(|(_, value)| match value {
-                AuthConfig::KeyFile { path } => Some(
-                    internal::TokenGeneratorBuilder::new(&identity.email)
-                        .with_rsa_private_key_from_file(path)
-                        .build()
-                        .map(|token_generator| (path.to_owned(), token_generator)),
-                ),
-                _ => None,
-            })
-            .collect::<Result<HashMap<_, _>, internal::SelfSignedTokenError>>()
-            .map_err(|e| e.to_string())?;
-
-        let (new_key, self_signed) = Self::create_self_signed_generator(
-            &identity.email,
-            keystore_path,
-            logger.new(o!("scope" => "token-generator-creation")),
-        )?;
-
         let token_store = Arc::new(RwLock::new(TokenStore {
-            token_cache,
+            token_cache: TokenCache::new(
+                Self::create_alias_map(&auth_scopes, &identity_provider),
+                logger.new(o!("scope" => "token-cache")),
+            )
+            .await,
             token_providers: TokenProviders {
-                oidc: oidc_providers,
-                self_signed: Some(self_signed),
-                self_signed_with_file,
+                oidc: oidc_providers
+                    .into_iter()
+                    .map(|(key, value)| {
+                        (
+                            key.clone(),
+                            Oidc::new(&value, logger.new(o!("scope" => "oidc", "host" => key))),
+                        )
+                    })
+                    .collect::<HashMap<String, Oidc>>(),
+                self_signed: SelfSignedGenerator::new(&keystore_path),
+                self_signed_with_file: auth_scopes
+                    .iter()
+                    .filter_map(|(_, value)| match value {
+                        AuthConfig::KeyFile { path } => Some(
+                            internal::TokenGeneratorBuilder::new()
+                                .with_rsa_private_key_from_file(path)
+                                .build()
+                                .map(|token_generator| (path.to_owned(), token_generator)),
+                        ),
+                        _ => None,
+                    })
+                    .collect::<Result<HashMap<_, _>, internal::SelfSignedTokenError>>()
+                    .map_err(|e| e.to_string())?,
+                scope_mappings: auth_scopes,
             },
+            identity: None,
+            identity_provider_config: identity_provider,
         }));
 
         let key_store = match key_store_config {
-            crate::config::KeyStore::Simple { url } => Arc::new(keystore::SimpleKeyStore::new(
+            config::KeyStore::Simple { url } => Arc::new(keystore::SimpleKeyStore::new(
                 &url,
                 token_store.clone(),
-                auth_scopes.clone(),
                 logger.new(o!("scope" => "key-store", "type" => "simple", "url" => url.clone())),
             )),
-            crate::config::KeyStore::None => {
-                Arc::new(keystore::NullKeyStore {}) as Arc<dyn KeyStore>
-            }
+            config::KeyStore::None => Arc::new(keystore::NullKeyStore {}) as Arc<dyn KeyStore>,
         };
-
-        // upload the newly generated internal key
-        if let Some(public_key_path) = new_key {
-            futures::future::ready(std::fs::read(&public_key_path).map_err(|e| {
-                format!(
-                    "Failed to read public key file at {}: {}",
-                    public_key_path.display(),
-                    e
-                )
-            }))
-            .and_then(|key_content| {
-                let ks = &key_store;
-                let audience = &identity.email;
-                let logger = &logger;
-                async move {
-                    debug!(logger, "Uploading key store data");
-                    ks.set(audience, key_content.as_ref())
-                        .map_err(|e| e.to_string())
-                        .await
-                }
-            })
-            .await?;
-        }
 
         Ok(Self {
             key_store,
             token_store,
-            scope_mappings: Arc::new(auth_scopes),
             logger,
             access_list: access_config.users.into_iter().collect(),
             pending_access_requests: ExpireMap::default(),
-            identity: Some(identity),
+            identity: None,
         })
     }
 
@@ -561,144 +726,6 @@ impl AuthService {
             )
             .into()
     }
-
-    async fn get_identity<'a, F>(
-        identity_provider: IdentityProvider,
-        oidc_providers: &'a HashMap<String, Oidc>,
-        token_cache: &'a mut TokenCache,
-        username_provider: F,
-        logger: Logger,
-    ) -> Result<Identity, String>
-    where
-        F: FnOnce() -> Option<String>,
-    {
-        let provider_scope_key = identity_provider.scope_key();
-        match identity_provider {
-            IdentityProvider::Oidc { provider } => {
-                let logger = logger.new(o!(
-                    "provider-type" => "oidc",
-                    "provider-name" => provider.clone(),
-                    "scope-key" => provider_scope_key.clone()
-                ));
-                futures::future::ready(
-                    oidc_providers
-                        .get(&provider)
-                        .ok_or_else(|| format!("OIDC provider \"{}\" not found", provider)),
-                )
-                .and_then(|oidc_client| async move {
-                    match token_cache.get_as_token(&provider_scope_key) {
-                        // We're done. Got a cached token.
-                        Some(token)
-                            if (token.claim("email").is_some() && token.claim("name").is_some()) =>
-                        {
-                            debug!(logger, "Found cached token");
-                            Ok(token)
-                        }
-                        // We currently do not have a token cached and need to create one
-                        t => {
-                            if t.is_some() {
-                                debug!(logger, "Found token without userprofile information. Generating new token.");
-                            }
-                            debug!(logger, "Obtaining token");
-                            oidc_client
-                                .authenticate()
-                                .map_err(|e| e.to_string())
-                                .map_ok(move |token| {
-                                    token_cache
-                                        .insert(&provider_scope_key, TypedToken::Oidc(token))
-                                        .as_mut()
-                                })
-                                .await
-                        }
-                    }
-                    .map(|token| {
-                        match (
-                            token
-                                .claim("name")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_owned()),
-                            token
-                                .claim("email")
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_owned()),
-                        ) {
-                            (Some(name), Some(email)) => Some(Identity { name, email }),
-                            _ => None,
-                        }
-                    })
-                })
-                .await?
-            }
-
-            IdentityProvider::Username => username_provider().map(|name| Identity {
-                email: format!("{}@unknown", &name),
-                name,
-            }),
-            IdentityProvider::UsernameSuffix { suffix } => {
-                username_provider().map(|name| Identity {
-                    email: format!("{}{}", &name, &suffix),
-                    name,
-                })
-            }
-            IdentityProvider::Override { name, email } => Some(Identity { name, email }),
-        }
-        .ok_or_else(|| "Failed to determine identity".to_owned())
-    }
-
-    fn create_self_signed_generator(
-        audience: &str,
-        keystore_path: Option<PathBuf>,
-        logger: Logger,
-    ) -> Result<(Option<PathBuf>, internal::TokenGenerator), String> {
-        let keystore_path = keystore_path.map(|p| p.join("keys")).ok_or_else(|| {
-            "Could not determine key store path for saving generated keys".to_owned()
-        })?;
-
-        std::fs::create_dir_all(&keystore_path)
-            .map_err(|e| {
-                format!(
-                    "Failed to create keystore directory at \"{}\": {}",
-                    &keystore_path.display(),
-                    e
-                )
-            })
-            .and_then(|_| {
-                set_keyfolder_permissions(&keystore_path)
-                    .map_err(|e| format!("Failed to set permissions on keystore directory: {}", e))
-            })
-            .and_then(|_| {
-                let private_key_path = keystore_path.join("id_ecdsa.pem");
-                let public_key_path = keystore_path.join("id_ecdsa_pub.pem");
-                if private_key_path.exists() {
-                    info!(
-                        logger,
-                        "Using token signing private key from: {}",
-                        private_key_path.display()
-                    );
-                    internal::TokenGeneratorBuilder::new(audience)
-                        .with_ecdsa_private_key_from_file(&private_key_path)
-                        .build()
-                        .map_err(|e| e.to_string())
-                        .map(|token_gen| (None, token_gen))
-                } else {
-                    internal::TokenGeneratorBuilder::new(audience)
-                        .build()
-                        .map_err(|e| e.to_string())
-                        .and_then(|tg| {
-                            tg.save_keys(&private_key_path, &public_key_path)
-                                .map_err(|e| e.to_string())?;
-                            info!(
-                                logger,
-                                "Saved generated token signing keypair in {} and {}",
-                                private_key_path.display(),
-                                public_key_path.display()
-                            );
-                            Ok((Some(public_key_path), tg))
-                        })
-                }
-                .map(|(new_key, tg)| (new_key, tg))
-            })
-    }
 }
 
 #[tonic::async_trait]
@@ -708,18 +735,55 @@ impl Authentication for AuthService {
         request: tonic::Request<AcquireTokenParameters>,
     ) -> Result<tonic::Response<ProtoToken>, tonic::Status> {
         let scope = &request.get_ref().scope;
-        let mut store = self.token_store.write().await;
 
-        let token = store
-            .acquire_token(scope, &self.scope_mappings, &self.logger)
-            .await
-            .map_err(tonic::Status::internal)?;
+        /*
+         * This extra scope is due to KeyStore also taking a write lock on the token store.
+         * Therefore, we need to be done with the token store before calling the key
+         * upload below. This will be true as long as the key store depends on the
+         * token store.
+         */
+        let (proto_token, public_key, keyid) = {
+            let mut store = self.token_store.write().await;
+            let (token, public_key) = match store
+                .acquire_token(scope, &self.logger)
+                .await
+                .map_err(tonic::Status::internal)?
+            {
+                TypedToken::InternalWithPublicKey { token, public_key } => {
+                    (token as &mut dyn Token, public_key.to_owned())
+                }
+                x => (x.as_mut(), None),
+            };
 
-        Ok(tonic::Response::new(ProtoToken {
-            token: token.token().to_owned(),
-            expires_at: token.expires_at(),
-            scope: request.get_ref().scope.clone(),
-        }))
+            // make everything owned so that the lock can be released and
+            // used by the keystore upload below
+            (
+                ProtoToken {
+                    token: token.token().to_owned(),
+                    expires_at: token.expires_at(),
+                    scope: request.get_ref().scope.clone(),
+                },
+                public_key,
+                token.sub().unwrap_or("unknown").to_owned(),
+            )
+        };
+
+        /*
+         * Upload public key if needed to make sure key can be used
+         * when the token it generated is returned. Note that this
+         * takes a write lock on the token store so it needs to be
+         * separate from the block above.
+         */
+        if let Some(key_content) = public_key {
+            debug!(self.logger, "Uploading generated key with id {}", keyid);
+            self.key_store
+                // TODO: this should be keyid
+                .set(&keyid, &key_content)
+                .await
+                .map_err(|e| tonic::Status::internal(e.to_string()))?
+        }
+
+        Ok(tonic::Response::new(proto_token))
     }
 
     async fn authenticate(
@@ -1021,10 +1085,13 @@ impl Authentication for AuthService {
         &self,
         _request: tonic::Request<()>,
     ) -> Result<tonic::Response<firm_types::auth::Identity>, tonic::Status> {
-        self.identity
-            .as_ref()
-            .ok_or_else(|| tonic::Status::not_found("No identity set"))
-            .map(|identity| tonic::Response::new(identity.clone()))
+        self.token_store
+            .write()
+            .await
+            .get_identity(crate::system::user, &self.logger)
+            .await
+            .map_err(tonic::Status::internal)
+            .map(tonic::Response::new)
     }
 }
 
@@ -1078,17 +1145,15 @@ mod tests {
 
     #[tokio::test]
     async fn get_identity() {
-        let id = AuthService::get_identity(
-            IdentityProvider::Override {
+        // override
+        let mut token_store = TokenStore {
+            identity_provider_config: IdentityProvider::Override {
                 name: String::from("Bob"),
                 email: "user@company.com".to_owned(),
             },
-            &HashMap::new(),
-            &mut TokenCache::default(),
-            || None,
-            null_logger!(),
-        )
-        .await;
+            ..Default::default()
+        };
+        let id = token_store.get_identity(|| None, &null_logger!()).await;
 
         assert!(id.is_ok());
         assert_eq!(
@@ -1100,16 +1165,16 @@ mod tests {
             "Overridden user identity must come back unmodified"
         );
 
-        let id = AuthService::get_identity(
-            IdentityProvider::UsernameSuffix {
+        // username suffix
+        let mut token_store = TokenStore {
+            identity_provider_config: IdentityProvider::UsernameSuffix {
                 suffix: "@company.com".to_owned(),
             },
-            &HashMap::new(),
-            &mut TokenCache::default(),
-            || Some("user".to_owned()),
-            null_logger!(),
-        )
-        .await;
+            ..Default::default()
+        };
+        let id = token_store
+            .get_identity(|| Some(String::from("user")), &null_logger!())
+            .await;
 
         assert!(id.is_ok());
         assert_eq!(
@@ -1121,14 +1186,14 @@ mod tests {
             "Username suffix must be added to the username from the system"
         );
 
-        let id = AuthService::get_identity(
-            IdentityProvider::Username,
-            &HashMap::new(),
-            &mut TokenCache::default(),
-            || Some("username".to_owned()),
-            null_logger!(),
-        )
-        .await;
+        // username
+        let mut token_store = TokenStore {
+            identity_provider_config: IdentityProvider::Username,
+            ..Default::default()
+        };
+        let id = token_store
+            .get_identity(|| Some(String::from("username")), &null_logger!())
+            .await;
 
         assert!(id.is_ok());
         assert_eq!(

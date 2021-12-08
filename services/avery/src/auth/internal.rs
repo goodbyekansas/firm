@@ -19,6 +19,7 @@ pub struct JwtToken {
     generator: TokenGenerator,
     expires_at: u64,
     claims: StandardClaims,
+    subject: String,
 }
 
 impl Debug for JwtToken {
@@ -60,7 +61,7 @@ impl Token for JwtToken {
                 "Refreshing internal auth token by generating a new one..."
             );
             self.generator
-                .generate(&self.audience)
+                .generate(&self.subject, &self.audience)
                 .map_err(|e| e.to_string())
                 .map(move |jwt_token| {
                     self.token = jwt_token.token;
@@ -129,6 +130,9 @@ pub enum SelfSignedTokenError {
 
     #[error("Failed to generate token: {0}")]
     FailedToGenerateToken(#[source] jsonwebtoken::errors::Error),
+
+    #[error("Failed to generate token: {0}")]
+    GenericTokenGenerationError(String),
 }
 
 enum PrivateKeySource<'a> {
@@ -140,15 +144,11 @@ enum PrivateKeySource<'a> {
 
 pub struct TokenGeneratorBuilder<'a> {
     private_key: Option<PrivateKeySource<'a>>,
-    subject: String,
 }
 
 impl<'a> TokenGeneratorBuilder<'a> {
-    pub fn new(subject: &str) -> Self {
-        Self {
-            private_key: None,
-            subject: subject.to_owned(),
-        }
+    pub fn new() -> Self {
+        Self { private_key: None }
     }
 
     #[allow(dead_code)]
@@ -181,7 +181,6 @@ impl<'a> TokenGeneratorBuilder<'a> {
                         .map_err(SelfSignedTokenError::FailedToReadKey)?,
                 ),
                 generated_key_pair: None,
-                subject: self.subject.clone(),
             }),
             Some(PrivateKeySource::RsaFile(path)) => std::fs::read(path)
                 .map_err(|e| SelfSignedTokenError::FailedToReadKeyFile(path.to_owned(), e))
@@ -192,7 +191,6 @@ impl<'a> TokenGeneratorBuilder<'a> {
                                 .map_err(SelfSignedTokenError::FailedToReadKey)?,
                         ),
                         generated_key_pair: None,
-                        subject: self.subject.clone(),
                     })
                 }),
             Some(PrivateKeySource::EcdsaBytes(bytes)) => Ok(TokenGenerator {
@@ -201,7 +199,6 @@ impl<'a> TokenGeneratorBuilder<'a> {
                         .map_err(SelfSignedTokenError::FailedToReadKey)?,
                 ),
                 generated_key_pair: None,
-                subject: self.subject.clone(),
             }),
             Some(PrivateKeySource::EcdsaFile(path)) => std::fs::read(path)
                 .map_err(|e| SelfSignedTokenError::FailedToReadKeyFile(path.to_owned(), e))
@@ -212,7 +209,6 @@ impl<'a> TokenGeneratorBuilder<'a> {
                                 .map_err(SelfSignedTokenError::FailedToReadKey)?,
                         ),
                         generated_key_pair: None,
-                        subject: self.subject.clone(),
                     })
                 }),
             None => ring::signature::EcdsaKeyPair::generate_pkcs8(
@@ -234,7 +230,6 @@ impl<'a> TokenGeneratorBuilder<'a> {
                     public_key,
                     private_key: private_key.as_ref().to_vec(),
                 })),
-                subject: self.subject.clone(),
             }),
         }
     }
@@ -253,7 +248,6 @@ struct StandardClaims {
 pub struct TokenGenerator {
     private_key: Arc<jsonwebtoken::EncodingKey>,
     generated_key_pair: Option<Arc<DerKeyPair>>,
-    subject: String,
 }
 
 struct DerKeyPair {
@@ -356,7 +350,11 @@ enum TokenExpiry {
 }
 
 impl TokenGenerator {
-    pub fn generate(&self, audience: &str) -> Result<JwtToken, SelfSignedTokenError> {
+    pub fn generate(
+        &self,
+        subject: &str,
+        audience: &str,
+    ) -> Result<JwtToken, SelfSignedTokenError> {
         let computer_name = hostname::get()
             .map_err(SelfSignedTokenError::FailedToDetermineHostName)?
             .to_string_lossy()
@@ -364,7 +362,7 @@ impl TokenGenerator {
         self.generate_impl(
             audience.to_owned(),
             format!("Avery@{}", computer_name),
-            self.subject.clone(),
+            subject.to_owned(),
             TokenExpiry::ExpiresIn(3600u64),
         )
     }
@@ -390,7 +388,7 @@ impl TokenGenerator {
         };
 
         let mut header = Header::new(Algorithm::ES256);
-        header.kid = Some(sub); //Key id is not _really_ the subject but that's how we use it
+        header.kid = Some(sub.clone()); //Key id is not _really_ the subject but that's how we use it
 
         Ok(JwtToken {
             token: jsonwebtoken::encode(&header, &claims, &self.private_key)
@@ -399,6 +397,7 @@ impl TokenGenerator {
             audience,
             generator: self.clone(),
             claims,
+            subject: sub,
         })
     }
 
@@ -417,6 +416,12 @@ impl TokenGenerator {
         } else {
             Err(std::io::ErrorKind::InvalidData.into())
         }
+    }
+
+    pub fn public_key(&self) -> Option<Vec<u8>> {
+        self.generated_key_pair
+            .as_ref()
+            .map(|kp| PemKeyPair::from(kp.as_ref()).public_key.as_bytes().to_vec())
     }
 }
 
@@ -437,12 +442,12 @@ mod test {
     #[test]
     fn builder() {
         // No key provided
-        let b = TokenGeneratorBuilder::new("???").build();
+        let b = TokenGeneratorBuilder::new().build();
         assert!(b.is_ok());
         assert!(b.unwrap().generated_key_pair.is_some());
 
         // From bytes
-        let b = TokenGeneratorBuilder::new("!!!")
+        let b = TokenGeneratorBuilder::new()
             .with_rsa_private_key(
                 br#"-----BEGIN RSA PRIVATE KEY-----
 MIIEogIBAAKCAQEAnzyis1ZjfNB0bBgKFMSvvkTtwlvBsaJq7S5wA+kzeVOVpVWw
@@ -480,7 +485,7 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
 
     #[test]
     fn generate() {
-        let gen = TokenGeneratorBuilder::new("@@@").build().unwrap();
+        let gen = TokenGeneratorBuilder::new().build().unwrap();
         let pem: PemKeyPair = gen.generated_key_pair.as_deref().unwrap().into();
 
         let res = gen.generate_impl(
@@ -547,7 +552,7 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
 
     #[tokio::test]
     async fn refresh() {
-        let gen = TokenGeneratorBuilder::new("+++").build().unwrap();
+        let gen = TokenGeneratorBuilder::new().build().unwrap();
         let mut tok = gen
             .generate_impl(
                 "audience".to_owned(),

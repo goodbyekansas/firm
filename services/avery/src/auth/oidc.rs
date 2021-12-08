@@ -293,7 +293,7 @@ struct Claims {
     extra: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Oidc {
     oidc_config: crate::config::OidcProvider,
     logger: Logger,
