@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - publisher_email field for Filters in registry listings.
 - Publisher field to FunctionData, Function, AttachmentData and Attachment.
 - GetIdentity endpoint to auth.
+- `Login` that performs an interactive login. This is done with a stream of
+  `InteractiveLoginCommand` that the client follows.
 
 ## [1.0.0] - 2021-07-03
 

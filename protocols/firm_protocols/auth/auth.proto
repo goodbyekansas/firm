@@ -2,13 +2,53 @@ syntax = "proto3";
 package firm_protocols.auth;
 import "google/protobuf/empty.proto";
 
+/**
+ * Management service for remote access and external credentials
+ */
 service Authentication {
+  /**
+   * Acquire a new access token for a given scope
+   */
   rpc AcquireToken (AcquireTokenParameters) returns (Token);
+  /**
+   * Authenticate a remote request and optionally create a remote access request
+   */
   rpc Authenticate (AuthenticationParameters) returns (AuthenticationResponse);
+  /**
+   * List non-expired access requests
+   */
   rpc ListRemoteAccessRequests (RemoteAccessListParameters) returns (RemoteAccessRequests);
+  /**
+   * Approve a remote access request
+   */
   rpc ApproveRemoteAccessRequest (RemoteAccessApproval) returns (RemoteAccessRequest);
+  /**
+   * Get a single remote access request
+   */
   rpc GetRemoteAccessRequest (RemoteAccessRequestId) returns (RemoteAccessRequest);
+  /**
+   * Wait for a remote access request to be approved
+   */
+  rpc WaitForRemoteAccessRequest (RemoteAccessRequestId) returns (RemoteAccessRequest);
+  /**
+   * Get the identity of the current user
+   */
   rpc GetIdentity (google.protobuf.Empty) returns (Identity);
+  /**
+   * Perform an interactive login. This can be used to cache tokens
+   * for all token providers that require interaction when logging in.
+   */
+  rpc Login(google.protobuf.Empty) returns (stream InteractiveLoginCommand);
+}
+
+message InteractiveLoginCommand {
+  oneof command {
+    BrowserAuth browser = 1;
+  }
+}
+
+message BrowserAuth {
+  string url = 1;
 }
 
 message AcquireTokenParameters {

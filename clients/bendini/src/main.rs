@@ -1,5 +1,6 @@
 #[macro_use]
 mod formatting;
+mod auth;
 mod commands;
 mod error;
 mod interactive_cert_verifier;
@@ -142,7 +143,7 @@ struct BendiniArgs {
     cmd: Command,
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(StructOpt, Debug, Clone)]
 pub enum Ordering {
     Subject,
     ExpiresAt,
@@ -179,7 +180,7 @@ impl Display for Ordering {
     }
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(StructOpt, Debug, Clone)]
 enum AuthCommand {
     /// List incoming remote access requests
     List {
@@ -241,7 +242,7 @@ impl Display for formatting::DisplayFormat {
     }
 }
 
-#[derive(StructOpt, Debug)]
+#[derive(StructOpt, Debug, Clone)]
 enum Command {
     /// List available functions
     List {
@@ -463,7 +464,7 @@ async fn run() -> Result<(), error::BendiniError> {
 
     let (channel, acquire_credentials) = connect(endpoint.clone()).await?;
 
-    let mut auth_client = futures::future::ready(Endpoint::from_shared(args.auth_host.clone()))
+    let auth_client = futures::future::ready(Endpoint::from_shared(args.auth_host.clone()))
         .map_err(|e| BendiniError::InvalidUri(e.to_string()))
         .and_then(|endpoint| async {
             if args.host == args.auth_host {
@@ -481,19 +482,27 @@ async fn run() -> Result<(), error::BendiniError> {
             args.host.clone(),
             args.auth_host.clone()
         );
-        match auth_client
-            .acquire_token(tonic::Request::new(AcquireTokenParameters {
-                scope: endpoint
-                    .uri()
-                    .authority()
-                    .and_then(|a| match a.port() {
-                        Some(_) => a.as_str().rsplitn(2, ':').nth(1),
-                        None => Some(a.as_str()),
-                    })
-                    .map(|s| s.to_owned())
-                    .unwrap_or_else(|| "localhost".to_owned()),
-            }))
-            .await
+        match auth::with_login(auth_client.clone(), || {
+            let mut auth_client = auth_client.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                auth_client
+                    .acquire_token(tonic::Request::new(AcquireTokenParameters {
+                        scope: endpoint
+                            .uri()
+                            .authority()
+                            .and_then(|a| match a.port() {
+                                Some(_) => a.as_str().rsplitn(2, ':').nth(1),
+                                None => Some(a.as_str()),
+                            })
+                            .map(|s| s.to_owned())
+                            .unwrap_or_else(|| "localhost".to_owned()),
+                    }))
+                    .await
+                    .map_err(BendiniError::from)
+            }
+        })
+        .await
         {
             Ok(token) => {
                 println!("Credentials acquired successfully!");
@@ -504,9 +513,9 @@ async fn run() -> Result<(), error::BendiniError> {
                     "{} 🤞",
                     warn!(
                         r#"Acquiring credentials for scope "{}" \
-                failed with error: {}. \
-                Continuing without credentials set.
-                "#,
+                           failed with error: {}. \
+                           Continuing without credentials set.
+                          "#,
                         ansi_term::Style::new().bold().paint(args.host.clone()),
                         e
                     )
@@ -541,76 +550,102 @@ async fn run() -> Result<(), error::BendiniError> {
         .layer_fn(HttpStatusInterceptor::new)
         .service(channel);
 
-    let (registry_client, execution_client) = (
-        RegistryClient::new(channel.clone()),
-        ExecutionClient::new(channel.clone()),
-    );
+    auth::with_login(auth_client.clone(), || {
+        let (registry_client, execution_client) = (
+            RegistryClient::new(channel.clone()),
+            ExecutionClient::new(channel.clone()),
+        );
 
-    match args.cmd {
-        Command::List { format } => commands::list::functions(registry_client, format).await,
-
-        Command::ListVersions { name, format } => {
-            commands::list::versions(registry_client, &name, format).await
-        }
-
-        Command::Register {
-            manifest,
-            publisher_name,
-            publisher_email,
-        } => {
-            futures::future::ready(match (publisher_name, publisher_email) {
-                (Some(publisher_name), Some(publisher_email)) => {
-                    Ok((publisher_name, publisher_email))
+        let auth_client = auth_client.clone();
+        let cmd = args.cmd.clone();
+        async move {
+            match cmd {
+                Command::List { format } => {
+                    commands::list::functions(registry_client, format).await
                 }
-                (name, email) => {
-                    auth_client
-                        .get_identity(tonic::Request::new(()))
+
+                Command::ListVersions { name, format } => {
+                    commands::list::versions(registry_client, &name, format).await
+                }
+
+                Command::Register {
+                    manifest,
+                    publisher_name,
+                    publisher_email,
+                } => {
+                    futures::future::ready(match (publisher_name, publisher_email) {
+                        (Some(publisher_name), Some(publisher_email)) => {
+                            Ok((publisher_name, publisher_email))
+                        }
+                        (name, email) => auth_client
+                            .clone()
+                            .get_identity(tonic::Request::new(()))
+                            .await
+                            .map(|identity| {
+                                let identity = identity.into_inner();
+                                (
+                                    name.unwrap_or(identity.name),
+                                    email.unwrap_or(identity.email),
+                                )
+                            }),
+                    })
+                    .map_err(Into::into)
+                    .and_then(|(name, email)| async move {
+                        commands::register::run(
+                            registry_client,
+                            auth_client,
+                            &manifest,
+                            &name,
+                            &email,
+                        )
                         .await
-                        .map(|identity| {
-                            let identity = identity.into_inner();
-                            (
-                                name.unwrap_or(identity.name),
-                                email.unwrap_or(identity.email),
-                            )
-                        })
-                }
-            })
-            .map_err(Into::into)
-            .and_then(|(name, email)| async move {
-                commands::register::run(registry_client, auth_client, &manifest, &name, &email)
+                    })
                     .await
-            })
-            .await
-        }
+                }
 
-        Command::Run {
-            function_id,
-            arguments,
-            follow_output,
-        } => {
-            commands::run::run(
-                registry_client,
-                execution_client,
-                function_id,
-                arguments,
-                follow_output,
-            )
-            .await
-        }
-        Command::Get { function_id } => commands::get::run(registry_client, function_id).await,
-        Command::ListRuntimes { name } => {
-            commands::list_runtimes::run(execution_client, name.unwrap_or_default()).await
-        }
-        Command::Auth { command } => match command {
-            AuthCommand::List {
-                subject_filter,
-                include_approved,
-                ordering,
-            } => {
-                commands::auth::list(auth_client, subject_filter, include_approved, ordering).await
+                Command::Run {
+                    function_id,
+                    arguments,
+                    follow_output,
+                } => {
+                    commands::run::run(
+                        registry_client,
+                        execution_client,
+                        function_id,
+                        arguments,
+                        follow_output,
+                    )
+                    .await
+                }
+                Command::Get { function_id } => {
+                    commands::get::run(registry_client, function_id).await
+                }
+                Command::ListRuntimes { name } => {
+                    commands::list_runtimes::run(execution_client, name.unwrap_or_default()).await
+                }
+                Command::Auth { command } => match command {
+                    AuthCommand::List {
+                        subject_filter,
+                        include_approved,
+                        ordering,
+                    } => {
+                        commands::auth::list(
+                            auth_client,
+                            subject_filter,
+                            include_approved,
+                            ordering,
+                        )
+                        .await
+                    }
+                    AuthCommand::Approve { id } => {
+                        commands::auth::approval(auth_client, true, id).await
+                    }
+                    AuthCommand::Decline { id } => {
+                        commands::auth::approval(auth_client, false, id).await
+                    }
+                },
             }
-            AuthCommand::Approve { id } => commands::auth::approval(auth_client, true, id).await,
-            AuthCommand::Decline { id } => commands::auth::approval(auth_client, false, id).await,
-        },
-    }
+        }
+    })
+    .await
 }

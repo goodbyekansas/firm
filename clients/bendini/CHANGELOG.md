@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Support for interactive login. This handles `unauthenticated` errors from Avery by
+  initiating an interactive login and handling server side commands. After a successful
+  login, the original request is retried.
+
 - Support for formatting options. Bendini now supports three format options for `list` and
   `list-versions`: `short`, `long` and `json`. `short` shows a condensed version of the
   list and `long` provides more details on each function. `json` will output the function

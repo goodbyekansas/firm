@@ -32,6 +32,9 @@ pub enum BendiniError {
     #[error("Invalid URI specified: {0}")]
     InvalidUri(String),
 
+    #[error("Failed to open browser for interactive login: {0}")]
+    FailedToOpenBrowser(String),
+
     #[error("Failed to create TLS config: {0}")]
     FailedToCreateTlsConfig(String),
 
@@ -67,6 +70,7 @@ impl From<BendiniError> for i32 {
             BendiniError::InvalidOauthToken(_) => 14i32,
             BendiniError::InvalidFunctionArguments(_, _) => 15i32,
             BendiniError::FunctionError(_) => 16i32,
+            BendiniError::FailedToOpenBrowser(_) => 17i32,
         }
     }
 }

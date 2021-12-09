@@ -91,44 +91,41 @@ impl Interceptor for AcquireAuthInterceptor {
          * This can be fixed by implementing a tower Service as in
          * https://github.com/hyperium/tonic/blob/c62f382e3c6e9c0641decfafb2b8396fe52b6314/examples/src/tower/client.rs#L61
          */
-        if let Some(token) = self
-            .endpoint
+        self.endpoint
             .uri()
             .host()
+            .ok_or_else(|| {
+                tonic::Status::internal("No host for registry endpoint, cannot acquire token")
+            })
             .and_then(|host| {
                 let host = host.to_owned();
                 let auth = self.auth_service.clone();
                 let handle = Handle::current();
-                let logger = self.logger.new(o!());
                 std::thread::spawn(move || {
-                    handle
-                        .block_on(async {
-                            auth.acquire_token(tonic::Request::new(AcquireTokenParameters {
-                                scope: host.clone(),
-                            }))
-                            .await
-                        })
-                        .map_err(|e| {
-                            warn!(
-                                logger,
-                                "Requesting auth for scope \"{}\" failed with error: {}", host, e
-                            );
-                            e
-                        })
-                        .ok()
+                    handle.block_on(async {
+                        auth.acquire_token(tonic::Request::new(AcquireTokenParameters {
+                            scope: host.clone(),
+                        }))
+                        .await
+                    })
                 })
                 .join()
-                .ok()
-                .and_then(|op| op)
+                .map_err(|_| tonic::Status::internal("Failed to join acquire token thread"))?
             })
-            .and_then(|result| {
-                AsciiMetadataValue::from_str(&format!("bearer {}", &result.get_ref().token)).ok()
+            .and_then(|token| {
+                AsciiMetadataValue::from_str(&format!("bearer {}", token.get_ref().token)).map_err(
+                    |e| {
+                        tonic::Status::internal(format!(
+                            "Invalid metadata value for bearer token: {}",
+                            e
+                        ))
+                    },
+                )
             })
-        {
-            request.metadata_mut().insert("authorization", token);
-        }
-
-        Ok(request)
+            .map(|token| {
+                request.metadata_mut().insert("authorization", token);
+                request
+            })
     }
 }
 
