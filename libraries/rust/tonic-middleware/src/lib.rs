@@ -20,6 +20,7 @@ impl HttpStatusInterceptor {
     }
 }
 
+#[derive(Debug)]
 pub struct ResponseFuture {
     inner: tonic::transport::channel::ResponseFuture,
 }

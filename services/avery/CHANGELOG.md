@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Startup of Avery is now side-effect free. This means that no keys are generated and no
+  login will be required.
+- Login is no longer automatic. Any request that would have required a login will now
+  return a gRPC `unauthenticated`. An interactive client can then choose to call `login`
+  to start an interactive login process. This process is carried out with the help of a
+  stream of login commands which instructs the client which actions to take during the
+  login process.
+
 ### Added
 - Implemented endpoint for GetIdentity
 - Implemented ListVersions endpoint

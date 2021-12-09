@@ -5,6 +5,7 @@ use std::{
     hash::Hash,
     hash::Hasher,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::Arc,
     time::Duration,
 };
@@ -14,12 +15,17 @@ use expiremap::ExpireMap;
 use firm_types::{
     auth::AcquireTokenParameters,
     auth::Token as ProtoToken,
-    auth::{authentication_server::Authentication, Identity},
+    auth::{authentication_server::Authentication, Identity, InteractiveLoginCommand},
     tonic,
 };
-use futures::{future::OptionFuture, TryFutureExt};
+use futures::{
+    channel::mpsc::{Receiver, Sender},
+    future::OptionFuture,
+    Sink, StreamExt, TryFutureExt, TryStreamExt,
+};
 use serde::{Deserialize, Serialize};
 use slog::{debug, info, o, warn, Logger};
+use thiserror;
 use tokio::{sync::RwLock, time::Instant};
 
 pub use self::keystore::{KeyStore, KeyStoreError};
@@ -91,8 +97,18 @@ impl AuthenticationSource for AuthService {
             .await
             .acquire_token(scope, &self.logger)
             .await
+            .map_err(|e| e.to_string())
             .map(|t| t.as_mut().token().to_owned())
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+enum AcquireTokenError {
+    #[error("{0}")]
+    Generic(String),
+
+    #[error("Acquiring this token requires interactive login")]
+    LoginRequired,
 }
 
 #[derive(Debug, Default)]
@@ -103,12 +119,72 @@ struct TokenStore {
     identity_provider_config: IdentityProvider,
 }
 
+#[derive(Clone)]
+pub struct LoginCommandStream(Sender<Result<InteractiveLoginCommand, tonic::Status>>);
+
+impl Sink<InteractiveLoginCommand> for LoginCommandStream {
+    type Error = futures::channel::mpsc::SendError;
+
+    fn poll_ready(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_ready(cx)
+    }
+
+    fn start_send(
+        mut self: std::pin::Pin<&mut Self>,
+        item: InteractiveLoginCommand,
+    ) -> Result<(), Self::Error> {
+        Pin::new(&mut self.0).start_send(Ok(item))
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_close(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.0).poll_close(cx)
+    }
+}
+
 impl TokenStore {
+    async fn login(
+        &mut self,
+        login_command_stream: LoginCommandStream,
+    ) -> Result<(), AcquireTokenError> {
+        self.token_providers
+            .login(
+                login_command_stream,
+                match &self.identity_provider_config {
+                    IdentityProvider::Oidc { provider } => {
+                        vec![(
+                            self.identity_provider_config.scope_key(),
+                            provider.to_owned(),
+                        )]
+                    }
+                    _ => Vec::new(),
+                },
+            )
+            .await
+            .map(|tokens| {
+                tokens.into_iter().for_each(|(n, t)| {
+                    self.token_cache.insert(&n, t);
+                })
+            })
+    }
+
     async fn get_identity<F>(
         &mut self,
         username_provider: F,
         logger: &Logger,
-    ) -> Result<Identity, String>
+    ) -> Result<Identity, AcquireTokenError>
     where
         F: FnOnce() -> Option<String>,
     {
@@ -123,85 +199,68 @@ impl TokenStore {
                             "provider-name" => provider.clone(),
                             "scope-key" => provider_scope_key.clone()
                         ));
-                        futures::future::ready(
-                            self.token_providers
-                                .oidc
-                                .get(provider)
-                                .cloned()
-                                .ok_or_else(|| format!("OIDC provider \"{}\" not found", provider)),
-                        )
-                        .and_then(|oidc_client| {
-                            let token_cache = &mut self.token_cache;
-                            async move {
-                                match token_cache.get_as_token(&provider_scope_key) {
-                                    // We're done. Got a cached token.
-                                    Some(token)
-                                        if (token.claim("email").is_some()
-                                            && token.claim("name").is_some()) =>
-                                    {
-                                        debug!(logger, "Found cached token");
-                                        Ok(token)
-                                    }
-                                    // We currently do not have a token cached and need to create one
-                                    t => {
-                                        if t.is_some() {
-                                            debug!(
-                                                logger,
-                                                "Found token without user profile information. \
-                                             Generating new token."
-                                            );
-                                        }
-                                        debug!(logger, "Obtaining token");
-                                        oidc_client
-                                            .authenticate()
-                                            .map_err(|e| e.to_string())
-                                            .map_ok(move |token| {
-                                                token_cache
-                                                    .insert(
-                                                        &provider_scope_key,
-                                                        TypedToken::Oidc(token),
-                                                    )
-                                                    .as_mut()
-                                            })
-                                            .await
-                                    }
+                        match &mut self.token_cache.get_as_token(&provider_scope_key) {
+                            // We're done. Got a cached token.
+                            Some(token)
+                                if (token.claim("email").is_some()
+                                    && token.claim("name").is_some()) =>
+                            {
+                                debug!(logger, "Found cached token");
+                                Ok(token)
+                            }
+                            // We currently do not have a token cached and need to
+                            // create one by logging in
+                            t => {
+                                if t.is_some() {
+                                    debug!(logger, "Found token without user profile information.");
                                 }
-                                .map(|token| {
-                                    match (
-                                        token
-                                            .claim("name")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_owned()),
-                                        token
-                                            .claim("email")
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_owned()),
-                                    ) {
-                                        (Some(name), Some(email)) => Some(Identity { name, email }),
-                                        _ => None,
-                                    }
-                                })
+                                debug!(logger, "Asking for new token");
+                                Err(AcquireTokenError::LoginRequired)
+                            }
+                        }
+                        .and_then(|token| {
+                            match (
+                                token
+                                    .claim("name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_owned()),
+                                token
+                                    .claim("email")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_owned()),
+                            ) {
+                                (Some(name), Some(email)) => Ok(Identity { name, email }),
+                                _ => Err(AcquireTokenError::Generic(String::from(
+                                    "Token is missing name or email claim",
+                                ))),
                             }
                         })
-                        .await?
                     }
-
-                    IdentityProvider::Username => username_provider().map(|name| Identity {
-                        email: format!("{}@unknown", &name),
-                        name,
-                    }),
-                    IdentityProvider::UsernameSuffix { suffix } => {
-                        username_provider().map(|name| Identity {
+                    IdentityProvider::Username => username_provider()
+                        .map(|name| Identity {
+                            email: format!("{}@unknown", &name),
+                            name,
+                        })
+                        .ok_or_else(|| {
+                            AcquireTokenError::Generic(String::from(
+                                "Failed to determine username for identity",
+                            ))
+                        }),
+                    IdentityProvider::UsernameSuffix { suffix } => username_provider()
+                        .map(|name| Identity {
                             email: format!("{}{}", &name, &suffix),
                             name,
                         })
-                    }
-                    IdentityProvider::Override { name, email } => Some(Identity {
+                        .ok_or_else(|| {
+                            AcquireTokenError::Generic(String::from(
+                                "Failed to determine username for identity",
+                            ))
+                        }),
+                    IdentityProvider::Override { name, email } => Ok(Identity {
                         name: name.to_owned(),
                         email: email.to_owned(),
                     }),
                 }
-                .ok_or_else(|| "Failed to determine identity".to_owned())
             }
         }?;
 
@@ -213,7 +272,7 @@ impl TokenStore {
         &mut self,
         scope: &str,
         logger: &Logger,
-    ) -> Result<&mut TypedToken, String> {
+    ) -> Result<&mut TypedToken, AcquireTokenError> {
         let identity = self.get_identity(crate::system::user, logger).await?;
         let typed_token = match self.token_cache.entry(scope) {
             std::collections::hash_map::Entry::Occupied(mut e) => {
@@ -245,11 +304,12 @@ impl TokenStore {
 
         // always do refresh, the refresh methods of the providers
         // are responsible for checking if it is needed.
-        typed_token
-            .as_mut()
-            .refresh(logger)
-            .await
-            .map_err(|err| format!("Failed to refresh token for scope \"{}\": {}", scope, err))?;
+        typed_token.as_mut().refresh(logger).await.map_err(|err| {
+            AcquireTokenError::Generic(format!(
+                "Failed to refresh token for scope \"{}\": {}",
+                scope, err,
+            ))
+        })?;
 
         Ok(typed_token)
     }
@@ -267,6 +327,22 @@ impl Drop for TokenCache {
     fn drop(&mut self) {
         if self.save_cache {
             if let Err(e) = Self::token_cache_path()
+                .and_then(|path| {
+                    path.parent()
+                        .ok_or_else(|| -> Box<dyn FnOnce(&Logger)> {
+                            Box::new(move |logger: &Logger| {
+                                warn!(logger, "Failed to determine token cache path directory")
+                            })
+                        })
+                        .and_then(|p| {
+                            std::fs::create_dir_all(p).map_err(|e| -> Box<dyn FnOnce(&Logger)> {
+                                Box::new(move |logger: &Logger| {
+                                    warn!(logger, "Failed to create token cache dir: {}", e)
+                                })
+                            })
+                        })?;
+                    Ok(path)
+                })
                 .and_then(|path| {
                     std::fs::OpenOptions::new()
                         .write(true)
@@ -493,21 +569,55 @@ struct TokenProviders {
 }
 
 impl TokenProviders {
+    async fn login(
+        &self,
+        login_command_stream: LoginCommandStream,
+        additional_scopes: Vec<(String, String)>,
+    ) -> Result<HashMap<String, TypedToken>, AcquireTokenError> {
+        let mut oidc_scopes = self
+            .scope_mappings
+            .iter()
+            .filter_map(|(scope, c)| match c {
+                AuthConfig::Oidc { provider } => Some((scope, provider)),
+                _ => None,
+            })
+            .chain(additional_scopes.iter().map(|(a, b)| (a, b)))
+            .collect::<Vec<_>>();
+
+        // only login once per provider
+        oidc_scopes.dedup_by_key(|(_, provider)| *provider);
+
+        futures::stream::iter(oidc_scopes)
+            .then(|(scope, provider)| {
+                futures::future::ready(self.oidc.get(provider).ok_or_else(|| {
+                    AcquireTokenError::Generic(format!(
+                        "Failed to find OIDC provider \"{}\"",
+                        provider
+                    ))
+                }))
+                .and_then(|oidc| {
+                    oidc.authenticate(login_command_stream.clone())
+                        .map_err(|e| {
+                            AcquireTokenError::Generic(format!(
+                                "OIDC login failed: {}",
+                                e.to_string()
+                            ))
+                        })
+                        .map_ok(|t| (scope.to_owned(), TypedToken::Oidc(t)))
+                })
+            })
+            .try_collect()
+            .await
+    }
+
     async fn get_token<'a>(
         &'a mut self,
         identity: &'a Identity,
         scope: &'a str,
         logger: Logger,
-    ) -> Result<TypedToken, String> {
+    ) -> Result<TypedToken, AcquireTokenError> {
         match self.scope_mappings.get(scope) {
-            Some(AuthConfig::Oidc { provider }) => futures::future::ready(
-                self.oidc
-                    .get(provider)
-                    .ok_or_else(|| format!("Oidc provider \"{}\" not found.", provider)),
-            )
-            .and_then(|oidc_client| oidc_client.authenticate().map_err(|e| e.to_string()))
-            .await
-            .map(TypedToken::Oidc),
+            Some(AuthConfig::Oidc { .. }) => Err(AcquireTokenError::LoginRequired),
             Some(AuthConfig::SelfSigned) | None => self
                 .self_signed
                 .generate(
@@ -515,7 +625,7 @@ impl TokenProviders {
                     scope,
                     logger.new(o! { "scope" => "generate-self-signed" }),
                 )
-                .map_err(|e| e.to_string())
+                .map_err(|e| AcquireTokenError::Generic(e.to_string()))
                 .await
                 .map(|(token, key_to_upload)| TypedToken::InternalWithPublicKey {
                     token,
@@ -525,15 +635,15 @@ impl TokenProviders {
                 .self_signed_with_file
                 .get(path)
                 .ok_or_else(|| {
-                    format!(
+                    AcquireTokenError::Generic(format!(
                         "Failed to find self signed generator for keyfile at \"{}\"",
                         path.display(),
-                    )
+                    ))
                 })
                 .and_then(|generator| {
                     generator
                         .generate(&identity.email, scope)
-                        .map_err(|e| e.to_string())
+                        .map_err(|e| AcquireTokenError::Generic(e.to_string()))
                 })
                 .map(TypedToken::Internal),
         }
@@ -728,6 +838,15 @@ impl AuthService {
     }
 }
 
+impl From<AcquireTokenError> for tonic::Status {
+    fn from(e: AcquireTokenError) -> Self {
+        match e {
+            AcquireTokenError::LoginRequired => tonic::Status::unauthenticated(e.to_string()),
+            _ => tonic::Status::internal(e.to_string()),
+        }
+    }
+}
+
 #[tonic::async_trait]
 impl Authentication for AuthService {
     async fn acquire_token(
@@ -744,13 +863,9 @@ impl Authentication for AuthService {
          */
         let (proto_token, public_key, keyid) = {
             let mut store = self.token_store.write().await;
-            let (token, public_key) = match store
-                .acquire_token(scope, &self.logger)
-                .await
-                .map_err(tonic::Status::internal)?
-            {
+            let (token, public_key) = match store.acquire_token(scope, &self.logger).await? {
                 TypedToken::InternalWithPublicKey { token, public_key } => {
-                    (token as &mut dyn Token, public_key.to_owned())
+                    (token as &mut dyn Token, public_key.take()) // only upload once
                 }
                 x => (x.as_mut(), None),
             };
@@ -1090,8 +1205,40 @@ impl Authentication for AuthService {
             .await
             .get_identity(crate::system::user, &self.logger)
             .await
-            .map_err(tonic::Status::internal)
             .map(tonic::Response::new)
+            .map_err(|e| e.into())
+    }
+
+    async fn wait_for_remote_access_request(
+        &self,
+        _request: tonic::Request<firm_types::auth::RemoteAccessRequestId>,
+    ) -> Result<tonic::Response<firm_types::auth::RemoteAccessRequest>, tonic::Status> {
+        todo!()
+    }
+
+    type LoginStream = Receiver<Result<InteractiveLoginCommand, tonic::Status>>;
+
+    async fn login(
+        &self,
+        _request: tonic::Request<()>,
+    ) -> Result<tonic::Response<Self::LoginStream>, tonic::Status> {
+        let (mut sender, receiver) = futures::channel::mpsc::channel(16);
+
+        // spawn off the actual login to the background and return a command stream
+        // to the client, for it to follow instructions
+        let token_store = self.token_store.clone();
+        tokio::spawn(async move {
+            let mut store = token_store.write().await;
+            match store.login(LoginCommandStream(sender.clone())).await {
+                Ok(_) => {}
+                Err(e) => {
+                    let _ = sender.try_send(Err(e.into()));
+                }
+            }
+            sender.close_channel();
+        });
+
+        Ok(tonic::Response::new(receiver))
     }
 }
 

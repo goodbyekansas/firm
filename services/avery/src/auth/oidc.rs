@@ -9,7 +9,8 @@ use std::{
 };
 
 use chrono::{TimeZone, Utc};
-use futures::TryFutureExt;
+use firm_types::auth::{interactive_login_command::Command, BrowserAuth, InteractiveLoginCommand};
+use futures::{SinkExt, TryFutureExt};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use rand::{seq::SliceRandom, Rng};
 use reqwest::StatusCode;
@@ -32,9 +33,6 @@ pub enum OidcError {
 
     #[error("JSON error: {0}")]
     JsonError(#[source] reqwest::Error),
-
-    #[error("Failed to open browser for user consent: {0}")]
-    FailedToOpenBrowser(#[source] std::io::Error),
 
     #[error("Failed to read OAuth callback result: {0}")]
     FailedToReadCallbackResult(#[source] tokio::sync::oneshot::error::RecvError),
@@ -417,6 +415,7 @@ impl Oidc {
         &self,
         endpoint: &str,
         code_challenge: &str,
+        mut login_command_stream: super::LoginCommandStream,
     ) -> Result<(String, String), OidcError> {
         let (sender, reader) = tokio::sync::oneshot::channel();
         let (addr, server_future) = Self::create_local_listener(sender);
@@ -425,19 +424,17 @@ impl Oidc {
         let (url, state_string, redirect_uri) =
             self.build_authorize_url(endpoint, code_challenge, addr.port())?;
 
-        open::that(url)
-            .and_then(|exit_status| {
-                exit_status.success().then(|| ()).ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!(
-                            "Starting the browser exited with a non-zero exit code: {:?}",
-                            exit_status.code()
-                        ),
-                    )
-                })
+        login_command_stream
+            .send(InteractiveLoginCommand {
+                command: Some(Command::Browser(BrowserAuth { url })),
             })
-            .map_err(OidcError::FailedToOpenBrowser)?;
+            .await
+            .map_err(|e| {
+                OidcError::AuthError(format!(
+                    "Failed to send open browser command: {}",
+                    e.to_string(),
+                ))
+            })?;
 
         let auth_response = reader
             .await
@@ -591,7 +588,10 @@ impl Oidc {
             })
     }
 
-    pub async fn authenticate(&self) -> Result<OidcToken, OidcError> {
+    pub async fn authenticate(
+        &self,
+        login_command_stream: super::LoginCommandStream,
+    ) -> Result<OidcToken, OidcError> {
         let cfg = self.get_config().await.map_err(|e| {
             warn!(self.logger, "Failed to get OIDC configuration: {}", e);
             e
@@ -600,7 +600,7 @@ impl Oidc {
         let (code_verifier, code_challenge) = Self::create_challenge(rand::thread_rng());
         let auth_endpoint = cfg.authorization_endpoint.clone();
 
-        self.authorize(&auth_endpoint, &code_challenge)
+        self.authorize(&auth_endpoint, &code_challenge, login_command_stream)
             .and_then(|(auth_token, redirect_uri)| {
                 let token_endpoint = cfg.token_endpoint.clone();
 
