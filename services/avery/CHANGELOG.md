@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implemented endpoint for GetIdentity
 - Implemented ListVersions endpoint
 - Added publisher email filter for List and ListVersion
+- `WaitForRemoteAccessRequest` endpoint that can be used to wait for approval of a remote
+  access request. This should be used together with gRPC timeouts.
 
 ## [1.2.1] - 2021-10-21
 

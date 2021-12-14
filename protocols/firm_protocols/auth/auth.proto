@@ -10,32 +10,51 @@ service Authentication {
    * Acquire a new access token for a given scope
    */
   rpc AcquireToken (AcquireTokenParameters) returns (Token);
+
   /**
    * Authenticate a remote request and optionally create a remote access request
    */
   rpc Authenticate (AuthenticationParameters) returns (AuthenticationResponse);
+
   /**
    * List non-expired access requests
    */
   rpc ListRemoteAccessRequests (RemoteAccessListParameters) returns (RemoteAccessRequests);
+
   /**
    * Approve a remote access request
    */
   rpc ApproveRemoteAccessRequest (RemoteAccessApproval) returns (RemoteAccessRequest);
+
   /**
    * Get a single remote access request
    */
   rpc GetRemoteAccessRequest (RemoteAccessRequestId) returns (RemoteAccessRequest);
+
   /**
-   * Wait for a remote access request to be approved
+   * Wait for a remote access request to be approved.
+   *
+   * Use this together with a timeout for best user experience since it will wait
+   * indefinitely otherwise.
    */
   rpc WaitForRemoteAccessRequest (RemoteAccessRequestId) returns (RemoteAccessRequest);
+
+  /**
+   * Cancel a pending remote access request
+   *
+   * This cannot be used to revoke already approved access
+   */
+  rpc CancelRemoteAccessRequest (RemoteAccessRequestId) returns (RemoteAccessRequest);
+
   /**
    * Get the identity of the current user
    */
   rpc GetIdentity (google.protobuf.Empty) returns (Identity);
+
   /**
-   * Perform an interactive login. This can be used to cache tokens
+   * Perform an interactive login.
+   *
+   * This can be used to cache tokens
    * for all token providers that require interaction when logging in.
    */
   rpc Login(google.protobuf.Empty) returns (stream InteractiveLoginCommand);

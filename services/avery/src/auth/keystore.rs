@@ -79,7 +79,7 @@ impl KeyStore for SimpleKeyStore {
             .and_then(|scope| async {
                 debug!(
                     self.logger,
-                    "Acquiring token for scope \"{}\" when uploading key", &scope
+                    "Acquiring token for scope \"{}\" when downloading key", &scope
                 );
 
                 self.token_source
@@ -89,7 +89,7 @@ impl KeyStore for SimpleKeyStore {
                     .await
                     .map_err(move |e| {
                         KeyStoreError::AuthenticationError(format!(
-                            "Failed to acquire token for scope \"{}\" when uploading key: {}",
+                            "Failed to acquire token for scope \"{}\" when downloading key: {}",
                             scope, e
                         ))
                     })

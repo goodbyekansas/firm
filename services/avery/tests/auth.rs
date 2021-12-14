@@ -505,6 +505,37 @@ async fn list() {
         String::from("user@host"),
         "Expected subject to be of the requested remote access request."
     );
+
+    // delete (cancel) request
+    let response = auth_service
+        .cancel_remote_access_request(tonic::Request::new(
+            user_id.remote_access_request_id.clone().unwrap(),
+        ))
+        .await;
+
+    assert!(
+        response.is_ok(),
+        "Expected to be able to cancel a remote access request without error."
+    );
+    let response = response.unwrap().into_inner();
+    assert_eq!(
+        response.id, user_id.remote_access_request_id,
+        "Expected to get a request with the same id as requested when canceling."
+    );
+    assert_eq!(
+        response.subject,
+        String::from("user@host"),
+        "Expected subject to be of the requested remote access request when canceling."
+    );
+    let response = auth_service
+        .get_remote_access_request(tonic::Request::new(
+            user_id.remote_access_request_id.clone().unwrap(),
+        ))
+        .await;
+    assert!(matches!(
+        response.unwrap_err().code(),
+        tonic::Code::NotFound
+    ));
 }
 
 #[tokio::test]

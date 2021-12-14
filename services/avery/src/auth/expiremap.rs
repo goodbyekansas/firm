@@ -36,6 +36,14 @@ where
         self.map.read().await.contains_key(key)
     }
 
+    pub async fn remove<Q: ?Sized>(&self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.map.write().await.remove(key)
+    }
+
     pub async fn snapshot(&'_ self) -> tokio::sync::RwLockReadGuard<'_, HashMap<K, V>> {
         self.map.read().await
     }
