@@ -6,7 +6,8 @@ use std::{
     hash::Hasher,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
+    task::Waker,
     time::Duration,
 };
 
@@ -21,7 +22,7 @@ use firm_types::{
 use futures::{
     channel::mpsc::{Receiver, Sender},
     future::OptionFuture,
-    Sink, StreamExt, TryFutureExt, TryStreamExt,
+    Future, Sink, StreamExt, TryFutureExt, TryStreamExt,
 };
 use serde::{Deserialize, Serialize};
 use slog::{debug, info, o, warn, Logger};
@@ -39,10 +40,17 @@ mod keystore;
 mod oidc;
 
 #[derive(Debug, Clone, Default)]
+struct PendingAccessRequestWaitState {
+    approved: bool,
+    waker: Option<Waker>,
+}
+
+#[derive(Debug, Clone, Default)]
 struct PendingAccessRequest {
     subject: String,
     expires_at: u64,
     approved: bool,
+    wait_state: Arc<Mutex<PendingAccessRequestWaitState>>,
 }
 
 impl From<firm_types::auth::RemoteAccessRequest> for PendingAccessRequest {
@@ -51,6 +59,10 @@ impl From<firm_types::auth::RemoteAccessRequest> for PendingAccessRequest {
             subject: rar.subject,
             expires_at: rar.expires_at,
             approved: rar.approved,
+            wait_state: Arc::new(Mutex::new(PendingAccessRequestWaitState {
+                approved: rar.approved,
+                waker: None,
+            })),
         }
     }
 }
@@ -847,6 +859,36 @@ impl From<AcquireTokenError> for tonic::Status {
     }
 }
 
+struct RemoteAccessApprovalFuture {
+    inner: Arc<Mutex<PendingAccessRequestWaitState>>,
+}
+
+impl RemoteAccessApprovalFuture {
+    fn new(inner: Arc<Mutex<PendingAccessRequestWaitState>>) -> Self {
+        Self { inner }
+    }
+}
+
+impl Future for RemoteAccessApprovalFuture {
+    type Output = Result<(), String>;
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match self.inner.lock() {
+            Ok(mut state) => match state.approved {
+                true => std::task::Poll::Ready(Ok(())),
+                false => {
+                    state.waker = Some(cx.waker().clone());
+                    std::task::Poll::Pending
+                }
+            },
+            Err(e) => std::task::Poll::Ready(Err(e.to_string())),
+        }
+    }
+}
+
 #[tonic::async_trait]
 impl Authentication for AuthService {
     async fn acquire_token(
@@ -926,7 +968,7 @@ impl Authentication for AuthService {
                     .get(&key_id)
                     .map_err(|e| {
                         tonic::Status::invalid_argument(format!(
-                            "Failed to get public key for key id \"{}\": {}",
+                            r#"Failed to get public key for key id "{}": {}"#,
                             &key_id, e
                         ))
                     })
@@ -1001,6 +1043,9 @@ impl Authentication for AuthService {
                                 subject: sub.to_owned(),
                                 expires_at: exp,
                                 approved: false,
+                                wait_state: Arc::new(Mutex::new(
+                                    PendingAccessRequestWaitState::default(),
+                                )),
                             },
                             Some(
                                 Instant::now()
@@ -1149,6 +1194,15 @@ impl Authentication for AuthService {
                         ),
                     )
                     .await;
+
+                // wake any tasks waiting for approval
+                if let Ok(mut state) = req.wait_state.lock() {
+                    state.approved = true;
+                    if let Some(w) = state.waker.take() {
+                        w.wake()
+                    }
+                }
+
                 Ok(firm_types::auth::RemoteAccessRequest {
                     id: Some(firm_types::auth::RemoteAccessRequestId {
                         uuid: uuid.to_string(),
@@ -1206,14 +1260,37 @@ impl Authentication for AuthService {
             .get_identity(crate::system::user, &self.logger)
             .await
             .map(tonic::Response::new)
-            .map_err(|e| e.into())
+            .map_err(Into::into)
     }
 
     async fn wait_for_remote_access_request(
         &self,
-        _request: tonic::Request<firm_types::auth::RemoteAccessRequestId>,
+        request: tonic::Request<firm_types::auth::RemoteAccessRequestId>,
     ) -> Result<tonic::Response<firm_types::auth::RemoteAccessRequest>, tonic::Status> {
-        todo!()
+        RemoteAccessApprovalFuture::new(
+            futures::future::ready(
+                uuid::Uuid::parse_str(&request.get_ref().uuid)
+                    .map_err(|e| tonic::Status::invalid_argument(format!("Invalid UUID: {}", e))),
+            )
+            .and_then(|uuid| async move {
+                self.pending_access_requests
+                    .snapshot()
+                    .await
+                    .get(&uuid)
+                    .map(|req| Arc::clone(&req.wait_state))
+                    .ok_or_else(|| {
+                        tonic::Status::not_found(format!(
+                            "Failed to find pending access request with id: {}",
+                            uuid
+                        ))
+                    })
+            })
+            .await?,
+        )
+        .await
+        .map_err(tonic::Status::internal)?; // when this resolves, the access request is approved if it went fine
+
+        self.get_remote_access_request(request).await
     }
 
     type LoginStream = Receiver<Result<InteractiveLoginCommand, tonic::Status>>;
@@ -1239,6 +1316,37 @@ impl Authentication for AuthService {
         });
 
         Ok(tonic::Response::new(receiver))
+    }
+
+    async fn cancel_remote_access_request(
+        &self,
+        request: tonic::Request<firm_types::auth::RemoteAccessRequestId>,
+    ) -> Result<tonic::Response<firm_types::auth::RemoteAccessRequest>, tonic::Status> {
+        futures::future::ready(
+            uuid::Uuid::parse_str(&request.get_ref().uuid)
+                .map_err(|e| tonic::Status::invalid_argument(format!("Invalid UUID: {}", e))),
+        )
+        .and_then(|uuid| async move {
+            self.pending_access_requests
+                .remove(&uuid)
+                .await
+                .map(|req| firm_types::auth::RemoteAccessRequest {
+                    id: Some(firm_types::auth::RemoteAccessRequestId {
+                        uuid: uuid.to_string(),
+                    }),
+                    expires_at: req.expires_at,
+                    subject: req.subject.to_owned(),
+                    approved: req.approved,
+                })
+                .ok_or_else(|| {
+                    tonic::Status::not_found(format!(
+                        "Failed to find pending access request with id: {}",
+                        uuid
+                    ))
+                })
+        })
+        .await
+        .map(tonic::Response::new)
     }
 }
 

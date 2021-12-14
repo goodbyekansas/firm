@@ -209,18 +209,15 @@ fn get_user_socket(template: &str, username: &str) -> String {
 async fn wait_for_approval(
     auth_client: &mut AuthenticationClient<Channel>,
     id: RemoteAccessRequestId,
+    timeout: Duration,
 ) -> Result<(), Status> {
-    loop {
-        if auth_client
-            .get_remote_access_request(tonic::Request::new(id.clone()))
-            .await?
-            .into_inner()
-            .approved
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
+    let mut req = tonic::Request::new(id.clone());
+    req.set_timeout(timeout);
+
+    auth_client
+        .wait_for_remote_access_request(req)
+        .await
+        .map(|_| ())
 }
 
 async fn auth_against_avery(
@@ -263,28 +260,45 @@ async fn auth_against_avery(
                              Waiting for approval.",
                             id.uuid
                         );
-                        tokio::time::timeout(
-                            Duration::from_secs(60), // TODO this should be configurable
-                            wait_for_approval(&mut auth_client, id.clone()),
-                        )
-                        .await
-                        .map_err(|e| {
-                            Status::deadline_exceeded(format!(
-                                "Remote access request with id \"{}\" \
-                                 was not approved after waiting for {}",
-                                id.uuid, e
-                            ))
-                        })
-                        .and_then(|timeout_result| timeout_result)
-                        .map(|val| {
-                            info!(
-                                logger,
-                                "Remote access request with id \"{}\" \
-                                 was approved.",
-                                id.uuid
-                            );
-                            val
-                        })
+
+                        let approval_timeout = Duration::from_secs(2 * 60);
+
+                        let mut auth_client2 = auth_client.clone();
+                        wait_for_approval(&mut auth_client2, id.clone(), approval_timeout)
+                            .or_else(|e| {
+                                let id = id.clone();
+                                async move {
+                                    match e.code() {
+                                        tonic::Code::Cancelled => {
+                                            let _ = auth_client
+                                                .cancel_remote_access_request(tonic::Request::new(
+                                                    id.clone(),
+                                                ))
+                                                .await;
+                                            Err(Status::deadline_exceeded(format!(
+                                                "Remote access request with id \"{}\" \
+                                                 was not approved after waiting for {} seconds",
+                                                id.uuid,
+                                                approval_timeout.as_secs()
+                                            )))
+                                        }
+                                        _ => Err(Status::internal(format!(
+                                            "Failed to wait for access request with id \"{}\": {}",
+                                            id.uuid, e
+                                        ))),
+                                    }
+                                }
+                            })
+                            .map_ok(|val| {
+                                info!(
+                                    logger,
+                                    "Remote access request with id \"{}\" \
+                                     was approved.",
+                                    id.uuid
+                                );
+                                val
+                            })
+                            .await
                     }
                     None => Ok(()),
                 }
