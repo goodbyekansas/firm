@@ -18,7 +18,7 @@ use firm_types::{
     },
 };
 use futures::{stream, StreamExt, TryStreamExt};
-use slog::{o, warn, Logger};
+use slog::{warn, Logger};
 use thiserror::Error;
 use tokio::runtime::Handle;
 use tonic_middleware::HttpStatusInterceptor;
@@ -74,7 +74,6 @@ pub enum ProxyRegistryError {
 #[derive(Debug, Clone)]
 struct AcquireAuthInterceptor {
     auth_service: AuthService,
-    logger: Logger,
     endpoint: Endpoint,
 }
 
@@ -132,7 +131,6 @@ impl Interceptor for AcquireAuthInterceptor {
 async fn create_connection(
     auth_service: AuthService,
     registry: ExternalRegistry,
-    logger: Logger,
 ) -> Result<RegClient, ProxyRegistryError> {
     let mut endpoint = Endpoint::from_shared(registry.url.to_string())
         .map_err(|e| ProxyRegistryError::InvalidUri(e.to_string()))?;
@@ -150,7 +148,6 @@ async fn create_connection(
             .service(endpoint.connect_lazy()),
         AcquireAuthInterceptor {
             auth_service,
-            logger,
             endpoint,
         },
     ))
@@ -192,12 +189,7 @@ impl ProxyRegistry {
 
                     Ok::<RegistryConnection, ProxyRegistryError>(RegistryConnection {
                         name: reg_name.clone(),
-                        client: create_connection(
-                            auth_service.clone(),
-                            er,
-                            log.new(o!("registry" => reg_name)),
-                        )
-                        .await?,
+                        client: create_connection(auth_service.clone(), er).await?,
                     })
                 })
                 .try_collect::<Vec<RegistryConnection>>()

@@ -492,7 +492,7 @@ async fn run() -> Result<(), error::BendiniError> {
                             .uri()
                             .authority()
                             .and_then(|a| match a.port() {
-                                Some(_) => a.as_str().rsplitn(2, ':').nth(1),
+                                Some(_) => a.as_str().rsplit_once(':').map(|(a, _)| a),
                                 None => Some(a.as_str()),
                             })
                             .map(|s| s.to_owned())
