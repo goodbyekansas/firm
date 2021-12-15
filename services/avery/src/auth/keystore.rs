@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use futures::TryFutureExt;
 use serde::Deserialize;
@@ -25,8 +25,12 @@ pub trait KeyStore: Send + Sync + std::fmt::Debug {
 }
 
 #[derive(Deserialize)]
-struct PublicKey {
-    public_key: String,
+struct UserDocument {
+    // public_key exists for backwards compatibility when we were naive
+    // enough to think the people to computer data relationship would me
+    // one to one.
+    public_key: Option<String>,
+    public_keys: Option<HashMap<String, String>>,
 }
 
 pub struct SimpleKeyStore {
@@ -43,6 +47,25 @@ impl std::fmt::Debug for SimpleKeyStore {
     }
 }
 
+struct KeyId {
+    user_id: String,
+    key_id: Option<String>,
+}
+
+impl KeyId {
+    fn new(s: &str) -> Self {
+        s.split_once(':')
+            .map(|(userid, keyid)| Self {
+                user_id: userid.to_owned(),
+                key_id: Some(keyid.to_owned()),
+            })
+            .unwrap_or_else(|| Self {
+                user_id: s.to_owned(),
+                key_id: None,
+            })
+    }
+}
+
 impl SimpleKeyStore {
     pub(super) fn new(
         url: &str,
@@ -55,48 +78,46 @@ impl SimpleKeyStore {
             logger,
         }
     }
-}
 
-#[async_trait::async_trait]
-impl KeyStore for SimpleKeyStore {
-    async fn get(&self, id: &str) -> Result<Vec<u8>, KeyStoreError> {
+    async fn get_user_document(&self, key_id: &KeyId) -> Result<UserDocument, KeyStoreError> {
         futures::future::ready(
             url::Url::parse(&self.url)
-                .and_then(|url| url.join(id))
-                .map_err(|e| KeyStoreError::Error(format!("Failed to parse url: {}", e))),
+                .and_then(|url| url.join(&key_id.user_id))
+                .map_err(|e| KeyStoreError::Error(format!("Failed to parse url: {}", e)))
+                .and_then(|url| {
+                    url.host()
+                        .ok_or_else(|| {
+                            KeyStoreError::AuthenticationError(format!(
+                                "Url \"{}\" is missing hostname.",
+                                url.to_string(),
+                            ))
+                        })
+                        .map(|host| (host.to_string(), url.clone()))
+                }),
         )
-        .and_then(|url| {
-            futures::future::ready(
-                url.host()
-                    .ok_or_else(|| {
-                        KeyStoreError::AuthenticationError(format!(
-                            "Url \"{}\" is missing hostname.",
-                            url.to_string(),
-                        ))
-                    })
-                    .map(|host| host.to_string()),
-            )
-            .and_then(|scope| async {
-                debug!(
-                    self.logger,
-                    "Acquiring token for scope \"{}\" when downloading key", &scope
-                );
+        .and_then(|(scope, url)| async {
+            debug!(
+                self.logger,
+                "Acquiring token for scope \"{}\" \
+                 when downloading key",
+                &scope
+            );
 
-                self.token_source
-                    .write()
-                    .await
-                    .acquire_token(&scope, &self.logger)
-                    .await
-                    .map_err(move |e| {
-                        KeyStoreError::AuthenticationError(format!(
-                            "Failed to acquire token for scope \"{}\" when downloading key: {}",
-                            scope, e
-                        ))
-                    })
-                    .map(|token| (url, token.as_mut().token().to_owned()))
-            })
+            self.token_source
+                .write()
+                .await
+                .acquire_token(&scope, &self.logger)
+                .await
+                .map_err(move |e| {
+                    KeyStoreError::AuthenticationError(format!(
+                        "Failed to acquire token for scope \"{}\" \
+                         when downloading key: {}",
+                        scope, e
+                    ))
+                })
+                .map(|token| (url, token.as_mut().token().to_owned()))
         })
-        .and_then(|(url, token)| {
+        .and_then(|(url, token)| async move {
             reqwest::Client::new()
                 .get(url.to_string())
                 .bearer_auth(token)
@@ -110,16 +131,56 @@ impl KeyStore for SimpleKeyStore {
                     })
                 })
                 .and_then(|response: reqwest::Response| {
-                    response.json::<PublicKey>().map_err(|e| {
+                    response.json::<UserDocument>().map_err(|e| {
                         KeyStoreError::Error(format!("Failed to parse response: {}", e))
                     })
                 })
-                .map_ok(|json| json.public_key.as_bytes().to_vec())
+                .await
         })
         .await
     }
+}
 
-    async fn set(&self, _id: &str, key_data: &[u8]) -> Result<(), KeyStoreError> {
+#[async_trait::async_trait]
+impl KeyStore for SimpleKeyStore {
+    async fn get(&self, id: &str) -> Result<Vec<u8>, KeyStoreError> {
+        let key_id = KeyId::new(id);
+        self.get_user_document(&key_id)
+            .await
+            .and_then(|json| match &key_id.key_id {
+                Some(key_id) => json
+                    .public_keys
+                    .ok_or_else(|| {
+                        KeyStoreError::Error(String::from("Failed to find key in keystore."))
+                    })
+                    .and_then(move |keys| {
+                        keys.get(key_id)
+                            .ok_or_else(|| {
+                                KeyStoreError::Error(String::from(
+                                    "Failed to find the specified key for the user.",
+                                ))
+                            })
+                            .map(|public_key| public_key.as_bytes().to_vec())
+                    }),
+                None => json
+                    .public_key
+                    .ok_or_else(|| {
+                        KeyStoreError::Error(String::from(
+                            "Key id only has a user id \
+                                 but user has no default public \
+                                 key (`public_key`)",
+                        ))
+                    })
+                    .map(|pk| pk.as_bytes().to_vec()),
+            })
+    }
+
+    async fn set(&self, id: &str, key_data: &[u8]) -> Result<(), KeyStoreError> {
+        let key_id = KeyId::new(id).key_id.ok_or_else(|| {
+            KeyStoreError::Error(String::from("Key id is required for uploading keys"))
+        })?;
+        let key_id2 = KeyId::new(id);
+
         futures::future::ready(
             url::Url::parse(&self.url)
                 .map_err(|e| KeyStoreError::Error(format!("Failed to parse url: {}", e)))
@@ -139,7 +200,6 @@ impl KeyStore for SimpleKeyStore {
                 self.logger,
                 "Acquiring token for scope \"{}\" when uploading key", &scope
             );
-
             self.token_source
                 .write()
                 .await
@@ -154,16 +214,37 @@ impl KeyStore for SimpleKeyStore {
                 .map(|token| (url, token.as_mut().token().to_owned()))
         })
         .and_then(|(url, token)| {
+            self.get_user_document(&key_id2)
+                .map_ok(|user_document| (url, token, user_document))
+        })
+        .and_then(|(url, token, user_document)| {
             futures::future::ready(String::from_utf8(key_data.to_vec()))
                 .map_err(|e| KeyStoreError::Error(format!("Non utf-8 characters in key: {}", e)))
                 .and_then(move |key_string| {
+                    let patch = if user_document.public_keys.is_some() {
+                        serde_json::json!({"patch": [{
+                            "op": "add",
+                            "path": format!("/public_keys/{id}", id=key_id),
+                            "value": key_string,
+                        }]})
+                    } else {
+                        serde_json::json!({"patch": [
+                            {
+                                "op": "add",
+                                "path": "/public_keys",
+                                "value": {},
+                            },
+                            {
+                                "op": "add",
+                                "path": format!("/public_keys/{id}", id=key_id),
+                                "value": key_string,
+                            }
+                        ]})
+                    };
+
                     reqwest::Client::new()
                         .patch(url.to_string())
-                        .json(&serde_json::json!({"patch": [{
-                            "op": "add",
-                            "path": "/public_key",
-                            "value": key_string,
-                        }] }))
+                        .json(&patch)
                         .bearer_auth(token)
                         .send()
                         .map_err(|e| {

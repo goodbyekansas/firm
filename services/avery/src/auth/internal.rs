@@ -7,6 +7,7 @@ use std::{
 use jsonwebtoken::{Algorithm, Header};
 use ring::signature::KeyPair;
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use simple_asn1::{ASN1Block, ASN1Class, ASN1EncodeErr, ToASN1, OID};
 use slog::{info, Logger};
 use thiserror::Error;
@@ -181,6 +182,7 @@ impl<'a> TokenGeneratorBuilder<'a> {
                         .map_err(SelfSignedTokenError::FailedToReadKey)?,
                 ),
                 generated_key_pair: None,
+                private_key_fingerprint: TokenGenerator::generate_fingerprint(bytes),
             }),
             Some(PrivateKeySource::RsaFile(path)) => std::fs::read(path)
                 .map_err(|e| SelfSignedTokenError::FailedToReadKeyFile(path.to_owned(), e))
@@ -190,6 +192,7 @@ impl<'a> TokenGeneratorBuilder<'a> {
                             jsonwebtoken::EncodingKey::from_rsa_pem(&bytes)
                                 .map_err(SelfSignedTokenError::FailedToReadKey)?,
                         ),
+                        private_key_fingerprint: TokenGenerator::generate_fingerprint(&bytes),
                         generated_key_pair: None,
                     })
                 }),
@@ -199,6 +202,7 @@ impl<'a> TokenGeneratorBuilder<'a> {
                         .map_err(SelfSignedTokenError::FailedToReadKey)?,
                 ),
                 generated_key_pair: None,
+                private_key_fingerprint: TokenGenerator::generate_fingerprint(bytes),
             }),
             Some(PrivateKeySource::EcdsaFile(path)) => std::fs::read(path)
                 .map_err(|e| SelfSignedTokenError::FailedToReadKeyFile(path.to_owned(), e))
@@ -209,6 +213,7 @@ impl<'a> TokenGeneratorBuilder<'a> {
                                 .map_err(SelfSignedTokenError::FailedToReadKey)?,
                         ),
                         generated_key_pair: None,
+                        private_key_fingerprint: TokenGenerator::generate_fingerprint(&bytes),
                     })
                 }),
             None => ring::signature::EcdsaKeyPair::generate_pkcs8(
@@ -230,6 +235,7 @@ impl<'a> TokenGeneratorBuilder<'a> {
                     public_key,
                     private_key: private_key.as_ref().to_vec(),
                 })),
+                private_key_fingerprint: TokenGenerator::generate_fingerprint(private_key.as_ref()),
             }),
         }
     }
@@ -247,6 +253,7 @@ struct StandardClaims {
 #[derive(Clone, Debug)]
 pub struct TokenGenerator {
     private_key: Arc<jsonwebtoken::EncodingKey>,
+    private_key_fingerprint: String,
     generated_key_pair: Option<Arc<DerKeyPair>>,
 }
 
@@ -350,6 +357,14 @@ enum TokenExpiry {
 }
 
 impl TokenGenerator {
+    fn generate_fingerprint(key: &[u8]) -> String {
+        format!("{:x}", sha2::Sha256::digest(key))[..16].to_string()
+    }
+
+    pub fn key_id(&self, subject: &str) -> String {
+        format!("{}:{}", subject, self.private_key_fingerprint)
+    }
+
     pub fn generate(
         &self,
         subject: &str,
@@ -387,8 +402,8 @@ impl TokenGenerator {
             iat: now,
         };
 
-        let mut header = Header::new(Algorithm::ES256);
-        header.kid = Some(sub.clone()); //Key id is not _really_ the subject but that's how we use it
+        let mut header = Header::new(Algorithm::ES256); // TODO: This is not always true
+        header.kid = Some(self.key_id(&sub));
 
         Ok(JwtToken {
             token: jsonwebtoken::encode(&header, &claims, &self.private_key)

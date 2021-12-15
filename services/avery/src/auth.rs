@@ -484,6 +484,9 @@ impl Default for TokenCache {
     }
 }
 
+const GENERATED_KEY_VERSION: usize = 2;
+const KEYSTORE_VERSION_FILENAME: &str = ".version";
+
 #[derive(Debug, Default)]
 struct SelfSignedGenerator {
     inner: Option<internal::TokenGenerator>,
@@ -494,17 +497,36 @@ impl SelfSignedGenerator {
     pub fn new(key_path: &Path) -> Self {
         Self {
             inner: None,
-            key_path: key_path.to_owned(),
+            key_path: key_path.join("keys"),
         }
+    }
+
+    fn key_version(keystore_path: &Path) -> Result<usize, String> {
+        std::fs::read_to_string(keystore_path.join(KEYSTORE_VERSION_FILENAME))
+            .or_else(|ioe| match ioe.kind() {
+                std::io::ErrorKind::NotFound => Ok("1".to_owned()),
+                _ => Err(format!("Failed to read key version file: {}", ioe)),
+            })
+            .and_then(|version| {
+                version
+                    .parse()
+                    .map_err(|parse_error| format!("Failed to parse key version: {}", parse_error))
+            })
+    }
+
+    fn save_key_version(keystore_path: &Path) -> Result<(), String> {
+        std::fs::write(
+            keystore_path.join(KEYSTORE_VERSION_FILENAME),
+            GENERATED_KEY_VERSION.to_string(),
+        )
+        .map_err(|ioe| format!("Failed to write key version: {}", ioe))
     }
 
     fn create_self_signed_generator(
         keystore_path: &Path,
         logger: Logger,
     ) -> Result<(bool, internal::TokenGenerator), String> {
-        let keystore_path = keystore_path.join("keys");
-
-        std::fs::create_dir_all(&keystore_path)
+        std::fs::create_dir_all(keystore_path)
             .map_err(|e| {
                 format!(
                     "Failed to create keystore directory at \"{}\": {}",
@@ -513,13 +535,15 @@ impl SelfSignedGenerator {
                 )
             })
             .and_then(|_| {
-                set_keyfolder_permissions(&keystore_path)
+                set_keyfolder_permissions(keystore_path)
                     .map_err(|e| format!("Failed to set permissions on keystore directory: {}", e))
             })
             .and_then(|_| {
                 let private_key_path = keystore_path.join("id_ecdsa.pem");
                 let public_key_path = keystore_path.join("id_ecdsa_pub.pem");
-                if private_key_path.exists() {
+                if private_key_path.exists()
+                    && Self::key_version(keystore_path)? >= GENERATED_KEY_VERSION
+                {
                     info!(
                         logger,
                         "Using token signing private key from: {}",
@@ -537,6 +561,7 @@ impl SelfSignedGenerator {
                         .and_then(|tg| {
                             tg.save_keys(&private_key_path, &public_key_path)
                                 .map_err(|e| e.to_string())?;
+                            Self::save_key_version(keystore_path)?;
                             info!(
                                 logger,
                                 "Saved generated token signing keypair in {} and {}",
@@ -555,16 +580,23 @@ impl SelfSignedGenerator {
         subject: &'a str,
         audience: &'a str,
         logger: Logger,
-    ) -> Result<(internal::JwtToken, Option<Vec<u8>>), internal::SelfSignedTokenError> {
+    ) -> Result<(internal::JwtToken, Option<(Vec<u8>, String)>), internal::SelfSignedTokenError>
+    {
         let (upload, inner) = match self.inner.take() {
             None => Self::create_self_signed_generator(&self.key_path, logger)
                 .map_err(SelfSignedTokenError::GenericTokenGenerationError)?,
             Some(inner) => (false, inner),
         };
 
-        let res = inner
-            .generate(subject, audience)
-            .map(|t| (t, upload.then(|| inner.public_key()).flatten()));
+        let res = inner.generate(subject, audience).map(|t| {
+            (
+                t,
+                upload
+                    .then(|| inner.public_key())
+                    .flatten()
+                    .map(|key| (key, inner.key_id(subject))),
+            )
+        });
         self.inner = Some(inner);
         res
     }
@@ -678,6 +710,7 @@ fn set_keyfolder_permissions(_: &Path) -> std::io::Result<()> {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
+#[allow(clippy::large_enum_variant)] // TODO
 pub enum TypedToken {
     Oidc(oidc::OidcToken),
 
@@ -687,7 +720,7 @@ pub enum TypedToken {
     #[serde(skip)]
     InternalWithPublicKey {
         token: internal::JwtToken,
-        public_key: Option<Vec<u8>>,
+        public_key: Option<(Vec<u8>, String)>,
     },
 }
 
@@ -900,7 +933,7 @@ impl Authentication for AuthService {
          * upload below. This will be true as long as the key store depends on the
          * token store.
          */
-        let (proto_token, public_key, keyid) = {
+        let (proto_token, public_key) = {
             let mut store = self.token_store.write().await;
             let (token, public_key) = match store.acquire_token(scope, &self.logger).await? {
                 TypedToken::InternalWithPublicKey { token, public_key } => {
@@ -918,7 +951,6 @@ impl Authentication for AuthService {
                     scope: request.get_ref().scope.clone(),
                 },
                 public_key,
-                token.sub().unwrap_or("unknown").to_owned(),
             )
         };
 
@@ -928,10 +960,9 @@ impl Authentication for AuthService {
          * takes a write lock on the token store so it needs to be
          * separate from the block above.
          */
-        if let Some(key_content) = public_key {
+        if let Some((key_content, keyid)) = public_key {
             debug!(self.logger, "Uploading generated key with id {}", keyid);
             self.key_store
-                // TODO: this should be keyid
                 .set(&keyid, &key_content)
                 .await
                 .map_err(|e| tonic::Status::internal(e.to_string()))?
