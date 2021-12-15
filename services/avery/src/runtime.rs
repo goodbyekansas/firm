@@ -33,7 +33,6 @@ pub struct RuntimeParameters {
 
 #[derive(Debug, Clone)]
 pub struct FunctionDirectory {
-    root_path: PathBuf,
     attachments_path: PathBuf,
     cache_path: PathBuf,
     execution_path: PathBuf,
@@ -62,7 +61,6 @@ impl FunctionDirectory {
         std::fs::create_dir_all(&execution_path)?;
 
         Ok(Self {
-            root_path,
             attachments_path,
             cache_path,
             execution_path,

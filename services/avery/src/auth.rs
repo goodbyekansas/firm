@@ -74,7 +74,6 @@ pub struct AuthService {
     key_store: Arc<dyn KeyStore>,
     access_list: ExpireMap<String, ()>,
     pending_access_requests: ExpireMap<uuid::Uuid, PendingAccessRequest>,
-    identity: Option<Identity>,
 }
 
 impl Debug for AuthService {
@@ -91,7 +90,6 @@ impl Default for AuthService {
             key_store: Arc::new(keystore::NullKeyStore {}),
             access_list: ExpireMap::default(),
             pending_access_requests: ExpireMap::default(),
-            identity: Option::default(),
         }
     }
 }
@@ -816,7 +814,6 @@ impl AuthService {
             logger,
             access_list: access_config.users.into_iter().collect(),
             pending_access_requests: ExpireMap::default(),
-            identity: None,
         })
     }
 

@@ -1486,7 +1486,7 @@ mod tests {
 
             let function2_1_1_1_id =
                 storage::FunctionId::from(&storage.insert(function2_1_1_1).await.unwrap());
-            storage::FunctionId::from(&storage.insert(function2_1_0_0).await.unwrap());
+            let _ = storage::FunctionId::from(&storage.insert(function2_1_0_0).await.unwrap());
 
             let res = storage
                 .list(&storage::Filters {

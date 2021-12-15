@@ -34,7 +34,6 @@ struct NestedWasiRuntime {
     runtime_name: String,
     runtime_executable: PathBuf,
     runtime_checksums: Checksums,
-    logger: Logger,
     runtime_context_folder: PathBuf,
 }
 
@@ -51,7 +50,6 @@ impl NestedWasiRuntime {
             runtime_executable: executable.to_owned(),
             runtime_name: name.to_owned(),
             runtime_checksums: checksums,
-            logger,
             runtime_context_folder: runtime_context_folder.to_owned(),
         }
     }
