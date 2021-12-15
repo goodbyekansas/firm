@@ -1,6 +1,9 @@
 name: Checks
 
 on: [push]
+concurrency:
+  group: '${{ github.ref_name }}-checks'
+  cancel-in-progress: true
 
 jobs:
   format-nix:
