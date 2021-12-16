@@ -673,7 +673,7 @@ impl TokenProviders {
                     token,
                     public_key: key_to_upload,
                 }),
-            Some(AuthConfig::KeyFile { path }) => self
+            Some(AuthConfig::KeyFile { path, .. }) => self
                 .self_signed_with_file
                 .get(path)
                 .ok_or_else(|| {
@@ -816,9 +816,21 @@ impl AuthService {
                 self_signed_with_file: auth_scopes
                     .iter()
                     .filter_map(|(_, value)| match value {
-                        AuthConfig::KeyFile { path } => Some(
+                        AuthConfig::KeyFile {
+                            path,
+                            kid,
+                            iss,
+                            sub,
+                            aud,
+                            exp,
+                        } => Some(
                             internal::TokenGeneratorBuilder::new()
                                 .with_rsa_private_key_from_file(path)
+                                .with_kid(kid.as_ref().cloned())
+                                .with_iss(iss.as_ref().cloned())
+                                .with_sub(sub.as_ref().cloned())
+                                .with_aud(aud.as_ref().cloned())
+                                .with_exp(exp.as_ref().cloned())
                                 .build()
                                 .map(|token_generator| (path.to_owned(), token_generator)),
                         ),
