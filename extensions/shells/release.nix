@@ -47,58 +47,9 @@ in
 mkShell {
   buildInputs = [ python38 python38.pkgs.keepachangelog github-release ];
   inherit allChangelogs;
+  CHANGELOG_SCRIPT = ./release/changelog.py;
   shellHook = ''
-    updateChangelogs() {
-      if [ "$1" == "-h" ] || [ "$1" == "--help" ]; then
-        echo "This tool updates the changelogs for: $(ls -m $allChangelogs | head)."
-        echo
-        echo "It will prompt you for adding version number to unreleased sections (with a suggestion)."
-        echo "Then it will update the main changelog in $FIRM_CHANGELOG and add the changes for the components."
-        echo "For example, if avery has:"
-        echo -e "\033[1;94m  ### Added"
-        echo "  -shiny new feautre"
-        echo -e "  -other cool thing\033[0m"
-        echo "Then the main changelog will get"
-        echo -e "\033[1;94m  ### Added"
-        echo "  -avery: shiny new feature"
-        echo -e "  -avery: other cool thing\033[0m"
-        echo "The main changelog will also get a ###Packages header with the version of each component."
-      else
-        python ${./release/changelog.py} release --changelogs ${allChangelogs}
-      fi
-    }
-
-    makeRelease() {
-        (
-          set -e
-          git checkout main
-          git pull
-          version=$(python ${./release/changelog.py} version)
-          description=$(python ${./release/changelog.py} description)
-          old_tags=$(git tag)
-          if [[ $old_tags =~ "$version" ]]; then
-            echo "$version is already tagged"
-          else
-            git tag -a "$version" -m "🔖 Firm $version"
-            git push origin "$version"
-          fi
-          if [ -z "$GITHUB_TOKEN" ]; then
-            if [ -n "$1" ]; then
-              GITHUB_TOKEN=$(cat $1)
-            else
-              echo "No access token found and GITHUB_TOKEN was not set, can not make a github release remotely!"
-              exit 1
-            fi
-          fi
-          github-release release --tag "$version" --description "$description"
-        )
-    }
-
-    export GITHUB_USER="goodbyekansas"
-    export GITHUB_REPO="firm"
-    FIRM_CHANGELOG="$(git rev-parse --show-toplevel)/CHANGELOG.md"
-    export FIRM_CHANGELOG
-
+    source ${./release/shell-scripts.bash}
     echo -e "🚀 \033[1mWelcome to the release shell!\033[0m"
     echo "The following tools are available in this shell:"
     echo
