@@ -6,8 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Release shell reports success.
+
 ### Fixed
 - The release shell's makeRelease now uses the provided github token correctly.
+- Avery, Lomax, Quinn and Bendini having wrong versions in Cargo.toml.
+- Fixed 2.0.0 changelog.
 
 ## [2.0.0] - 2021-12-16
 ### Packages
@@ -59,12 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - protocols: Name filter is now just a string instead of a type
 - avery: Public keys are now uploaded together with a key id making it possible to have multiple keys per users.
 - avery: Startup of Avery is now side-effect free. This means that no keys are generated and no
-- avery: login will be required.
+         login will be required.
 - avery: Login is no longer automatic. Any request that would have required a login will now
-- avery: return a gRPC `unauthenticated`. An interactive client can then choose to call `login`
-- avery: to start an interactive login process. This process is carried out with the help of a
-- avery: stream of login commands which instructs the client which actions to take during the
-- avery: login process.
+         return a gRPC `unauthenticated`. An interactive client can then choose to call `login`
+         to start an interactive login process. This process is carried out with the help of a
+         stream of login commands which instructs the client which actions to take during the
+         login process.
 
 ## [1.2.1] - 2021-10-21
 ### Packages
