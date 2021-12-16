@@ -280,18 +280,26 @@ impl<'a> TokenGeneratorBuilder<'a> {
                 .map_err(SelfSignedTokenError::GeneratedKeyRejected)
                 .map(|key_pair| (key_pair.public_key().as_ref().to_vec(), keys))
             })
-            .map(|(public_key, private_key)| TokenGenerator {
-                private_key: Arc::new(jsonwebtoken::EncodingKey::from_ec_der(private_key.as_ref())),
-                generated_key_pair: Some(Arc::new(DerKeyPair {
+            .map(|(public_key, private_key)| {
+                let keypair = DerKeyPair {
                     public_key,
                     private_key: private_key.as_ref().to_vec(),
-                })),
-                private_key_fingerprint: TokenGenerator::generate_fingerprint(private_key.as_ref()),
-                kid: self.kid.as_ref().cloned(),
-                iss: self.iss.as_ref().cloned(),
-                sub: self.sub.as_ref().cloned(),
-                aud: self.aud.as_ref().cloned(),
-                exp: self.exp.as_ref().cloned(),
+                };
+                let pem_keypair = PemKeyPair::from(&keypair);
+                TokenGenerator {
+                    private_key: Arc::new(jsonwebtoken::EncodingKey::from_ec_der(
+                        private_key.as_ref(),
+                    )),
+                    generated_key_pair: Some(Arc::new(keypair)),
+                    private_key_fingerprint: TokenGenerator::generate_fingerprint(
+                        pem_keypair.private_key.as_bytes(),
+                    ),
+                    kid: self.kid.as_ref().cloned(),
+                    iss: self.iss.as_ref().cloned(),
+                    sub: self.sub.as_ref().cloned(),
+                    aud: self.aud.as_ref().cloned(),
+                    exp: self.exp.as_ref().cloned(),
+                }
             }),
         }
     }
@@ -666,6 +674,25 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
             tok2.expires_at(),
             tok.expires_at(),
             "refresh() mutates the original token so it should match the returned token"
+        );
+    }
+
+    #[test]
+    fn key_id() {
+        let generator_with_new_key = TokenGeneratorBuilder::new().build().unwrap();
+        let generated_pem_key: PemKeyPair = generator_with_new_key
+            .generated_key_pair
+            .as_deref()
+            .unwrap()
+            .into();
+        let generator_with_loaded_key = TokenGeneratorBuilder::new()
+            .with_ecdsa_private_key(generated_pem_key.private_key.as_bytes())
+            .build()
+            .unwrap();
+        assert_eq!(
+            generator_with_new_key.key_id("subjekt"),
+            generator_with_loaded_key.key_id("subjekt"),
+            "Expect key ids to be the same when key is generated as when it is later loaded"
         );
     }
 }
