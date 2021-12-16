@@ -977,7 +977,12 @@ impl Authentication for AuthService {
             self.key_store
                 .set(&keyid, &key_content)
                 .await
-                .map_err(|e| tonic::Status::internal(e.to_string()))?
+                .map_err(|e| tonic::Status::internal(e.to_string()))?;
+
+            debug!(
+                self.logger,
+                "Done uploading generated key with id {}", keyid
+            );
         }
 
         Ok(tonic::Response::new(proto_token))
