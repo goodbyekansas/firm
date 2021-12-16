@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2021-12-16
+
 ### Changed
 - Name filter is now just a string instead of a type
 
@@ -18,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `InteractiveLoginCommand` that the client follows.
 - `WaitForRemoteAccessRequest` endpoint that can be used to wait for approval of a remote
   access request. This should be used together with gRPC timeouts.
-- `CancelRemoteAccessReqest` endpoint to remove a pending remote access request.
+- `CancelRemoteAccessRequest` endpoint to remove a pending remote access request.
 
 ## [1.0.0] - 2021-07-03
 

@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2021-12-16
+
 ### Changed
 - Public keys are now uploaded together with a key id making it possible to have multiple keys per users.
 - Startup of Avery is now side-effect free. This means that no keys are generated and no
