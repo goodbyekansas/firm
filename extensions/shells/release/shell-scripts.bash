@@ -17,8 +17,11 @@ updateChangelogs() {
     echo "The main changelog will also get a ###Packages header with the version of each component."
   else
     python "$CHANGELOG_SCRIPT" release --changelogs "$allChangelogs"
+    echo "Remember to update Cargo.toml with correct versions!"
   fi
 }
+
+# TODO: Automate to update Cargo.toml files with correct versions.
 
 makeRelease() {
   (
@@ -44,6 +47,7 @@ makeRelease() {
     fi
     export GITHUB_TOKEN
     github-release release --tag "$version" --description "$description"
+    echo "Release \"$version\" done! 📦"
   )
 }
 
