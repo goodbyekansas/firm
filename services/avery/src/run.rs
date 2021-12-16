@@ -52,9 +52,10 @@ where
 {
     info!(log, "🏎️ Starting Avery...");
 
-    let config = args
-        .config
-        .map_or_else(config::Config::new, config::Config::new_with_file)?;
+    let config = args.config.map_or_else(
+        || config::Config::new(log.new(o! { "scope" => "load-config"})),
+        |file| config::Config::new_with_file(file, log.new(o! { "scope" => "load-config"})),
+    )?;
 
     let external_registries = config
         .registries

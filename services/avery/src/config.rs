@@ -6,6 +6,7 @@ use std::{
 
 use config::{ConfigError, Environment, File, FileFormat};
 use serde::Deserialize;
+use slog::{info, Logger};
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "kebab-case")]
@@ -191,18 +192,27 @@ const DEFAULT_CFG_FILE_NAME: &str = "avery.toml";
 const ENVIRONMENT_PREFIX: &str = "AVERY";
 
 impl Config {
-    pub fn new() -> Result<Self, ConfigError> {
+    pub fn new(logger: Logger) -> Result<Self, ConfigError> {
         let mut c = config::Config::new();
 
         // try some default config file locations
-
         let current_folder_cfg = Path::new(DEFAULT_CFG_FILE_NAME);
         if current_folder_cfg.exists() {
+            info!(
+                logger,
+                "📒 Reading configuration file: \"./{}\"",
+                current_folder_cfg.display()
+            );
             c.merge(File::from(current_folder_cfg))?;
         } else {
             // first, a global config file
             if let Some(global_cfg_path) = crate::system::global_config_path() {
                 let path = global_cfg_path.join(DEFAULT_CFG_FILE_NAME);
+                info!(
+                    logger,
+                    "📒 Reading configuration file: \"{}\"",
+                    path.display()
+                );
                 if path.exists() {
                     c.merge(File::from(path))?;
                 }
@@ -211,6 +221,11 @@ impl Config {
             // overridden by a local one
             if let Some(user_cfg_path) = crate::system::user_config_path() {
                 let path = user_cfg_path.join(DEFAULT_CFG_FILE_NAME);
+                info!(
+                    logger,
+                    "📒 Reading user configuration overrides. File: \"{}\"",
+                    path.display()
+                );
                 if path.exists() {
                     c.merge(File::from(path))?;
                 }
@@ -231,7 +246,12 @@ impl Config {
         c.try_into()
     }
 
-    pub fn new_with_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
+    pub fn new_with_file<P: AsRef<Path>>(path: P, logger: Logger) -> Result<Self, ConfigError> {
+        info!(
+            logger,
+            "📒 Reading configuration from file: \"{}\"",
+            path.as_ref().display(),
+        );
         let mut c = config::Config::new();
         c.merge(File::from(path.as_ref()))?;
         c.merge(Environment::with_prefix(ENVIRONMENT_PREFIX))?;
