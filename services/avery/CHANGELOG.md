@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   login process.
 
 ### Added
+- Config can override JWT claims on private key files
 - Implemented endpoint for GetIdentity
 - Implemented ListVersions endpoint
 - Added publisher email filter for List and ListVersion

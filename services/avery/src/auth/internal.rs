@@ -143,13 +143,44 @@ enum PrivateKeySource<'a> {
     EcdsaFile(&'a Path),
 }
 
+#[derive(Default)]
 pub struct TokenGeneratorBuilder<'a> {
     private_key: Option<PrivateKeySource<'a>>,
+    kid: Option<String>,
+    iss: Option<String>,
+    sub: Option<String>,
+    aud: Option<String>,
+    exp: Option<usize>,
 }
 
 impl<'a> TokenGeneratorBuilder<'a> {
     pub fn new() -> Self {
-        Self { private_key: None }
+        Default::default()
+    }
+
+    pub fn with_kid(&'a mut self, kid: Option<String>) -> &'a mut Self {
+        self.kid = kid;
+        self
+    }
+
+    pub fn with_iss(&'a mut self, iss: Option<String>) -> &'a mut Self {
+        self.iss = iss;
+        self
+    }
+
+    pub fn with_sub(&'a mut self, sub: Option<String>) -> &'a mut Self {
+        self.sub = sub;
+        self
+    }
+
+    pub fn with_aud(&'a mut self, aud: Option<String>) -> &'a mut Self {
+        self.aud = aud;
+        self
+    }
+
+    pub fn with_exp(&'a mut self, exp: Option<usize>) -> &'a mut Self {
+        self.exp = exp;
+        self
     }
 
     #[allow(dead_code)]
@@ -183,6 +214,11 @@ impl<'a> TokenGeneratorBuilder<'a> {
                 ),
                 generated_key_pair: None,
                 private_key_fingerprint: TokenGenerator::generate_fingerprint(bytes),
+                kid: self.kid.as_ref().cloned(),
+                iss: self.iss.as_ref().cloned(),
+                sub: self.sub.as_ref().cloned(),
+                aud: self.aud.as_ref().cloned(),
+                exp: self.exp.as_ref().cloned(),
             }),
             Some(PrivateKeySource::RsaFile(path)) => std::fs::read(path)
                 .map_err(|e| SelfSignedTokenError::FailedToReadKeyFile(path.to_owned(), e))
@@ -194,6 +230,11 @@ impl<'a> TokenGeneratorBuilder<'a> {
                         ),
                         private_key_fingerprint: TokenGenerator::generate_fingerprint(&bytes),
                         generated_key_pair: None,
+                        kid: self.kid.as_ref().cloned(),
+                        iss: self.iss.as_ref().cloned(),
+                        sub: self.sub.as_ref().cloned(),
+                        aud: self.aud.as_ref().cloned(),
+                        exp: self.exp.as_ref().cloned(),
                     })
                 }),
             Some(PrivateKeySource::EcdsaBytes(bytes)) => Ok(TokenGenerator {
@@ -203,6 +244,11 @@ impl<'a> TokenGeneratorBuilder<'a> {
                 ),
                 generated_key_pair: None,
                 private_key_fingerprint: TokenGenerator::generate_fingerprint(bytes),
+                kid: self.kid.as_ref().cloned(),
+                iss: self.iss.as_ref().cloned(),
+                sub: self.sub.as_ref().cloned(),
+                aud: self.aud.as_ref().cloned(),
+                exp: self.exp.as_ref().cloned(),
             }),
             Some(PrivateKeySource::EcdsaFile(path)) => std::fs::read(path)
                 .map_err(|e| SelfSignedTokenError::FailedToReadKeyFile(path.to_owned(), e))
@@ -214,6 +260,11 @@ impl<'a> TokenGeneratorBuilder<'a> {
                         ),
                         generated_key_pair: None,
                         private_key_fingerprint: TokenGenerator::generate_fingerprint(&bytes),
+                        kid: self.kid.as_ref().cloned(),
+                        iss: self.iss.as_ref().cloned(),
+                        sub: self.sub.as_ref().cloned(),
+                        aud: self.aud.as_ref().cloned(),
+                        exp: self.exp.as_ref().cloned(),
                     })
                 }),
             None => ring::signature::EcdsaKeyPair::generate_pkcs8(
@@ -236,6 +287,11 @@ impl<'a> TokenGeneratorBuilder<'a> {
                     private_key: private_key.as_ref().to_vec(),
                 })),
                 private_key_fingerprint: TokenGenerator::generate_fingerprint(private_key.as_ref()),
+                kid: self.kid.as_ref().cloned(),
+                iss: self.iss.as_ref().cloned(),
+                sub: self.sub.as_ref().cloned(),
+                aud: self.aud.as_ref().cloned(),
+                exp: self.exp.as_ref().cloned(),
             }),
         }
     }
@@ -255,6 +311,11 @@ pub struct TokenGenerator {
     private_key: Arc<jsonwebtoken::EncodingKey>,
     private_key_fingerprint: String,
     generated_key_pair: Option<Arc<DerKeyPair>>,
+    kid: Option<String>,
+    iss: Option<String>,
+    sub: Option<String>,
+    aud: Option<String>,
+    exp: Option<usize>,
 }
 
 struct DerKeyPair {
@@ -370,13 +431,15 @@ impl TokenGenerator {
         subject: &str,
         audience: &str,
     ) -> Result<JwtToken, SelfSignedTokenError> {
-        let computer_name = hostname::get()
-            .map_err(SelfSignedTokenError::FailedToDetermineHostName)?
-            .to_string_lossy()
-            .to_string();
         self.generate_impl(
             audience.to_owned(),
-            format!("Avery@{}", computer_name),
+            format!(
+                "Avery@{}",
+                hostname::get()
+                    .map_err(SelfSignedTokenError::FailedToDetermineHostName)?
+                    .to_string_lossy()
+                    .to_string()
+            ),
             subject.to_owned(),
             TokenExpiry::ExpiresIn(3600u64),
         )
@@ -392,18 +455,30 @@ impl TokenGenerator {
         let now = chrono::Utc::now().timestamp() as u64;
 
         let claims = StandardClaims {
-            sub: sub.clone(),
-            exp: match expires {
-                TokenExpiry::ExpiresIn(ein) => now + ein,
-                TokenExpiry::ExpiresAt(eat) => eat,
-            },
-            iss,
-            aud: audience.clone(),
+            sub: self.sub.as_ref().cloned().unwrap_or_else(|| sub.clone()),
+            exp: self
+                .exp
+                .as_ref()
+                .map(|exp| now + *exp as u64)
+                .unwrap_or_else(|| match expires {
+                    TokenExpiry::ExpiresIn(ein) => now + ein,
+                    TokenExpiry::ExpiresAt(eat) => eat,
+                }),
+            iss: self.iss.as_ref().cloned().unwrap_or(iss),
+            aud: self
+                .aud
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| audience.clone()),
             iat: now,
         };
 
         let mut header = Header::new(Algorithm::ES256); // TODO: This is not always true
-        header.kid = Some(self.key_id(&sub));
+        header.kid = self
+            .kid
+            .as_ref()
+            .cloned()
+            .or_else(|| Some(self.key_id(&sub)));
 
         Ok(JwtToken {
             token: jsonwebtoken::encode(&header, &claims, &self.private_key)

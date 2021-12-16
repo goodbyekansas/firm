@@ -10,9 +10,30 @@ use serde::Deserialize;
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum AuthConfig {
-    Oidc { provider: String },
+    Oidc {
+        provider: String,
+    },
     SelfSigned,
-    KeyFile { path: PathBuf },
+    KeyFile {
+        /// Path to the private key used to sign the JWT
+        path: PathBuf,
+
+        /// Override iss on JWT
+        iss: Option<String>,
+
+        /// Override sub on JWT
+        sub: Option<String>,
+
+        /// Override aud on JWT
+        aud: Option<String>,
+
+        /// Override kid on JWT
+        kid: Option<String>,
+
+        /// Override exp on JWT.
+        /// Will expire in exp seconds
+        exp: Option<usize>,
+    },
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -403,7 +424,7 @@ hosted_domains=["💈.no", "🌡️.yes"]
             Some(AuthConfig::SelfSigned)
         ));
         assert!(
-            matches!(c.auth.scopes.get("not-on-www"), Some(AuthConfig::KeyFile{path}) if path == Path::new("/tmp/my/file"))
+            matches!(c.auth.scopes.get("not-on-www"), Some(AuthConfig::KeyFile{ path, .. }) if path == Path::new("/tmp/my/file"))
         );
 
         assert_eq!(
