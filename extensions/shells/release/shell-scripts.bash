@@ -30,23 +30,17 @@ makeRelease() {
     git pull
     version=$(python "$CHANGELOG_SCRIPT" version)
     description=$(python "$CHANGELOG_SCRIPT" description)
-    old_tags=$(git tag)
-    if [[ $old_tags =~ $version ]]; then
+    if [ "$(git tag -l "$version")" ]; then
       echo "$version is already tagged"
     else
-      git tag -a "$version" -m "🔖 Firm $version"
+      git tag -s "$version" -m "🔖 Firm $version" || git tag -a "$version" -m "🔖 Firm $version"
       git push origin "$version"
     fi
-    if [ -z "$GITHUB_TOKEN" ]; then
-      if [ -n "$1" ]; then
-        GITHUB_TOKEN=$(cat "$1")
-      else
-        echo "No access token found and GITHUB_TOKEN was not set, can not make a github release remotely!"
-        exit 1
-      fi
+
+    if ! gh auth status; then
+        gh auth login --hostname github.com --web
     fi
-    export GITHUB_TOKEN
-    github-release release --tag "$version" --description "$description"
+    gh release create "$version" --notes "$description"
     echo "Release \"$version\" done! 📦"
   )
 }
