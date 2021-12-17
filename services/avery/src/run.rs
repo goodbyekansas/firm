@@ -50,7 +50,7 @@ pub async fn run<G>(
 where
     G: FnOnce() -> Result<(), String>,
 {
-    info!(log, "🏎️ Starting Avery...");
+    info!(log, "🏎️ Starting Avery {}...", env!("CARGO_PKG_VERSION"));
 
     let config = args.config.map_or_else(
         || config::Config::new(log.new(o! { "scope" => "load-config"})),
