@@ -208,12 +208,12 @@ impl Config {
             // first, a global config file
             if let Some(global_cfg_path) = crate::system::global_config_path() {
                 let path = global_cfg_path.join(DEFAULT_CFG_FILE_NAME);
-                info!(
-                    logger,
-                    "📒 Reading configuration file: \"{}\"",
-                    path.display()
-                );
                 if path.exists() {
+                    info!(
+                        logger,
+                        "📒 Reading configuration file: \"{}\"",
+                        path.display()
+                    );
                     c.merge(File::from(path))?;
                 }
             }
@@ -221,12 +221,12 @@ impl Config {
             // overridden by a local one
             if let Some(user_cfg_path) = crate::system::user_config_path() {
                 let path = user_cfg_path.join(DEFAULT_CFG_FILE_NAME);
-                info!(
-                    logger,
-                    "📒 Reading user configuration overrides. File: \"{}\"",
-                    path.display()
-                );
                 if path.exists() {
+                    info!(
+                        logger,
+                        "📒 Reading user configuration overrides. File: \"{}\"",
+                        path.display()
+                    );
                     c.merge(File::from(path))?;
                 }
             }
