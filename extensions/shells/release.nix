@@ -1,4 +1,4 @@
-{ base, mkShell, linkFarm, python38, lib, components, github-release }:
+{ base, mkShell, linkFarm, python38, lib, components, gh }:
 let
   components' = components { inherit (base) callFile; };
   allChangelogs =
@@ -45,7 +45,7 @@ let
       uniqueChangelogs;
 in
 mkShell {
-  buildInputs = [ python38 python38.pkgs.keepachangelog github-release ];
+  nativeBuildInputs = [ python38 python38.pkgs.keepachangelog gh ];
   inherit allChangelogs;
   CHANGELOG_SCRIPT = ./release/changelog.py;
   shellHook = ''
@@ -57,14 +57,7 @@ mkShell {
     echo "  Updates and gathers all changelogs for all components and put them in the main CHANGELOG.md."
     echo "  Use updateChangelogs --help for more info."
     echo
-    echo -e "\033[1;96mmakeRelease\033[0m <access token path>"
+    echo -e "\033[1;96mmakeRelease\033[0m"
     echo "  Creates a tag at the current commit on main, pushes it and makes a github release."
-    echo '  Requires a personal access token to be entered or $GITHUB_TOKEN to be set'
-    echo
-    echo -e "\033[1;96mgithub-release\033[0m"
-    echo "  For manually working with github releases from the command line (this is used internally by makeRelease)."
-    echo "  GITHUB_USER and GITHUB_REPO has been set so --user and --repo arguments are not necessary."
-    echo "  see https://github.com/github-release/github-release/tree/$(github-release --version | sed 's/^.* \(.*\)$/\1/') for more info"
-
   '';
 }
