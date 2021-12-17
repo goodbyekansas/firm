@@ -6,11 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2021-12-17
+
 ### Fixed
 - The generated keys used a hash of the DER format but when the key is saved and later
   read from disk it uses the PEM format, causing a hash mismatch. This changes the hash to
   always use the PEM variant.
-
 
 ## [2.0.0] - 2021-12-16
 

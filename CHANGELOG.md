@@ -6,6 +6,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2021-12-17
 ### Added
 - Release shell reports success.
 
@@ -13,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The release shell's makeRelease now uses the provided github token correctly.
 - Avery, Lomax, Quinn and Bendini having wrong versions in Cargo.toml.
 - Fixed 2.0.0 changelog.
+- avery: The generated keys used a hash of the DER format but when the key is saved and
+  later read from disk it uses the PEM format, causing a hash mismatch. This changes the
+  hash to avery: always use the PEM variant.
+
+### Packages
+- avery: 2.0.1
+- bendini: 2.0.0
+- firmRust: 1.0.0
+- firmTypes-python: 1.0.0
+- firmTypes-rust-withServices, firmTypes-rust-withoutServices: 1.0.0
+- lomax: 2.0.0
+- protocols-withServices-python, protocols-withServices-rust, protocols-withoutServices-python, protocols-withoutServices-rust: 2.0.0
+- quinn: 2.0.0
+- tonicMiddleware: 1.0.0
+- windowsInstaller: 0.1.1
 
 ## [2.0.0] - 2021-12-16
 ### Packages
