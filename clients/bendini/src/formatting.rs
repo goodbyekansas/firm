@@ -247,7 +247,7 @@ impl Display for Displayer<'_, Function> {
                 }
 
                 if let Some(p) = self.publisher.as_ref() {
-                    writeln!(f, "{}published by: {}<{}>", INDENT, p.name, p.email)
+                    writeln!(f, "{}published by: {} <{}>", INDENT, p.name, p.email)
                 } else {
                     Ok(())
                 }
