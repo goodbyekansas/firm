@@ -144,7 +144,7 @@ impl ExecutionServiceTrait for ExecutionService {
         let payload = request.into_inner();
         let function = self
             .registry
-            .list(tonic::Request::new(Filters {
+            .list_versions(tonic::Request::new(Filters {
                 name: payload.name.clone(),
                 version_requirement: Some(VersionRequirement {
                     expression: payload.version_requirement.clone(),
