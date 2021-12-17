@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2021-12-17
+### Packages
+- avery: 2.0.2
+- bendini: 2.0.0
+- firmRust: 1.0.0
+- firmTypes-python: 1.0.0
+- firmTypes-rust-withServices, firmTypes-rust-withoutServices: 1.0.0
+- lomax: 2.0.0
+- protocols-withServices-python, protocols-withServices-rust, protocols-withoutServices-python, protocols-withoutServices-rust: 2.0.0
+- quinn: 2.0.0
+- tonicMiddleware: 1.0.0
+- windowsInstaller: 0.1.1
+
+### Fixed
+- avery: Use `ListVersions` instead of `List` when executing functions. This makes sure
+  that we only get one match.
+
 ## [2.0.1] - 2021-12-17
 ### Added
 - Release shell reports success.

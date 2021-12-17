@@ -1,6 +1,6 @@
 [package]
 name = "avery"
-version = "2.0.1"
+version = "2.0.2"
 authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
 edition = "2021"
 
