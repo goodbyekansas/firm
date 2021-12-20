@@ -39,11 +39,14 @@ pub enum RegistryError {
     #[error("Failed to deregister uninstaller: {0}")]
     FailedToDeregisterUninstaller(IoError),
 
-    #[error(r#"Failed to mark folder "{0}" for deletion: {1}"#)]
-    FailedToMarkDirectoryForRebootDeletion(String, IoError),
-
     #[error("Failed to cancel file deletion: {0}")]
     FailedToCancelFileDeletion(String),
+
+    #[error("Failed to set file deletion: {0}")]
+    FailedToSetFileDeletion(String),
+
+    #[error("Failed to get file deletion: {0}")]
+    FailedToGetFileDeletion(IoError),
 
     #[error("Registry key error: {0}")]
     RegistryKeyError(IoError),
@@ -62,6 +65,9 @@ pub enum RegistryError {
 
     #[error("Failed to commit transaction: {0}")]
     FailedToCommitTransaction(IoError),
+
+    #[error("Install file error: {0}: {1}")]
+    InstallFileError(String, IoError),
 }
 
 pub trait RegistryKey {
@@ -84,6 +90,13 @@ pub trait RegistryKey {
     fn get_transaction(&self) -> Result<Box<dyn RegistryTransaction>, IoError>;
 
     fn open_subkey_transacted_with_flags(
+        &self,
+        name: &str,
+        flags: REGSAM,
+        transaction: &Transaction,
+    ) -> Result<Box<dyn RegistryKey>, IoError>;
+
+    fn create_subkey_transacted_with_flags(
         &self,
         name: &str,
         flags: REGSAM,
@@ -171,6 +184,16 @@ impl RegistryKey for RegKey {
         self.open_subkey_transacted_with_flags(name, transaction.get_handle(), flags)
             .map(|key| Box::new(key) as Box<dyn RegistryKey>)
     }
+
+    fn create_subkey_transacted_with_flags(
+        &self,
+        name: &str,
+        flags: REGSAM,
+        transaction: &Transaction,
+    ) -> Result<Box<dyn RegistryKey>, IoError> {
+        self.create_subkey_transacted_with_flags(name, transaction.get_handle(), flags)
+            .map(|(key, _)| Box::new(key) as Box<dyn RegistryKey>)
+    }
 }
 
 impl From<RegistryError> for u32 {
@@ -182,7 +205,6 @@ impl From<RegistryError> for u32 {
             RegistryError::FailedToRemoveFromPath(_) => 13,
             RegistryError::FailedToRegisterUninstaller(_) => 14,
             RegistryError::FailedToDeregisterUninstaller(_) => 15,
-            RegistryError::FailedToMarkDirectoryForRebootDeletion(_, _) => 16,
             RegistryError::FailedToCancelFileDeletion(_) => 17,
             RegistryError::RegistryKeyError(_) => 18,
             RegistryError::FailedToRegisterApplication(_, _) => 19,
@@ -190,6 +212,9 @@ impl From<RegistryError> for u32 {
             RegistryError::FailedToAcquireTransaction(_) => 21,
             RegistryError::FailedToRollbackTransaction(_, _) => 22,
             RegistryError::FailedToCommitTransaction(_) => 23,
+            RegistryError::InstallFileError(_, _) => 24,
+            RegistryError::FailedToSetFileDeletion(_) => 25,
+            RegistryError::FailedToGetFileDeletion(_) => 26,
         }
     }
 }
@@ -243,6 +268,82 @@ impl<'a> RegistryEditor<'a> {
 
     pub fn root(&self) -> &dyn RegistryKey {
         self.registry.as_ref()
+    }
+
+    pub fn register_install_file(&self, name: &str, file: &Path) -> Result<(), RegistryError> {
+        self.get_install_files(name)
+            .map(|mut files| {
+                files.push(PathBuf::from(file));
+                files
+            })
+            .and_then(|install_files| {
+                self.registry
+                    .open_subkey("SOFTWARE")
+                    .and_then(|key| key.create_subkey(name))
+                    .and_then(|key| {
+                        key.set_value(
+                            "InstallFiles",
+                            &install_files
+                                .iter()
+                                .map(|v| v.as_os_str().to_string_lossy().to_string())
+                                .collect::<Vec<String>>()
+                                .join(";"),
+                        )
+                    })
+                    .map_err(|e| {
+                        RegistryError::InstallFileError(
+                            format!("Failed to register install files for {}", name.to_owned()),
+                            e,
+                        )
+                    })
+            })
+    }
+
+    pub fn get_install_files(&self, name: &str) -> Result<Vec<PathBuf>, RegistryError> {
+        let transaction = self.get_transaction()?;
+
+        self.apply_transaction(
+            self.registry
+                .open_subkey_transacted_with_flags("SOFTWARE", KEY_READ, transaction.get_handle())
+                .and_then(|key| key.create_subkey(name))
+                .and_then(|key| {
+                    key.get_value("InstallFiles")
+                        .map(|install_files: String| {
+                            install_files.split(';').map(PathBuf::from).collect()
+                        })
+                        .or_else(|e| match e.kind() {
+                            std::io::ErrorKind::NotFound => {
+                                key.set_value("InstallFiles", "").map(|_| vec![])
+                            }
+                            _ => Err(e),
+                        })
+                })
+                .map_err(|e| {
+                    RegistryError::InstallFileError(
+                        format!("Failed to get install files for {}", name.to_string()),
+                        e,
+                    )
+                }),
+            transaction.as_ref(),
+        )
+    }
+
+    pub fn clear_install_files(&self, name: &str) -> Result<(), RegistryError> {
+        let transaction = self.get_transaction()?;
+
+        self.apply_transaction(
+            self.registry
+                .open_subkey_transacted_with_flags("SOFTWARE", KEY_READ, transaction.get_handle())
+                .and_then(|key| key.open_subkey(name))
+                .and_then(|key| key.delete_subkey_all("InstallFiles"))
+                .map_err(|e| {
+                    RegistryError::InstallFileError(
+                        format!("Failed to clean install files for {}", name),
+                        e,
+                    )
+                }),
+            transaction.as_ref(),
+        )
     }
 
     pub fn register_application(
@@ -426,10 +527,21 @@ impl<'a> RegistryEditor<'a> {
                 KEY_READ | KEY_WRITE,
                 transaction.get_handle(),
             )
-            .map_err(|e| RegistryError::FailedToCancelFileDeletion(format!("{}", e)))
-            .and_then(|key| {
-                key.get_value(PENDING_OPERATIONS)
-                    .map_err(|e| RegistryError::FailedToCancelFileDeletion(format!("{}", e)))
+            .map(Some)
+            .or_else(|err| match err.kind() {
+                std::io::ErrorKind::NotFound => Ok(None),
+                _ => Err(err),
+            })
+            .map_err(RegistryError::FailedToGetFileDeletion)
+            .and_then(|op_key| match op_key {
+                Some(key) => key
+                    .get_value(PENDING_OPERATIONS)
+                    .or_else(|err| match err.kind() {
+                        std::io::ErrorKind::NotFound => Ok(String::new()),
+                        _ => Err(err),
+                    })
+                    .map_err(RegistryError::FailedToGetFileDeletion),
+                None => Ok(String::new()),
             })
             .map(|remove_entry| {
                 remove_entry
@@ -445,12 +557,12 @@ impl<'a> RegistryEditor<'a> {
         transaction: &dyn RegistryTransaction,
     ) -> Result<(), RegistryError> {
         self.registry
-            .open_subkey_transacted_with_flags(
+            .create_subkey_transacted_with_flags(
                 PENDING_REMOVAL_KEY,
                 KEY_READ | KEY_WRITE,
                 transaction.get_handle(),
             )
-            .map_err(|e| RegistryError::FailedToCancelFileDeletion(format!("{}", e)))
+            .map_err(|e| RegistryError::FailedToSetFileDeletion(format!("{}", e)))
             .and_then(|key| {
                 key.set_value(
                     PENDING_OPERATIONS,
@@ -458,25 +570,23 @@ impl<'a> RegistryEditor<'a> {
                         format!("{}{}\n\n", acc, entry.to_owned())
                     }),
                 )
-                .map_err(|e| RegistryError::FailedToCancelFileDeletion(format!("{}", e)))
+                .map_err(|e| RegistryError::FailedToSetFileDeletion(format!("{}", e)))
             })
     }
 
     pub fn mark_for_delete(&self, path: &Path) -> Result<(), RegistryError> {
         (self.get_folder_paths)(path)
             .map_err(|e| {
-                RegistryError::FailedToMarkDirectoryForRebootDeletion(
-                    format!(
-                        "Failed to get files and folders for \"{}\"",
-                        path.to_string_lossy().into_owned()
-                    ),
-                    e,
-                )
+                RegistryError::FailedToSetFileDeletion(format!(
+                    "Failed to get files and folders for \"{}\": {}",
+                    path.to_string_lossy().into_owned(),
+                    e
+                ))
             })
             .and_then(|paths| self.mark_paths_for_delete(&paths))
     }
 
-    fn mark_paths_for_delete(&self, paths: &[PathBuf]) -> Result<(), RegistryError> {
+    pub fn mark_paths_for_delete(&self, paths: &[PathBuf]) -> Result<(), RegistryError> {
         let transaction = self.get_transaction()?;
 
         self.apply_transaction(
@@ -494,19 +604,16 @@ impl<'a> RegistryEditor<'a> {
     }
 
     fn get_transaction(&self) -> Result<Box<dyn RegistryTransaction>, RegistryError> {
-        self.registry.get_transaction().map_err(|e| {
-            RegistryError::FailedToCancelFileDeletion(format!(
-                "Failed to create transaction lock: {}",
-                e.to_string()
-            ))
-        })
+        self.registry
+            .get_transaction()
+            .map_err(RegistryError::FailedToAcquireTransaction)
     }
 
-    fn apply_transaction(
+    fn apply_transaction<T>(
         &self,
-        result: Result<(), RegistryError>,
+        result: Result<T, RegistryError>,
         transaction: &dyn RegistryTransaction,
-    ) -> Result<(), RegistryError> {
+    ) -> Result<T, RegistryError> {
         result
             .or_else(|e1| {
                 transaction
@@ -514,10 +621,11 @@ impl<'a> RegistryEditor<'a> {
                     .map_err(|e2| RegistryError::FailedToRollbackTransaction(e2, e1.to_string()))
                     .and(Err(e1))
             })
-            .and_then(|_| {
+            .and_then(|v| {
                 transaction
                     .commit()
                     .map_err(RegistryError::FailedToCommitTransaction)
+                    .map(|_| v)
             })
     }
 }
@@ -744,6 +852,16 @@ pub mod test {
         ) -> Result<Box<dyn RegistryKey>, IoError> {
             self.open_subkey(name)
         }
+
+        fn create_subkey_transacted_with_flags(
+            &self,
+            name: &str,
+            _flags: REGSAM,
+            _transaction: &Transaction,
+        ) -> Result<Box<dyn RegistryKey>, IoError> {
+            self.create_subkey(name)
+                .and_then(|_| self.open_subkey(name))
+        }
     }
 
     fn get_test_folder_paths(_path: &Path) -> Result<Vec<PathBuf>, IoError> {
@@ -946,7 +1064,7 @@ B:\garage\fin_bil
         );
         assert!(res.is_ok(), "Uninstaller should be registrable");
         assert!(
-            editor.root().open_subkey(&UNINSTALL_KEY).is_ok(),
+            editor.root().open_subkey(UNINSTALL_KEY).is_ok(),
             "We expect there to be something at UNINSTALL_KEY"
         );
 

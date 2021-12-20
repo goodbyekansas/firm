@@ -1,4 +1,9 @@
-use std::{ffi::OsString, fmt::Display, os::windows::prelude::{OsStrExt, OsStringExt}, ptr, u32};
+use std::{
+    ffi::OsString,
+    fmt::Display,
+    os::windows::prelude::{OsStrExt, OsStringExt},
+    ptr, u32,
+};
 
 use thiserror::Error;
 use winapi::{
@@ -103,7 +108,7 @@ impl Drop for WinHandle {
 impl Display for WinHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name)
-    } 
+    }
 }
 
 struct UserServiceEnumerator<'a> {
@@ -151,7 +156,7 @@ impl UserServiceEnumerator<'_> {
                 .filter_map(|service| {
                     get_service_handle(
                         &parse_str_ptr(service.lpServiceName).to_string_lossy(),
-                        &manager_handle,
+                        manager_handle,
                     )
                     .ok()
                 })

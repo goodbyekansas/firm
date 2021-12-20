@@ -8,7 +8,7 @@ use flate2::bufread::GzDecoder;
 use slog::{debug, error, info, o, Drain, Logger};
 use slog_term::{FullFormat, TermDecorator};
 use structopt::StructOpt;
-use tar::{Archive, Entry};
+use tar::{Archive, Entry, Unpacked};
 use thiserror::Error;
 use winapi::um::{
     winnt::DELETE,
@@ -22,6 +22,7 @@ use winreg::{enums::HKEY_LOCAL_MACHINE, RegKey};
 
 const AVERY: &str = "Avery";
 const LOMAX: &str = "Lomax";
+const APPLICATION_NAME: &str = "Firm";
 
 #[derive(Error, Debug)]
 pub enum InstallerError {
@@ -106,7 +107,7 @@ pub fn find_firm<F: Fn() -> PathBuf, G: Fn() -> PathBuf>(
     default_program_files: F,
     default_program_data: G,
 ) -> (PathBuf, PathBuf) {
-    reg_edit.find_application("Firm").map(|entries| {
+    reg_edit.find_application(APPLICATION_NAME).map(|entries| {
         (
             entries.get("InstallPath")
                 .map(PathBuf::from)
@@ -134,7 +135,7 @@ pub fn find_firm<F: Fn() -> PathBuf, G: Fn() -> PathBuf>(
 
 fn default_path_from_env(logger: &Logger, key: &str, default: &str) -> PathBuf {
     std::env::var_os(key)
-        .map(|appdata| PathBuf::from(&appdata).join("Firm"))
+        .map(|appdata| PathBuf::from(&appdata).join(APPLICATION_NAME))
         .unwrap_or_else(|| {
             debug!(
                 logger,
@@ -144,7 +145,7 @@ fn default_path_from_env(logger: &Logger, key: &str, default: &str) -> PathBuf {
         })
 }
 
-fn unpack_entry<E>(mut entry: Entry<E>, install_path: &Path) -> Result<(), InstallerError>
+fn unpack_entry<E>(mut entry: Entry<E>, install_path: &Path) -> Result<PathBuf, InstallerError>
 where
     E: io::Read,
 {
@@ -161,7 +162,21 @@ where
                             ),
                         )
                     })
-                    .and_then(|file_name| entry.unpack(install_path.join(file_name)).map(|_| ()))
+                    .and_then(|file_name| {
+                        let file_path = install_path.join(file_name);
+                        entry
+                            .unpack(file_path.clone())
+                            .and_then(|unpack| match unpack {
+                                Unpacked::File(_) => Ok(file_path),
+                                _ => Err(io::Error::new(
+                                    io::ErrorKind::Other,
+                                    format!(
+                                        r#"Entry "{}" is not a file."#,
+                                        entry.path().unwrap_or_default().display()
+                                    ),
+                                )),
+                            })
+                    })
             })
         })
         .map_err(|e| {
@@ -176,12 +191,16 @@ where
         })
 }
 
-fn unpack_data_entry<E>(mut entry: Entry<E>, data_path: &Path) -> Result<(), InstallerError>
+fn unpack_data_entry<E>(mut entry: Entry<E>, data_path: &Path) -> Result<PathBuf, InstallerError>
 where
     E: io::Read,
 {
     std::fs::create_dir_all(&data_path)
-        .and_then(|_| entry.unpack_in(data_path).map(|_| ()))
+        .and_then(|_| {
+            entry
+                .unpack_in(data_path)
+                .and_then(|_| entry.path().map(|p| data_path.join(p.to_path_buf())))
+        })
         .map_err(|e| {
             InstallerError::FailedToCopyFile(
                 entry
@@ -198,52 +217,51 @@ fn copy_files(
     logger: &Logger,
     install_path: &Path,
     data_path: &Path,
-) -> Result<(), InstallerError> {
+) -> Vec<Result<PathBuf, InstallerError>> {
     let archive = include_bytes!("../install-data");
     debug!(logger, "🗜️ Unpacking archive...");
-    Archive::new(GzDecoder::new(&archive[..]))
-        .entries()
-        .map_err(|e| InstallerError::ArchiveError(e.to_string()))
-        .and_then(|mut entries| {
-            entries.try_for_each(|entry_res| {
-                entry_res
-                    .map_err(|e| InstallerError::ArchiveError(e.to_string()))
-                    .and_then(|entry| match entry.header().entry_type() {
-                        tar::EntryType::Directory => Ok(()),
-                        tar::EntryType::Regular => {
-                            if entry
-                                .path()
-                                .map(|p| p.starts_with(Path::new(".").join("bin")))
-                                .unwrap_or_default()
-                            {
-                                unpack_entry(entry, install_path)
-                            } else {
-                                unpack_data_entry(entry, data_path)
-                            }
-                        }
-                        _ => Err(InstallerError::ArchiveError(format!(
-                            r#"Entry "{}" is of unsupported type "{:#?}" "#,
-                            entry.path().unwrap_or_default().display(),
-                            entry.header().entry_type()
-                        ))),
-                    })
-            })
-        })
-        .and_then(|_| std::env::current_exe().map_err(InstallerError::FailedToFindCurrentExe))
-        .and_then(|installer| {
-            fs::copy(installer, &install_path.join("install.exe"))
-                .map_err(|e| InstallerError::FailedToCopyFile(String::from("install.exe"), e))
-                .map(|_| ())
-        })
-}
 
-fn remove_directory(path: &Path) -> Result<(), InstallerError> {
-    fs::remove_dir_all(path)
-        .or_else(|e| match e.kind() {
-            io::ErrorKind::NotFound => Ok(()),
-            _ => Err(e),
-        })
-        .map_err(|e| InstallerError::FailedToRemoveFiles(path.to_path_buf(), e))
+    match Archive::new(GzDecoder::new(&archive[..])).entries() {
+        Err(e) => {
+            vec![Err(InstallerError::ArchiveError(e.to_string()))]
+        }
+        Ok(entries) => entries
+            .filter_map(|entry_res| match entry_res {
+                Ok(entry) => match entry.header().entry_type() {
+                    tar::EntryType::Directory => None,
+                    tar::EntryType::Regular => Some(
+                        if entry
+                            .path()
+                            .map(|p| p.starts_with(Path::new(".").join("bin")))
+                            .unwrap_or_default()
+                        {
+                            unpack_entry(entry, install_path)
+                        } else {
+                            unpack_data_entry(entry, data_path)
+                        },
+                    ),
+                    _ => Some(Err(InstallerError::ArchiveError(format!(
+                        r#"Entry "{}" is of unsupported type "{:#?}" "#,
+                        entry.path().unwrap_or_default().display(),
+                        entry.header().entry_type()
+                    )))),
+                },
+                Err(e) => Some(Err(InstallerError::ArchiveError(e.to_string()))),
+            })
+            .chain(std::iter::once(
+                std::env::current_exe()
+                    .map_err(InstallerError::FailedToFindCurrentExe)
+                    .and_then(|installer_source| {
+                        let installer_destination = install_path.join("install.exe");
+                        fs::copy(installer_source, &installer_destination)
+                            .map_err(|e| {
+                                InstallerError::FailedToCopyFile(String::from("install.exe"), e)
+                            })
+                            .map(|_| installer_destination)
+                    }),
+            ))
+            .collect::<Vec<Result<PathBuf, InstallerError>>>(),
+    }
 }
 
 fn get_config_arg(path: &Path, name: &str) -> String {
@@ -271,7 +289,12 @@ fn upgrade(logger: Logger) -> Result<(), InstallerError> {
                 .and_then(|handle| service::get_services(&handle, &format!("{}_", AVERY)))
                 .map_err(Into::into)
         })
-        .and_then(|services| service::start_services(services).map_err(Into::into))
+        .and_then(|services| {
+            services
+                .iter()
+                .for_each(|handle| debug!(logger, "Starting service: \"{}\"", handle));
+            service::start_services(services).map_err(Into::into)
+        })
 }
 
 const REG_BASEKEY: &str = "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application";
@@ -302,6 +325,24 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
     pass_result!(logger, reg_edit.cancel_pending_deletions(install_path));
 
     copy_files(&logger, install_path, data_path)
+        .into_iter()
+        .map(|file_result| match file_result {
+            Ok(file) => reg_edit
+                .register_install_file(APPLICATION_NAME, &file)
+                .map_err(|e| e.into()),
+            Err(e) => {
+                error!(logger, "Failed to copy file: {}", e);
+                Err(e)
+            }
+        })
+        // We know this looks weird (two collects). We have the problem
+        // where we need to go through ALL values to ensure
+        // that all files copied gets pushed to the key in the registry.
+        // If we just did a single collect it would stop at the first error
+        // and possibly skip files that we copied.
+        .collect::<Vec<Result<(), InstallerError>>>()
+        .into_iter()
+        .collect::<Result<(), InstallerError>>()
         .and_then(|_| {
             try_register_log_source(AVERY, &install_path.join("avery.exe").to_string_lossy())
                 .map_err(Into::into)
@@ -336,7 +377,10 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
                         ],
                     )
                 })
-                .and_then(|lomax| service::start_service(&lomax))
+                .and_then(|lomax| {
+                    debug!(logger, "Starting service Lomax.");
+                    service::start_service(&lomax)
+                })
                 .map_err(Into::into)
         })
         .and_then(|_| reg_edit.add_to_path(install_path).map_err(Into::into))
@@ -348,7 +392,7 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
             );
             additional_data.insert(String::from("Version"), String::from(std::env!("version")));
             reg_edit
-                .register_application("Firm", install_path, additional_data)
+                .register_application(APPLICATION_NAME, install_path, additional_data)
                 .map_err(Into::into)
         })
         .and_then(|_| {
@@ -367,8 +411,8 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
             );
             reg_edit
                 .register_uninstaller(
-                    "Firm",
-                    "Firm",
+                    APPLICATION_NAME,
+                    APPLICATION_NAME,
                     format!(
                         r#"{}\install.exe uninstall"#,
                         &install_path.to_string_lossy()
@@ -429,21 +473,50 @@ fn uninstall(logger: Logger) {
     pass_result!(logger, try_deregister_log_source(AVERY));
     pass_result!(logger, try_deregister_log_source(LOMAX));
 
-    let (exe_path, data_path) = find_firm(
+    let (exe_path, _) = find_firm(
         &reg_edit,
         &logger,
         || default_path_from_env(&logger, "PROGRAMFILES", DEFAULT_FIRM_BIN_PATH),
         || default_path_from_env(&logger, "PROGRAMDATA", DEFAULT_FIRM_DATA_PATH),
     );
     pass_result!(logger, reg_edit.remove_from_path(&exe_path));
-    pass_result!(logger, reg_edit.remove_from_path(&data_path));
 
-    debug!(logger, "Marking folders for deletion");
-    pass_result!(logger, reg_edit.mark_for_delete(&exe_path));
+    debug!(logger, "Deleting files...");
+    pass_result!(
+        logger,
+        match reg_edit.get_install_files(APPLICATION_NAME) {
+            Ok(files) => {
+                files.iter().try_for_each(|file| {
+                    std::fs::remove_file(file).or_else(|e| {
+                        debug!(
+                            logger,
+                            "Could not remove installed file \"{}\": {}",
+                            file.display(),
+                            e
+                        );
+                        debug!(
+                            logger,
+                            "Marking \"{}\" for deletion in the registry.",
+                            file.display()
+                        );
+                        reg_edit.mark_paths_for_delete(&[file.clone()])
+                    })
+                })
+            }
+            Err(e) => {
+                debug!(
+                    logger,
+                    "Could not find any previously installed files to registry: {}", e
+                );
+                debug!(logger, "Falling back to only removing executables.");
 
-    pass_result!(logger, remove_directory(&data_path));
-    pass_result!(logger, reg_edit.deregister_application("Firm"));
-    pass_result!(logger, reg_edit.deregister_uninstaller("Firm"));
+                reg_edit.mark_for_delete(&exe_path)
+            }
+        }
+    );
+
+    pass_result!(logger, reg_edit.deregister_application(APPLICATION_NAME));
+    pass_result!(logger, reg_edit.deregister_uninstaller(APPLICATION_NAME));
 }
 
 fn main() -> Result<(), u32> {
