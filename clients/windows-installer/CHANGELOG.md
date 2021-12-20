@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Installer removing files it did not own during uninstall.
+  The installer now only work on files it extracted itself. If you
+  manually add extra files in for example the install directory
+  it will ignore those during uninstall.
+
+- Issue where installer could not mark files for deletion.
+
 ## [0.1.1] - 2021-09-15
 
 ### Fixed
