@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2021-12-21
+
 ### Fixed
 - Installer removing files it did not own during uninstall.
   The installer now only work on files it extracted itself. If you
