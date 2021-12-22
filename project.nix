@@ -64,8 +64,9 @@ nedryland.mkProject rec {
       protocols = protocols.withServices.rust; # This brings tonic which we will need. A bit hard to see.
     };
 
-    windowsInstaller = callFile ./clients/windows-installer/windows-installer.nix { inherit version; };
     windowsInstall = callFile ./libraries/rust/windows-install/windows-install.nix { };
+
+    firmWindowsInstaller = callFile ./clients/firm-windows-installer/firm-windows-installer.nix { inherit version; };
   };
 
   extraShells = { callFile }: {
