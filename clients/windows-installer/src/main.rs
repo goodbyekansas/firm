@@ -12,10 +12,10 @@ use tar::{Archive, Entry, Unpacked};
 use thiserror::Error;
 
 use windows_install::{
+    event_viewer::{self, EventLogError},
     registry::{RegistryEditor, RegistryError},
     service::ServiceError,
     service_manager::ServiceManager,
-    winreg::{enums::HKEY_LOCAL_MACHINE, RegKey},
 };
 
 const AVERY: &str = "Avery";
@@ -41,6 +41,9 @@ pub enum InstallerError {
 
     #[error(transparent)]
     RegistryError(#[from] RegistryError),
+
+    #[error(transparent)]
+    EventLogError(#[from] EventLogError),
 }
 
 impl From<InstallerError> for u32 {
@@ -52,6 +55,7 @@ impl From<InstallerError> for u32 {
             InstallerError::ArchiveError(_) => 4,
             InstallerError::ServiceError(e) => e.into(),
             InstallerError::RegistryError(e) => e.into(),
+            InstallerError::EventLogError(e) => e.into(),
         }
     }
 }
@@ -297,22 +301,6 @@ fn upgrade(logger: Logger) -> Result<(), InstallerError> {
         })
 }
 
-const REG_BASEKEY: &str = "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application";
-fn try_register_log_source(name: &str, exe_path: &str) -> Result<(), InstallerError> {
-    RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey(REG_BASEKEY)
-        .and_then(|cur_ver| cur_ver.create_subkey(name))
-        .and_then(|(app_key, _)| app_key.set_value("EventMessageFile", &exe_path))
-        .map_err(|e| RegistryError::FailedToRegisterApplication(name.to_owned(), e).into())
-}
-
-fn try_deregister_log_source(name: &str) -> Result<(), InstallerError> {
-    RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey(REG_BASEKEY)
-        .and_then(|cur_ver| cur_ver.delete_subkey(name))
-        .map_err(|e| RegistryError::FailedToDeregisterApplication(name.to_owned(), e).into())
-}
-
 fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), InstallerError> {
     debug!(
         logger,
@@ -344,11 +332,11 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
         .into_iter()
         .collect::<Result<(), InstallerError>>()
         .and_then(|_| {
-            try_register_log_source(AVERY, &install_path.join("avery.exe").to_string_lossy())
+            event_viewer::add_log_source(AVERY, &install_path.join("avery.exe").to_string_lossy())
                 .map_err(Into::into)
         })
         .and_then(|_| {
-            try_register_log_source(LOMAX, &install_path.join("lomax.exe").to_string_lossy())
+            event_viewer::add_log_source(LOMAX, &install_path.join("lomax.exe").to_string_lossy())
                 .map_err(Into::into)
         })
         .and_then(|_| get_service_manager())
@@ -457,8 +445,8 @@ fn uninstall(logger: Logger) {
     );
 
     let reg_edit = RegistryEditor::new();
-    pass_result!(logger, try_deregister_log_source(AVERY));
-    pass_result!(logger, try_deregister_log_source(LOMAX));
+    pass_result!(logger, event_viewer::remove_log_source(AVERY));
+    pass_result!(logger, event_viewer::remove_log_source(LOMAX));
 
     let (exe_path, _) = find_firm(
         &reg_edit,
