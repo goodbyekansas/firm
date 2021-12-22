@@ -28,7 +28,7 @@ let
   };
 in
 (base.languages.rust.mkClient rec {
-  name = "firm-installer";
+  name = "firm-windows-installer";
   src = ./.;
   inherit version;
   buildInputs = [ windowsInstall.package ];

@@ -1,5 +1,5 @@
 [package]
-name = "firm-installer"
+name = "firm-windows-installer"
 version = "0.1.2"
 edition = "2021"
 
