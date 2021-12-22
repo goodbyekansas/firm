@@ -11,14 +11,12 @@ use structopt::StructOpt;
 use tar::{Archive, Entry, Unpacked};
 use thiserror::Error;
 
-use windows_install::winapi::um::{
-    winnt::DELETE,
-    winsvc::{SC_MANAGER_CREATE_SERVICE, SC_MANAGER_ENUMERATE_SERVICE},
+use windows_install::{
+    registry::{RegistryEditor, RegistryError},
+    service::ServiceError,
+    service_manager::ServiceManager,
+    winreg::{enums::HKEY_LOCAL_MACHINE, RegKey},
 };
-use windows_install::winreg::{enums::HKEY_LOCAL_MACHINE, RegKey};
-
-use windows_install::registry::{RegistryEditor, RegistryError};
-use windows_install::service::{self, ServiceError};
 
 const AVERY: &str = "Avery";
 const LOMAX: &str = "Lomax";
@@ -272,6 +270,10 @@ fn get_config_arg(path: &Path, name: &str) -> String {
         .unwrap_or_default()
 }
 
+fn get_service_manager() -> Result<ServiceManager, InstallerError> {
+    ServiceManager::try_new().map_err(Into::into)
+}
+
 fn upgrade(logger: Logger) -> Result<(), InstallerError> {
     info!(logger, "☝️ Upgrading...");
     let reg_edit = RegistryEditor::new();
@@ -281,19 +283,17 @@ fn upgrade(logger: Logger) -> Result<(), InstallerError> {
         || default_path_from_env(&logger, "PROGRAMFILES", DEFAULT_FIRM_BIN_PATH),
         || default_path_from_env(&logger, "PROGRAMDATA", DEFAULT_FIRM_DATA_PATH),
     );
+
     uninstall(logger.new(o!("scope" => "uninstall")));
 
     install(logger.new(o!("scope" => "install")), &exe_path, &data_path)
-        .and_then(|_| {
-            service::get_service_manager(SC_MANAGER_ENUMERATE_SERVICE)
-                .and_then(|handle| service::get_services(&handle, &format!("{}_", AVERY)))
+        .and_then(|_| get_service_manager())
+        .and_then(|service_manager| {
+            let service_filter = format!("{}_", AVERY);
+            debug!(logger, "Starting services: \"{}\"", service_filter);
+            service_manager
+                .start_services(&service_filter)
                 .map_err(Into::into)
-        })
-        .and_then(|services| {
-            services
-                .iter()
-                .for_each(|handle| debug!(logger, "Starting service: \"{}\"", handle));
-            service::start_services(services).map_err(Into::into)
         })
 }
 
@@ -351,36 +351,29 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
             try_register_log_source(LOMAX, &install_path.join("lomax.exe").to_string_lossy())
                 .map_err(Into::into)
         })
-        .and_then(|_| {
+        .and_then(|_| get_service_manager())
+        .and_then(|service_manager| {
             debug!(logger, "🏃‍♀️ Starting services.");
-            service::get_service_manager(SC_MANAGER_CREATE_SERVICE)
-                .and_then(|handle| {
-                    service::create_user_service(
-                        AVERY,
-                        &install_path.join("avery.exe").to_string_lossy(),
-                        &handle,
-                        &[
-                            "--service",
-                            get_config_arg(data_path, "avery.toml").as_str(),
-                        ],
-                    )
-                    .map(|_| handle)
-                })
-                .and_then(|handle| {
-                    service::create_system_service(
+            service_manager
+                .create_user_service(
+                    AVERY,
+                    &install_path.join("avery.exe").to_string_lossy(),
+                    &[
+                        "--service",
+                        get_config_arg(data_path, "avery.toml").as_str(),
+                    ],
+                )
+                .and_then(|_| {
+                    service_manager.create_system_service(
                         LOMAX,
                         &install_path.join("lomax.exe").to_string_lossy(),
-                        &handle,
                         &[
                             "--service",
                             get_config_arg(data_path, "lomax.toml").as_str(),
                         ],
                     )
                 })
-                .and_then(|lomax| {
-                    debug!(logger, "Starting service Lomax.");
-                    service::start_service(&lomax)
-                })
+                .and_then(|lomax_service| lomax_service.start())
                 .map_err(Into::into)
         })
         .and_then(|_| reg_edit.add_to_path(install_path).map_err(Into::into))
@@ -432,43 +425,37 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
 fn uninstall(logger: Logger) {
     // uninstall does a best effort and removes as much as possible
     info!(logger, "🪓 Uninstalling...");
+
     pass_result!(
         logger,
-        service::get_service_manager(SC_MANAGER_ENUMERATE_SERVICE | DELETE)
-            .and_then(|handle| {
-                service::get_services(&handle, format!("{}_", AVERY).as_str())
-                    .map(|services| (handle, services))
-            })
-            .and_then(|(manager_handle, user_services)| {
-                debug!(logger, "Stopping user services.");
-                user_services
-                    .iter()
-                    .try_for_each(|handle| {
-                        debug!(logger, "Stopping: {}", handle);
-                        service::stop_service(handle)
-                    })
-                    .map(|_| manager_handle)
-            })
-            .map(|manager_handle| {
-                debug!(logger, "Stopping system services.");
-                if let Err(error) =
-                    service::get_service_handle(LOMAX, &manager_handle).and_then(|lomax| {
-                        service::stop_service(&lomax).and_then(|_| service::delete_service(&lomax))
-                    })
-                {
-                    debug!(logger, "Did not delete lomax: {}", error)
-                };
+        get_service_manager().map(|service_manager| {
+            let service_filter = format!("{}_", AVERY);
+            debug!(logger, "Stopping user services \"{}\"", service_filter);
+            pass_result!(
+                logger,
+                service_manager.stop_services(&service_filter),
+                "😭 Failed to stop user services"
+            );
 
-                if let Err(error) =
-                    service::get_service_handle(AVERY, &manager_handle).and_then(|avery| {
-                        service::stop_service(&avery).and_then(|_| service::delete_service(&avery))
-                    })
-                {
-                    debug!(logger, "Did not delete avery: {}", error)
-                };
-            }),
-        "😭 Failed to stop services"
+            debug!(logger, "Stopping system services.");
+            if let Err(error) = service_manager
+                .get_service(LOMAX)
+                .and_then(|lomax| lomax.stop())
+                .and_then(|lomax| lomax.delete())
+            {
+                debug!(logger, "Did not delete lomax: {}", error)
+            };
+
+            if let Err(error) = service_manager
+                .get_service(AVERY)
+                .and_then(|avery| avery.stop())
+                .and_then(|avery| avery.delete())
+            {
+                debug!(logger, "Did not delete avery: {}", error)
+            };
+        })
     );
+
     let reg_edit = RegistryEditor::new();
     pass_result!(logger, try_deregister_log_source(AVERY));
     pass_result!(logger, try_deregister_log_source(LOMAX));
