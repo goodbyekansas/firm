@@ -1,0 +1,16 @@
+[package]
+name = "windows-install"
+version = "1.0.0"
+authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
+edition = "2021"
+description = "A library with a collection of utility functions for installing and uninstalling services."
+
+[dependencies]
+thiserror = "1"
+regex = "1"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version="0.3", features=["winsvc", "impl-default"] }
+windows-acl = "0.3"
+winreg = { version="0.9", features=["transactions"] }
+

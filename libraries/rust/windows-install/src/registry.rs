@@ -254,8 +254,7 @@ impl<'a> RegistryEditor<'a> {
         }
     }
 
-    #[cfg(test)]
-    pub fn new_with_registry<T, F>(registry: T, lambda: F) -> Self
+    fn new_with_registry<T, F>(registry: T, lambda: F) -> Self
     where
         T: RegistryKey + 'a,
         F: Fn(&Path) -> Result<Vec<PathBuf>, IoError> + 'a,
@@ -636,21 +635,27 @@ impl<'a> Default for RegistryEditor<'a> {
     }
 }
 
-#[cfg(test)]
-pub mod test {
+pub mod mock {
     use super::*;
     use std::{
         collections::HashMap,
-        path::PathBuf,
         sync::{Arc, RwLock},
     };
+
+    pub fn new_registry_editor_with_registry<'a, T, F>(registry: T, lambda: F) -> RegistryEditor<'a>
+    where
+        T: RegistryKey + 'a,
+        F: Fn(&Path) -> Result<Vec<PathBuf>, IoError> + 'a,
+    {
+        RegistryEditor::new_with_registry(registry, lambda)
+    }
 
     #[macro_export]
     macro_rules! populate_fake_registry {
         () => {{
             let registry_keys = ::std::sync::Arc::new(::std::sync::RwLock::new(HashMap::new()));
             let base = r#"Computer\LOCAL_MACHINE"#;
-            crate::registry::test::MemoryKey::from(&registry_keys, base)
+            $crate::registry::mock::MemoryKey::from(&registry_keys, base)
         }};
 
         ([$($key:expr),*]) => {{
@@ -665,14 +670,14 @@ pub mod test {
             vec![$(($key),)*].into_iter().for_each(|k| {
                     k.split(r#"\"#).fold(String::from(base), |old_s, s| {
                         let new_path = format!(r#"{}\{}"#, old_s, s);
-                        registry.insert(new_path.clone(), crate::registry::test::MemoryEntry::new());
+                        registry.insert(new_path.clone(), $crate::registry::mock::MemoryEntry::default());
                         new_path
                     });
                 registry.insert(
                 format!(r#"{}\{}"#, base, k),
-                crate::registry::test::MemoryEntry::new(),
+                $crate::registry::mock::MemoryEntry::default(),
             );});
-            crate::registry::test::MemoryKey::from(&$registry_keys, base)
+            $crate::registry::mock::MemoryKey::from(&$registry_keys, base)
         }};
 
         ($registry_keys: expr, {$($path:expr => {$($key:expr => $value:expr),*}),*}) => {{
@@ -682,7 +687,7 @@ pub mod test {
                 let mut values = ::std::collections::HashMap::new();
                 $path.split(r#"\"#).fold(String::from(base), |old_s, s| {
                     let new_path = format!(r#"{}\{}"#, old_s, s);
-                    registry.insert(new_path.clone(), crate::registry::test::MemoryEntry::new());
+                    registry.insert(new_path.clone(), $crate::registry::mock::MemoryEntry::default());
                     new_path
                 });
                 $(
@@ -690,11 +695,11 @@ pub mod test {
                 )*
                 registry.insert(
                     format!(r#"{}\{}"#, base, $path),
-                    crate::registry::test::MemoryEntry::from(values),
+                    $crate::registry::mock::MemoryEntry::from(values),
                 );
             )*
 
-            crate::registry::test::MemoryKey::from(&$registry_keys, base)
+            $crate::registry::mock::MemoryKey::from(&$registry_keys, base)
         }};
     }
 
@@ -712,29 +717,12 @@ pub mod test {
         }
     }
 
-    #[derive(Clone, Debug)]
-    pub struct MemoryEntry {
-        values: HashMap<String, String>,
-    }
-
-    impl MemoryEntry {
-        pub fn new() -> Self {
-            Self {
-                values: HashMap::new(),
-            }
-        }
-
-        pub fn from(values: HashMap<String, String>) -> Self {
-            Self { values }
-        }
-    }
-
-    struct FakeTransaction {
+    pub struct FakeTransaction {
         transaction: Transaction,
     }
 
-    impl FakeTransaction {
-        pub fn new() -> Self {
+    impl Default for FakeTransaction {
+        fn default() -> Self {
             Self {
                 transaction: Transaction {
                     handle: winapi::shared::ntdef::NULL,
@@ -757,13 +745,24 @@ pub mod test {
         }
     }
 
+    #[derive(Clone, Debug, Default)]
+    pub struct MemoryEntry {
+        pub values: HashMap<String, String>,
+    }
+
+    impl From<HashMap<String, String>> for MemoryEntry {
+        fn from(values: HashMap<String, String>) -> Self {
+            Self { values }
+        }
+    }
+
     impl RegistryKey for MemoryKey {
         fn create_subkey(&self, path: &str) -> Result<Box<dyn RegistryKey>, IoError> {
             self.registry_keys
                 .write()
                 .unwrap()
                 .entry(format!(r#"{}\{}"#, self.path, path))
-                .or_insert_with(MemoryEntry::new);
+                .or_insert_with(MemoryEntry::default);
             Ok(Box::new(MemoryKey {
                 registry_keys: Arc::clone(&self.registry_keys),
                 path: format!(r#"{}\{}"#, self.path, path),
@@ -775,7 +774,7 @@ pub mod test {
                 .write()
                 .unwrap()
                 .entry(self.path.clone())
-                .or_insert_with(MemoryEntry::new)
+                .or_insert_with(MemoryEntry::default)
                 .values
                 .insert(name.to_string(), value.to_string());
             Ok(())
@@ -841,7 +840,7 @@ pub mod test {
         }
 
         fn get_transaction(&self) -> Result<Box<dyn RegistryTransaction>, IoError> {
-            Ok(Box::new(FakeTransaction::new()) as Box<dyn RegistryTransaction>)
+            Ok(Box::new(FakeTransaction::default()) as Box<dyn RegistryTransaction>)
         }
 
         fn open_subkey_transacted_with_flags(
@@ -863,6 +862,20 @@ pub mod test {
                 .and_then(|_| self.open_subkey(name))
         }
     }
+}
+
+#[cfg(test)]
+pub mod test {
+    use super::*;
+    use crate::populate_fake_registry;
+
+    use std::{
+        collections::HashMap,
+        path::PathBuf,
+        sync::{Arc, RwLock},
+    };
+
+    use mock::FakeTransaction;
 
     fn get_test_folder_paths(_path: &Path) -> Result<Vec<PathBuf>, IoError> {
         Ok(vec![
@@ -892,7 +905,7 @@ lune"#;
             }
         );
         let editor = RegistryEditor::new_with_registry(root, get_test_folder_paths);
-        let transaction = FakeTransaction::new();
+        let transaction = FakeTransaction::default();
         let res = editor.get_pending_deletions(&transaction).unwrap();
         assert_eq!(res, vec!["bune", "rune", "kune", "lune"]);
 
@@ -1027,7 +1040,7 @@ B:\garage\fin_bil
 
         let res = editor.cancel_pending_deletions(&PathBuf::from(r#"B:\birm"#));
         assert!(res.is_ok());
-        let transaction = FakeTransaction::new();
+        let transaction = FakeTransaction::default();
         let res = editor.get_pending_deletions(&transaction).unwrap();
 
         assert_eq!(
