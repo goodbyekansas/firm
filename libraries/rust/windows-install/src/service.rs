@@ -17,7 +17,7 @@ use winapi::{
         winbase::{FormatMessageW, FORMAT_MESSAGE_FROM_SYSTEM},
         winnt::{
             DELETE, GENERIC_ALL, LPCWSTR, LPWSTR, SERVICE_AUTO_START, SERVICE_ERROR_NORMAL,
-            SERVICE_USER_OWN_PROCESS, SERVICE_WIN32_OWN_PROCESS,
+            SERVICE_USER_OWN_PROCESS,
         },
         winsvc::{
             CloseServiceHandle, ControlService, CreateServiceW, DeleteService, EnumServicesStatusW,
@@ -31,8 +31,8 @@ use winapi::{
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
-    #[error("Service does not exist")]
-    ServiceDoesNotExist,
+    #[error("Service \"{0}\" does not exist")]
+    ServiceDoesNotExist(String),
 
     #[error("WinApiError: {:?}", last_error_message())]
     WinApiError,
@@ -63,18 +63,12 @@ pub enum ServiceError {
 
     #[error(r#"Failed to lookup services: {:?}"#, last_error_message())]
     FailedToLookupServices,
-
-    #[error("Failed to mark file for reboot deletion: {0}")]
-    FailedToMarkFileForRebootDeletion(String),
-
-    #[error("Failed to mark folder \"{0}\" for deletion: {1}")]
-    FailedToMarkDirectoryForRebootDeletion(String, std::io::Error),
 }
 
 impl From<ServiceError> for u32 {
     fn from(service_error: ServiceError) -> Self {
         match service_error {
-            ServiceError::ServiceDoesNotExist => 30,
+            ServiceError::ServiceDoesNotExist(_) => 30,
             ServiceError::WinApiError => 31,
             ServiceError::FailedToCreateService(_) => 32,
             ServiceError::FailedToGetService(_) => 33,
@@ -85,8 +79,6 @@ impl From<ServiceError> for u32 {
             ServiceError::FailedToStopService(_) => 38,
             ServiceError::FailedToGetServiceManager => 39,
             ServiceError::FailedToLookupServices => 40,
-            ServiceError::FailedToMarkFileForRebootDeletion(_) => 41,
-            ServiceError::FailedToMarkDirectoryForRebootDeletion(_, _) => 42,
         }
     }
 }
@@ -155,8 +147,8 @@ impl UserServiceEnumerator<'_> {
                 .iter()
                 .filter_map(|service| {
                     get_service_handle(
-                        &parse_str_ptr(service.lpServiceName).to_string_lossy(),
                         manager_handle,
+                        &parse_str_ptr(service.lpServiceName).to_string_lossy(),
                     )
                     .ok()
                 })
@@ -302,27 +294,9 @@ pub fn create_service(
     }
 }
 
-pub fn create_user_service(
-    name: &str,
-    path: &str,
-    handle: &WinHandle,
-    args: &[&str],
-) -> Result<WinHandle, ServiceError> {
-    create_service(name, path, handle, args, SERVICE_USER_OWN_PROCESS)
-}
-
-pub fn create_system_service(
-    name: &str,
-    path: &str,
-    handle: &WinHandle,
-    args: &[&str],
-) -> Result<WinHandle, ServiceError> {
-    create_service(name, path, handle, args, SERVICE_WIN32_OWN_PROCESS)
-}
-
 pub fn get_service_handle(
-    name: &str,
     manager_handle: &WinHandle,
+    name: &str,
 ) -> Result<WinHandle, ServiceError> {
     let win_name = win_string(name);
     match unsafe {
@@ -335,7 +309,7 @@ pub fn get_service_handle(
         v if v == (NULL as SC_HANDLE)
             && unsafe { GetLastError() } == ERROR_SERVICE_DOES_NOT_EXIST =>
         {
-            Err(ServiceError::ServiceDoesNotExist)
+            Err(ServiceError::ServiceDoesNotExist(name.to_string()))
         }
         v if v == (NULL as SC_HANDLE) => Err(ServiceError::FailedToGetService(name.to_string())),
         handle => Ok(WinHandle {
