@@ -10,6 +10,7 @@
 , lomax
 , configFiles ? null
 , additionalRuntimes ? { }
+, windowsInstall
 }:
 let
   avery' = (avery.withRuntimes.override { generateConfig = false; }) { inherit additionalRuntimes; };
@@ -26,14 +27,15 @@ let
     '';
   };
 in
-(base.languages.rust.mkClient {
+(base.languages.rust.mkClient rec {
   name = "firm-installer";
   src = ./.;
   inherit version;
+  buildInputs = [ windowsInstall.package ];
 
   crossTargets = {
     windows = {
-      buildInputs = [ pkgsCross.mingwW64.windows.pthreads ];
+      buildInputs = buildInputs ++ [ pkgsCross.mingwW64.windows.pthreads ];
     };
   };
 

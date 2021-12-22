@@ -156,20 +156,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "firm-installer"
-version = "0.1.1"
+name = "firm-windows-installer"
+version = "0.1.2"
 dependencies = [
  "flate2",
- "regex",
  "slog",
  "slog-async",
  "slog-term",
  "structopt",
  "tar",
  "thiserror",
- "winapi",
- "windows-acl",
- "winreg",
+ "windows-install",
 ]
 
 [[package]]
@@ -373,9 +370,9 @@ dependencies = [
 
 [[package]]
 name = "rustversion"
-version = "1.0.5"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61b3909d758bb75c79f23d4736fac9433868679d3ad2ea7a61e3c25cfda9a088"
+checksum = "f2cc38e8fa666e2de3c4aba7edeb5ffc5246c1c2ed0e3d17e560aeeba736b23f"
 
 [[package]]
 name = "semver"
@@ -623,6 +620,18 @@ dependencies = [
  "libc",
  "widestring",
  "winapi",
+]
+
+[[package]]
+name = "windows-install"
+version = "1.0.0"
+source = "registry+https://fake-nix-registry/not-really-an-index"
+dependencies = [
+ "regex",
+ "thiserror",
+ "winapi",
+ "windows-acl",
+ "winreg",
 ]
 
 [[package]]

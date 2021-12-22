@@ -8,13 +8,9 @@ flate2 = "1"
 structopt = "0.3"
 tar = "0.4"
 thiserror = "1"
-regex = "1"
 slog = { version="2", features=["release_max_level_debug"] }
 slog-term = "2"
 slog-async = "2"
 
-[target.'cfg(windows)'.dependencies]
-winapi = { version="0.3", features=["winsvc", "impl-default"] }
-windows-acl = "0.3"
-winreg = { version="0.9", features=["transactions"] }
+windows-install = { version = "1.0.0", registry = "nix" }
 

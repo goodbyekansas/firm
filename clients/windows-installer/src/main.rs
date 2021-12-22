@@ -10,15 +10,15 @@ use slog_term::{FullFormat, TermDecorator};
 use structopt::StructOpt;
 use tar::{Archive, Entry, Unpacked};
 use thiserror::Error;
-use winapi::um::{
+
+use windows_install::winapi::um::{
     winnt::DELETE,
     winsvc::{SC_MANAGER_CREATE_SERVICE, SC_MANAGER_ENUMERATE_SERVICE},
 };
-mod registry;
-mod service;
+use windows_install::winreg::{enums::HKEY_LOCAL_MACHINE, RegKey};
 
-use registry::{RegistryEditor, RegistryError};
-use winreg::{enums::HKEY_LOCAL_MACHINE, RegKey};
+use windows_install::registry::{RegistryEditor, RegistryError};
+use windows_install::service::{self, ServiceError};
 
 const AVERY: &str = "Avery";
 const LOMAX: &str = "Lomax";
@@ -39,10 +39,10 @@ pub enum InstallerError {
     ArchiveError(String),
 
     #[error(transparent)]
-    ServiceError(#[from] service::ServiceError),
+    ServiceError(#[from] ServiceError),
 
     #[error(transparent)]
-    RegistryError(#[from] registry::RegistryError),
+    RegistryError(#[from] RegistryError),
 }
 
 impl From<InstallerError> for u32 {
@@ -274,7 +274,7 @@ fn get_config_arg(path: &Path, name: &str) -> String {
 
 fn upgrade(logger: Logger) -> Result<(), InstallerError> {
     info!(logger, "☝️ Upgrading...");
-    let reg_edit = registry::RegistryEditor::new();
+    let reg_edit = RegistryEditor::new();
     let (exe_path, data_path) = find_firm(
         &reg_edit,
         &logger,
@@ -321,7 +321,7 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
         data_path.to_string_lossy()
     );
     info!(logger, "💾 Installing...");
-    let reg_edit = registry::RegistryEditor::new();
+    let reg_edit = RegistryEditor::new();
     pass_result!(logger, reg_edit.cancel_pending_deletions(install_path));
 
     copy_files(&logger, install_path, data_path)
@@ -469,7 +469,7 @@ fn uninstall(logger: Logger) {
             }),
         "😭 Failed to stop services"
     );
-    let reg_edit = registry::RegistryEditor::new();
+    let reg_edit = RegistryEditor::new();
     pass_result!(logger, try_deregister_log_source(AVERY));
     pass_result!(logger, try_deregister_log_source(LOMAX));
 
@@ -565,11 +565,12 @@ fn main() -> Result<(), u32> {
 
 #[cfg(test)]
 mod test {
-
     use super::*;
-    use crate::populate_fake_registry;
     use std::collections::HashMap;
     use std::sync::{Arc, RwLock};
+    use windows_install::{
+        populate_fake_registry, registry::mock::new_registry_editor_with_registry,
+    };
 
     macro_rules! null_logger {
         () => {{
@@ -581,7 +582,7 @@ mod test {
     fn finding_firm() {
         let registry_keys = Arc::new(RwLock::new(HashMap::new()));
         let root = populate_fake_registry!(registry_keys, {r#"SOFTWARE\Firm"#.to_string() => {"InstallPath" => "🍊", "DataPath" => "🥭", "Version" => "🕳️"}});
-        let editor = RegistryEditor::new_with_registry(root, |_| Ok(vec![]));
+        let editor = new_registry_editor_with_registry(root, |_| Ok(vec![]));
         let log = null_logger!();
         let (exe, data) = find_firm(&editor, &log, PathBuf::new, PathBuf::new);
         assert_eq!(exe, PathBuf::from("🍊"));
@@ -590,7 +591,7 @@ mod test {
         // Test when we have not put in the data
         let registry_keys = Arc::new(RwLock::new(HashMap::new()));
         let root = populate_fake_registry!(registry_keys, [String::from(r#"SOFTWARE\Firm"#)]);
-        let editor = registry::RegistryEditor::new_with_registry(root, |_| Ok(vec![]));
+        let editor = new_registry_editor_with_registry(root, |_| Ok(vec![]));
         let (exe, data) = find_firm(
             &editor,
             &log,
