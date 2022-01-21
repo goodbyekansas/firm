@@ -2,7 +2,6 @@
 , types
 , tonicMiddleware
 , xcbuild ? null
-, pkgsCross ? null
 , pkg-config
 , lib
 , stdenv
@@ -27,9 +26,7 @@
   ];
 
   crossTargets = {
-    windows = {
-      buildInputs = buildInputs ++ [ pkgsCross.mingwW64.windows.pthreads ];
-    };
+    windows = { };
   };
 
   shellHook = ''
