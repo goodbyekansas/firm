@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2022-01-21
+### Packages
+- avery: 2.0.2
+- bendini: 2.0.0
+- firmRust: 1.0.0
+- firmTypes-python: 1.0.0
+- firmTypes-rust-withServices, firmTypes-rust-withoutServices: 1.0.0
+- firmWindowsInstaller: 0.1.2
+- lomax: 2.0.0
+- protocols-withServices-python, protocols-withServices-rust, protocols-withoutServices-python, protocols-withoutServices-rust: 2.0.0
+- quinn: 2.0.0
+- tonicMiddleware: 1.0.0
+- windowsInstall: 0.1.0
+
+### Fixed
+- firmWindowsInstaller: Installer removing files it did not own during uninstall.
+  The installer now only work on files it extracted itself. If you manually add
+  extra files in for example the install directory it will ignore those during
+  uninstall.
+- firmWindowsInstaller: Issue where installer could not mark files for deletion.
+
+### Added
+- windowsInstall: Utility library for creating windows installers with data and services
+
 ## [2.0.3] - 2021-12-21
 ### Packages
 - avery: 2.0.2
@@ -21,10 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - windowsInstaller: Installer removing files it did not own during uninstall.
-                    The installer now only work on files it extracted itself. If you
-                    manually add extra files in for example the install directory
-                    it will ignore those during uninstall.
-- windowsInstaller: Issue where installer could not mark files for deletion.
+  The installer now only work on files it extracted itself. If you
+  manually add extra files in for example the install directory
+  it will ignore those during uninstall.
+  windowsInstaller: Issue where installer could not mark files for deletion.
 
 ## [2.0.2] - 2021-12-17
 ### Packages
