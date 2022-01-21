@@ -16,7 +16,7 @@ updateChangelogs() {
     echo -e "  -avery: other cool thing\033[0m"
     echo "The main changelog will also get a ###Packages header with the version of each component."
   else
-    python "$CHANGELOG_SCRIPT" release --changelogs "$allChangelogs"
+    python "$CHANGELOG_SCRIPT" release --changelogs "$allChangelogs" || return 1
     echo "Remember to update Cargo.toml with correct versions!"
   fi
 }

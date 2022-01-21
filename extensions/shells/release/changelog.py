@@ -14,6 +14,10 @@ import keepachangelog._versioning as versioning  # type: ignore # pylint: disabl
 if os.name == "nt":
     os.system("color")
 
+class EmptyChangelog(Exception):
+    def __init__(self, component):
+        super().__init__(f"Component has an empty changelog: {component}")
+
 
 CHANGELOG = os.environ.get("FIRM_CHANGELOG", "file-not-found")
 
@@ -28,9 +32,9 @@ def padded_version(version: Union[Tuple[str, dict], str]) -> str:
             int, version_data.split(".")
         )
     else:
-        sem_ver = version[1]["metadata"]["semantic_version"]
-    sem_ver["prerelease"] = sem_ver["prerelease"] or ""
-    sem_ver["buildmetadata"] = sem_ver["buildmetadata"] or ""
+        sem_ver = version[1].get("metadata", {}).get("semantic_version", {"major": 0, "minor": 0, "patch": 0})
+    sem_ver["prerelease"] = sem_ver.get("prerelease", "") or ""
+    sem_ver["buildmetadata"] = sem_ver.get("buildmetadata", "") or ""
     return "{major:03}.{minor:03}.{patch:03}.{prerelease}.{buildmetadata}".format(
         **sem_ver
     )  # type: ignore
@@ -62,12 +66,14 @@ def check_component(
     released: List[Tuple[str, str]], folder: str, component: str
 ) -> Tuple[str, str, dict]:
     """ Check if a component has a new version since the last firm release """
-    _, version = next(filter(lambda p: p[0] == component, released), (None, "0.0.0"))
+    _, latest_in_firm = next(filter(lambda p: p[0] == component, released), (None, "0.0.0"))
     changelog_file = os.path.join(folder, component)
     component_changelog = keepachangelog.to_dict(changelog_file, show_unreleased=True)
-    latest = find_latest(component_changelog)
+    latest_in_component = find_latest(component_changelog)
+
+    # If we have unreleased changes
     if list(component_changelog.get("unreleased", {}).keys()) != ["metadata"]:
-        print(f"\033[95m{component}\033[0m has unreleased changes since {version}:")
+        print(f"\033[95m{component}\033[0m has unreleased changes since {latest_in_firm}:")
         unreleased = component_changelog.get("unreleased")
         unreleased.pop("metadata")
         print(re.sub(r"[\{\}\[\]]", "", pprint.pformat(unreleased, indent=2)))
@@ -76,16 +82,24 @@ def check_component(
         print("")
         return (component, new_version, unreleased)
 
-    if padded_version(latest) > padded_version(version):
-        print(f"\033[95m{component}\033[0m has a new version {version} -> {latest[0]}:")
-        meta = latest[1].pop("metadata")
-        new_version = re.sub(r"[\{\}\[\]]", "", pprint.pformat(latest[1], indent=2))
+    # check if a component has already been "released" (i.e. the changelog has a version
+    # that is not in the main changelog)
+    if padded_version(latest_in_component) > padded_version(latest_in_firm):
+        print(f"\033[95m{component}\033[0m has a new version {latest_in_firm} -> {latest_in_component[0]}:")
+        meta = latest_in_component[1].pop("metadata")
+        new_version = re.sub(r"[\{\}\[\]]", "", pprint.pformat(latest_in_component[1], indent=2))
         print(new_version)
         print("")
-        return (component, meta["version"], latest[1])
+        return (component, meta["version"], latest_in_component[1])
+
+    # Incorrect changelog, no version and no changes
+    if not latest_in_component[0]:
+        raise EmptyChangelog(component)
+
+    # otherwise we have no changes and just return
     print(f"\033[95m{component}\033[0m has no changes")
     print("")
-    return (component, version, {})
+    return (component, latest_in_firm, {})
 
 
 def combine_changelogs(accumulated: dict, current: Tuple[str, str, dict]) -> dict:
@@ -133,13 +147,17 @@ def release(changelogs: str) -> None:
     main_changelog["unreleased"]["packages"] = []
     check_component_since = partial(check_component, last_packages, changelogs)
 
-    changes = keepachangelog.from_dict(
+    try:
+        changes = keepachangelog.from_dict(
         reduce(
             combine_changelogs,
             map(check_component_since, os.listdir(changelogs)),
             main_changelog,
         )
     )
+    except EmptyChangelog as error:
+        print(error)
+        sys.exit(1)
     released = write_changelog(changes)
     print(f"Updated changelog to release version {released}")
 
