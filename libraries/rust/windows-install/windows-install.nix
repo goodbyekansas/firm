@@ -1,17 +1,11 @@
-{ base, pkgsCross }:
-(base.languages.rust.mkLibrary {
+{ base }:
+base.languages.rust.mkLibrary {
   name = "windows-install";
   src = ./.;
 
   crossTargets = {
-    windows = {
-      buildInputs = [ pkgsCross.mingwW64.windows.pthreads ];
-    };
+    includeNative = false;
+    windows = { };
   };
-}).overrideAttrs (attrs:
-  {
-    package = attrs.windows;
-    rust = attrs.windows;
-  }
-)
+}
 

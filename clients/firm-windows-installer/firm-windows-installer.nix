@@ -2,7 +2,6 @@
 , symlinkJoin
 , writeScript
 , stdenv
-, pkgsCross
 , lib
 , version
 , avery
@@ -27,16 +26,15 @@ let
     '';
   };
 in
-(base.languages.rust.mkClient rec {
+base.languages.rust.mkClient rec {
   name = "firm-windows-installer";
   src = ./.;
   inherit version;
-  buildInputs = [ windowsInstall.package ];
+  buildInputs = [ windowsInstall.windows ];
 
   crossTargets = {
-    windows = {
-      buildInputs = buildInputs ++ [ pkgsCross.mingwW64.windows.pthreads ];
-    };
+    includeNative = false;
+    windows = { };
   };
 
   shellHook = ''
@@ -56,9 +54,4 @@ in
   linkDataPhase = ''
     ln -fs ${archive} install-data
   '';
-}).overrideAttrs (oldAttrs:
-  {
-    package = oldAttrs.windows;
-    rust = oldAttrs.windows;
-  }
-)
+}
