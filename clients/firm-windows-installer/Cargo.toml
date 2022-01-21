@@ -12,5 +12,4 @@ slog = { version="2", features=["release_max_level_debug"] }
 slog-term = "2"
 slog-async = "2"
 
-windows-install = { version = "1.0.0", registry = "nix" }
-
+windows-install = { version = "0.1.0", registry = "nix" }
