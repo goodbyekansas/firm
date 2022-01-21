@@ -3,7 +3,6 @@
 , types
 , tonicMiddleware
 , xcbuild ? null
-, pkgsCross ? null
 , pkg-config
 , lib
 , systemd
@@ -26,8 +25,6 @@ base.languages.rust.mkService rec {
   '';
 
   crossTargets = {
-    windows = {
-      buildInputs = buildInputs ++ [ pkgsCross.mingwW64.windows.pthreads ];
-    };
+    windows = { };
   };
 }
