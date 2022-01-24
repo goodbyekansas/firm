@@ -36,15 +36,16 @@ pkgs.stdenv.mkDerivation {
   buildInputs = [ pkgs.python3Packages.j2cli ];
   src = ./index.html.jinja2;
   builder = builtins.toFile "builder.sh" ''
+    outPath=$out/share/doc/${manifest.name}/api
     source $stdenv/setup
-    mkdir -p $out
+    mkdir -p $outPath
     ${if overrides ? jinja then "ln -s ${overrides.jinja} extension.html" else ""}
     ln -s ${jinjaTemplate} index.html
     j2 \
       --format json  \
       --customize ${./template_settings.py} \
       ${if overrides ? jinja then "extension.html" else "index.html"} ${manifestData} \
-      -o $out/index.html
-    cp ${if overrides ? css then "${overrides.css}" else "${./styles.css}"} $out/styles.css
+      -o $outPath/index.html
+    cp ${if overrides ? css then "${overrides.css}" else "${./styles.css}"} $outPath/styles.css
   '';
 }
