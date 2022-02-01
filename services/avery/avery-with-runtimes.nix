@@ -1,6 +1,6 @@
 { stdenv, base, runtimes, avery, makeWrapper, generateConfig ? true }:
 let
-  flattenAttrs = attrs: builtins.map (value: value.package) (builtins.attrValues attrs);
+  flattenAttrs = attrs: builtins.map (value: value.wasi) (builtins.attrValues attrs);
   flattenedRuntimes = flattenAttrs runtimes;
 in
 { additionalRuntimes ? { } }:

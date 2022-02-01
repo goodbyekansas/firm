@@ -2,10 +2,12 @@
 base.languages.rust.mkClient rec {
   name = "bendini";
   src = ./.;
-  buildInputs = [ types.package tonicMiddleware.package ];
+  buildInputs = [ types tonicMiddleware ];
 
   crossTargets = {
-    windows = { };
+    windows = {
+      inherit buildInputs;
+    };
   };
 
   shellHook = ''

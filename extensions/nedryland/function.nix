@@ -64,48 +64,25 @@ base.extend.mkExtension {
   languages = {
     rust = {
       mkFunction =
-        { name
-        , src
+        packageAttrs@{ name
         , manifest
-        , targets ? [ ]
-        , useNightly ? ""
-        , extraChecks ? ""
-        , buildFeatures ? [ ]
-        , testFeatures ? [ ]
-        , packageAttrs ? { }
-        , componentAttrs ? { }
-        , fullCrossCompile ? false
+        , deploy ? true
+        , ...
         }:
-        let
-          mkPackage = (
-            if fullCrossCompile then
-              base.languages.rust.mkPackage.override { stdenv = pkgs.pkgsCross.wasi32.clang11Stdenv; }
-            else
-              base.languages.rust.mkPackage
-          );
-          package = mkPackage (packageAttrs // {
-            inherit src name useNightly extraChecks buildFeatures testFeatures;
-            targets = targets ++ [ "wasm32-wasi" ];
-            defaultTarget = "wasm32-wasi";
-          });
-
-          newPackage = package.overrideAttrs (
-            oldAttrs: {
-              installPhase = ''
-                runHook preInstall
-                ${oldAttrs.installPhase}
-                mkdir -p $out/bin
-                cp target/wasm32-wasi/release/*.wasm $out/bin
-                runHook postInstall
-              '';
-            }
-          );
-        in
-        mkFunction (componentAttrs // {
-          inherit name manifest;
-          package = newPackage;
-          code = "bin/${newPackage.name}.wasm";
-        });
+        mkFunction {
+          inherit manifest name deploy;
+          code = "bin/${name}.wasm";
+          package = (base.languages.rust.mkComponent ((builtins.removeAttrs packageAttrs [ "manifest" "deploy" ]) // {
+            defaultTarget = "wasi";
+            nedrylandType = "function";
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out/bin
+              cp target/wasm32-wasi/release/*.wasm $out/bin
+              runHook postInstall
+            '';
+          })).wasi;
+        };
     };
     python = {
       mkFunction =
@@ -142,7 +119,6 @@ base.extend.mkExtension {
                   done
                 fi
               done
-              
             '';
 
             installPhase = ''
@@ -150,7 +126,7 @@ base.extend.mkExtension {
             '';
           };
 
-          package = base.languages.python.mkPackage {
+          package = (base.languages.python.mkComponent {
             inherit name version pythonVersion src;
             preDistPhases = [ "generateManifestPhase" ];
             nativeBuildInputs = (p: [ p.setuptools ]);
@@ -168,7 +144,7 @@ base.extend.mkExtension {
               cp dist/*.tar.gz $out/code.tar.gz
               runHook postInstall
             '';
-          };
+          }).package;
           manifest = {
             inherit name version inputs outputs metadata description;
             attachments = attachments // (

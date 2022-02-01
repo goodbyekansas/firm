@@ -16,7 +16,7 @@
     (path: type: (type == "regular" && baseNameOf path == "CHANGELOG.md"))
   ];
 
-  buildInputs = [ types.package tonicMiddleware.package ];
+  buildInputs = [ types tonicMiddleware ];
 
   nativeBuildInputs = [ pkg-config ]
     ++ lib.optional stdenv.hostPlatform.isDarwin xcbuild;
@@ -26,7 +26,9 @@
   ];
 
   crossTargets = {
-    windows = { };
+    windows = {
+      inherit buildInputs;
+    };
   };
 
   shellHook = ''
@@ -35,6 +37,7 @@
       systemd-socket-activate -l "/tmp/avery-dev.sock" "target/debug/avery"
     }
   '';
+
 }).overrideAttrs (avery: {
   withRuntimes = base.callFile ./avery-with-runtimes.nix {
     inherit avery;

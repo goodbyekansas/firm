@@ -2,10 +2,9 @@
 base.languages.rust.mkLibrary {
   name = "firm-rust";
   src = ./.;
-  defaultTarget = "wasm32-wasi";
-  targets = [ "wasm32-wasi" ];
+  defaultTarget = "wasi";
   useNightly = "2021-11-22";
-  propagatedBuildInputs = [ types.package ];
+  propagatedBuildInputs = [ types ];
   testFeatures = [ "net" "mock" ];
   buildFeatures = [ "net" "runtime" ];
 }

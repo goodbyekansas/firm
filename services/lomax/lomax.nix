@@ -11,7 +11,7 @@ base.languages.rust.mkService rec {
   name = "lomax";
   src = ./.;
 
-  buildInputs = [ types.package tonicMiddleware.package ];
+  buildInputs = [ types tonicMiddleware ];
 
   nativeBuildInputs = [ pkg-config ]
     ++ lib.optional stdenv.hostPlatform.isDarwin xcbuild;
@@ -25,6 +25,8 @@ base.languages.rust.mkService rec {
   '';
 
   crossTargets = {
-    windows = { };
+    windows = {
+      inherit buildInputs;
+    };
   };
 }

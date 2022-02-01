@@ -20,6 +20,7 @@ let
           ""
           (builtins.attrNames env);
       };
+
       runner = pkgs.runCommand "runtime-runner-${name}"
         {
           inherit fileSystemImage;
@@ -33,58 +34,59 @@ let
           substituteAll ${./runtime/runtime-runner.bash} $out/bin/runtime-runner
           chmod +x $out/bin/runtime-runner
         '';
-      mkPackage = base.languages.rust.mkPackage.override { stdenv = pkgs.pkgsCross.wasi32.clang12Stdenv; };
+
       curatedAttrs = builtins.removeAttrs attrs [ "name" "src" "examples" "fileSystemImage" "runtimeName" ];
       extension = if fileSystemImage == null then ".wasm" else ".tar.gz";
     in
-    base.mkComponent {
-      inherit name runtimeName examples;
-      package = mkPackage (curatedAttrs // {
-        inherit name src;
-        targets = [ "wasm32-wasi" ];
-        defaultTarget = "wasm32-wasi";
-        nativeBuildInputs = [ pkgs.wasmtime ] ++ pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.llvmPackages_12.llvm ++ curatedAttrs.nativeBuildInputs or [ ];
-        shellInputs = [ pkgs.wabt pkgs.coreutils bendini.package avery.package runner ] ++ curatedAttrs.shellInputs or [ ];
-        extraCargoConfig = attrs.extraCargoConfig or "";
-        checkInputs = pkgs.lib.optional curatedAttrs.exposeRunnerInChecks or false runner ++
-          curatedAttrs.checkInputs or [ ];
+    (base.languages.rust.mkComponent (curatedAttrs // {
+      inherit name src;
+      nedrylandType = "avery-runtime";
+      defaultTarget = "wasi";
 
-        shellHook = ''
-          export CARGO_TARGET_WASM32_WASI_RUNNER=runtime-runner
-          ${attrs.shellHook or ""}
-        '';
+      nativeBuildInputs = [ pkgs.wasmtime ] ++ pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.llvmPackages_12.llvm ++ curatedAttrs.nativeBuildInputs or [ ];
+      shellInputs = [ pkgs.wabt pkgs.coreutils bendini avery runner ] ++ curatedAttrs.shellInputs or [ ];
+      extraCargoConfig = attrs.extraCargoConfig or "";
+      checkInputs = pkgs.lib.optional curatedAttrs.exposeRunnerInChecks or false runner ++
+        curatedAttrs.checkInputs or [ ];
 
-        useNightly = curatedAttrs.useNightly or "2021-11-22";
-        installPhase = ''
-          mkdir -p $out/share/avery/runtimes
-          cp target/wasm32-wasi/release/*.wasm $out/share/avery/runtimes/${runtimeName}.wasm
-          ${curatedAttrs.installPhase or ""}
-        '';
-        postFixup = ''
-          executableSha=$(sha256sum $out/share/avery/runtimes/${runtimeName}.wasm | cut -d ' ' -f 1)
-          sha=$executableSha
-          ${if fileSystemImage != null then ''
-              ln -s ${fileSystemImage} fs
+      shellHook = ''
+        export CARGO_TARGET_WASM32_WASI_RUNNER=runtime-runner
+        ${attrs.shellHook or ""}
+      '';
 
-              # -h to resolve symlinks
-              # also set mode because of https://github.com/alexcrichton/tar-rs/issues/242
-              echo "📦 creating tar file for runtime filesystem image..."
-              tar -chzf "$out/share/avery/runtimes/${runtimeName}.tar.gz" --mode='a+rwX' fs \
-                  -C $out/share/avery/runtimes/ --owner 0 --group 0 ${runtimeName}.wasm
-              echo "🌅 Image created!"
+      useNightly = curatedAttrs.useNightly or "2021-11-22";
+      installPhase = ''
+        mkdir -p $out/share/avery/runtimes
+        cp target/wasm32-wasi/release/*.wasm $out/share/avery/runtimes/${runtimeName}.wasm
+        ${curatedAttrs.installPhase or ""}
+      '';
 
-              sha=$(sha256sum $out/share/avery/runtimes/${runtimeName}.tar.gz | cut -d ' ' -f 1)
-              rm $out/share/avery/runtimes/${runtimeName}.wasm
-            ''
-            else ""}
+      postFixup = ''
+        executableSha=$(sha256sum $out/share/avery/runtimes/${runtimeName}.wasm | cut -d ' ' -f 1)
+        sha=$executableSha
+        ${if fileSystemImage != null then ''
+            ln -s ${fileSystemImage} fs
 
-          echo "
-          [\"${runtimeName}${extension}\"]
-          sha256=\"$sha\"
-          executable_sha256=\"$executableSha\"" >"$out/share/avery/runtimes/.checksums.toml"
-        '';
-      });
-    };
+            # -h to resolve symlinks
+            # also set mode because of https://github.com/alexcrichton/tar-rs/issues/242
+            echo "📦 creating tar file for runtime filesystem image..."
+            tar -chzf "$out/share/avery/runtimes/${runtimeName}.tar.gz" --mode='a+rwX' fs \
+                -C $out/share/avery/runtimes/ --owner 0 --group 0 ${runtimeName}.wasm
+            echo "🌅 Image created!"
+
+            sha=$(sha256sum $out/share/avery/runtimes/${runtimeName}.tar.gz | cut -d ' ' -f 1)
+            rm $out/share/avery/runtimes/${runtimeName}.wasm
+          ''
+          else ""}
+
+        echo "
+        [\"${runtimeName}${extension}\"]
+        sha256=\"$sha\"
+        executable_sha256=\"$executableSha\"" >"$out/share/avery/runtimes/.checksums.toml"
+      '';
+    })).overrideAttrs (_: {
+      inherit runtimeName examples;
+    });
 in
 base.extend.mkExtension {
   componentTypes = base.extend.mkComponentType {
