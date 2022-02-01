@@ -30,12 +30,8 @@ base.languages.rust.mkClient rec {
   name = "firm-windows-installer";
   src = ./.;
   inherit version;
-  buildInputs = [ windowsInstall.windows ];
-
-  crossTargets = {
-    includeNative = false;
-    windows = { };
-  };
+  buildInputs = [ windowsInstall ];
+  defaultTarget = "windows";
 
   shellHook = ''
     copyInstaller() {

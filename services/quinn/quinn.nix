@@ -2,7 +2,7 @@
 base.languages.rust.mkService {
   name = "quinn";
   src = ./.;
-  buildInputs = [ types.package openssl ]
+  buildInputs = [ types openssl ]
     ++ lib.optional stdenv.hostPlatform.isDarwin darwin.apple_sdk.frameworks.Security;
 
   nativeBuildInputs = [ postgresql coreutils pkg-config ];

@@ -1,47 +1,36 @@
 { base, pkgs }: # TODO: Make one deriv for the C output and another for rust
-let
+(base.languages.rust.mkLibrary {
   name = "wasi-python-shims";
-  stdenv = pkgs.pkgsCross.wasi32.clang12Stdenv;
-  overriddenMkPackage = (base.languages.rust.mkPackage.override { inherit stdenv; });
+  src = ./.;
+  defaultTarget = "wasi";
 
-  package = overriddenMkPackage {
-    inherit name;
-    src = ./.;
-    defaultTarget = "wasm32-wasi";
-    targets = [ "wasm32-wasi" ];
+  doCrossCheck = true;
+  useNightly = "2021-11-22";
 
-    doCrossCheck = true;
-    useNightly = "2021-11-22";
-
-    checkInputs = [ pkgs.wasmtime ];
-    shellInputs = [ pkgs.bear ];
-  };
-
-  libraryPackage = base.languages.rust.toLibrary package;
-
-  newPackage = libraryPackage.overrideAttrs (
-    oldAttrs: {
-      RUSTFLAGS = "${oldAttrs.RUSTFLAGS} -Ctarget-feature=-crt-static";
+  checkInputs = [ pkgs.wasmtime ];
+  shellInputs = [ pkgs.bear ];
+}
+).overrideAttrs (
+  oldAttrs: {
+    package = oldAttrs.wasi.overrideAttrs (packageAttrs: {
+      RUSTFLAGS = "${packageAttrs.RUSTFLAGS} -Ctarget-feature=-crt-static";
       installPhase = ''
-        ${oldAttrs.installPhase}
+        ${packageAttrs.installPhase}
         mkdir -p $out/lib $out/include
         cp target/wasm32-wasi/release/libwasi_python_shims.a $out/lib
-        cp $(cargo run --release header) $out/include
+
+        # Inputting the build target platform manually to not run wasi here.
+        cp $(cargo run --target ${base.languages.rust.toRustTarget pkgs.stdenv.buildPlatform} --release header) $out/include
       '';
 
       buildPhase = ''
-        ${oldAttrs.buildPhase}
         cargo build --release
       '';
 
-      # TODO: remove the "clean" target when
-      # https://github.com/goodbyekansas/nedryland/issues/143
-      # is done. Then the test exe will be ignored by gitignore
       checkPhase = ''
-        ${oldAttrs.checkPhase}
-        make clean check
+        ${packageAttrs.checkPhase}
+        make check
       '';
-    }
-  );
-in
-base.mkComponent { inherit name; package = newPackage; }
+    });
+  }
+)
