@@ -448,7 +448,6 @@ async fn proxy(
     .into_http_result()
 }
 
-//async fn run(log: Logger) -> Result<(), Box<dyn std::error::Error>> {
 pub async fn run<G>(
     args: LomaxArgs,
     started_callback: G,
@@ -458,7 +457,6 @@ where
     G: FnOnce() -> Result<(), String>,
 {
     info!(log, "Starting Lomax 🤿");
-    //let args = LomaxArgs::from_args();
 
     let config = if let Some(f) = args.config {
         config::Config::new_with_file(f)
@@ -466,37 +464,23 @@ where
         config::Config::new()
     }?;
 
-    if !config.certificate_locations.key.exists() && config.create_self_signed_certificate {
-        std::fs::create_dir_all(
-            config
-                .certificate_locations
-                .key
-                .parent()
-                .ok_or("Failed to get certificate key parent directory")?,
-        )
-        .map_err(|e| format!("Failed to create certificate directory: {}", e))?;
+    let (expected_cert_version, cert_version) = (
+        tls::get_certificate_version(&config)?,
+        tls::create_cert_version(&config),
+    );
+    if (!config.certificate_locations.key.exists() && config.create_self_signed_certificate)
+        || cert_version != expected_cert_version
+    {
+        if cert_version != expected_cert_version {
+            info!(
+                log,
+                "Certificate version differs (expected: {}, got: {}), generating new certificate",
+                expected_cert_version,
+                cert_version
+            );
+        }
 
-        info!(log, "Generating self signed certificate.");
-        let mut alt_names = config.certificate_alt_names.clone();
-        alt_names.extend(vec![
-            hostname::get()
-                .map_err(|e| format!("Failed to get host name: {}", e))?
-                .to_string_lossy()
-                .to_string(),
-            "localhost".to_string(),
-        ]);
-        let cert = rcgen::generate_simple_self_signed(alt_names)
-            .map_err(|e| format!("Failed to generate self signed certificate: {}", e))?;
-
-        let (cert, key) = cert
-            .serialize_pem()
-            .map(|pem_cert| (pem_cert, cert.serialize_private_key_pem()))
-            .map_err(|e| format!("Failed to serialize certificate: {}", e))?;
-
-        std::fs::write(&config.certificate_locations.key, key)
-            .map_err(|e| format!("Failed to write certificate key: {}", e))?;
-        std::fs::write(&config.certificate_locations.cert, cert)
-            .map_err(|e| format!("Failed to write certificate: {}", e))?;
+        tls::create_certificate(&config, log.new(o!("scope" => "self-signed-cert")))?
     }
 
     info!(
