@@ -31,7 +31,7 @@ struct MaybeCertificateLocations {
     pub certificate_key_location: Option<PathBuf>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Default)]
 #[serde(try_from = "MaybeCertificateLocations")]
 pub struct CertificateLocations {
     pub cert: PathBuf,
@@ -55,7 +55,7 @@ impl TryFrom<MaybeCertificateLocations> for CertificateLocations {
     }
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Default)]
 pub struct Config {
     #[serde(default = "default_port")]
     pub port: u16,

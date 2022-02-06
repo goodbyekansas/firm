@@ -218,3 +218,201 @@ impl hyper::server::accept::Accept for TlsAcceptor<'_> {
         Pin::new(&mut self.acceptor).poll_next(cx)
     }
 }
+
+/// Get the current config version
+///
+/// Note that the version is a hash and therefore any comparisons except for equality does
+/// not make sense. If the version file does not exists, the version returned is 5381.
+pub fn get_certificate_version(config: &crate::config::Config) -> Result<u32, String> {
+    let mut version_file = config.certificate_locations.key.clone();
+    version_file.set_extension("version");
+    if !version_file.exists() {
+        return Ok(5381u32); // see hash used below
+    }
+    std::fs::read_to_string(&version_file)
+        .map_err(|e| format!("Failed to read certificate version file: {}", e))
+        .and_then(|s| {
+            s.parse()
+                .map_err(|e| format!("Failed to parse certificate version: {}", e))
+        })
+}
+
+/// Create a version number for the certificate based on config
+///
+/// Note that this version number is not monotonically increasing
+/// but rather a hash of select fields of the config
+pub fn create_cert_version(config: &crate::config::Config) -> u32 {
+    config
+        .certificate_alt_names
+        .join(" ")
+        .chars()
+        // djb2 hash: http://www.cse.yorku.ca/~oz/hash.html
+        .fold(5381u32, |hash, c| {
+            ((hash << 5).wrapping_add(hash)).wrapping_add(c as u32)
+        })
+}
+
+/// Create a self-signed certificate
+pub fn create_certificate(
+    config: &crate::config::Config,
+    log: Logger,
+) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(
+        config
+            .certificate_locations
+            .key
+            .parent()
+            .ok_or("Failed to get certificate key parent directory")?,
+    )
+    .map_err(|e| format!("Failed to create certificate key directory: {}", e))?;
+
+    std::fs::create_dir_all(
+        config
+            .certificate_locations
+            .cert
+            .parent()
+            .ok_or("Failed to get certificate parent directory")?,
+    )
+    .map_err(|e| format!("Failed to create certificate directory: {}", e))?;
+
+    info!(log, "Generating self signed certificate.");
+
+    // determine alt names for the certificate and support {hostname} replacement for the
+    // given alt names
+    let mut alt_names = config.certificate_alt_names.clone();
+    alt_names.extend(["{hostname}".to_string(), "localhost".to_string()]);
+    let hostname = hostname::get()
+        .map_err(|e| format!("Failed to get host name: {}", e))?
+        .to_string_lossy()
+        .to_string();
+
+    rcgen::generate_simple_self_signed(
+        alt_names
+            .into_iter()
+            .map(|an| an.replace("{hostname}", &hostname))
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|e| format!("Failed to generate self signed certificate: {}", e))
+    .and_then(|cert| {
+        cert.serialize_pem()
+            .map(|pem_cert| (pem_cert, cert.serialize_private_key_pem()))
+            .map_err(|e| format!("Failed to serialize certificate: {}", e))
+    })
+    .and_then(|(cert, key)| {
+        std::fs::write(&config.certificate_locations.key, key)
+            .map_err(|e| format!("Failed to write certificate key: {}", e))
+            .map(|_| cert)
+    })
+    .and_then(|cert| {
+        let mut version_file = config.certificate_locations.key.clone();
+        version_file.set_extension("version");
+        std::fs::write(&version_file, format!("{}", create_cert_version(config)))
+            .map_err(|e| format!("Failed to write certificate key version: {}", e))
+            .map(|_| cert)
+    })
+    .and_then(|cert| {
+        std::fs::write(&config.certificate_locations.cert, cert)
+            .map_err(|e| format!("Failed to write certificate: {}", e))
+    })?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tls::{create_certificate, get_certificate_version};
+
+    use super::create_cert_version;
+
+    macro_rules! null_logger {
+        () => {{
+            slog::Logger::root(slog::Discard, slog::o!())
+        }};
+    }
+
+    #[test]
+    fn certificate_version() {
+        let mut c = crate::config::Config {
+            certificate_alt_names: vec![String::from("{hostname}.fabriken.se")],
+            ..Default::default()
+        };
+
+        let version = create_cert_version(&c);
+        c.certificate_alt_names = vec![String::from("{hostname}.fabrikan.se")];
+
+        assert_ne!(
+            version,
+            create_cert_version(&c),
+            "Expected different certificate \
+             alt name settings to produce different \
+             certificate versions"
+        );
+    }
+
+    #[test]
+    fn create_self_signed_cert() {
+        let cert_dir =
+            tempfile::tempdir().expect("Failed to create temp directory for holding certificates");
+
+        let mut c = crate::config::Config {
+            certificate_locations: crate::config::CertificateLocations {
+                cert: cert_dir.path().join("cert.pem"),
+                key: cert_dir.path().join("cert.key"),
+            },
+            ..Default::default()
+        };
+
+        let expected_version = create_cert_version(&c);
+        assert!(
+            create_certificate(&c, null_logger!()).is_ok(),
+            "Expected to be able to create a certificate with default settings"
+        );
+        assert!(
+            c.certificate_locations.key.exists(),
+            "Expected certificate key to exist after creation"
+        );
+        assert!(
+            c.certificate_locations.cert.exists(),
+            "Expected certificate to exist after creation"
+        );
+        let mut version_file = c.certificate_locations.key.clone();
+        version_file.set_extension("version");
+        assert!(
+            version_file.exists(),
+            "Expected certificate key version to exist after creation"
+        );
+        assert_eq!(
+            get_certificate_version(&c).expect("Failed to obtain certificate version"),
+            expected_version,
+            "Expected certificate version to match after creation"
+        );
+
+        // test setting alt name
+        c.certificate_alt_names = vec![String::from("{hostname}.fabriken.se")];
+        let expected_version = create_cert_version(&c);
+        assert!(
+            create_certificate(&c, null_logger!()).is_ok(),
+            "Expected to be able to create a certificate with alt name set"
+        );
+        assert!(
+            c.certificate_locations.key.exists(),
+            "Expected certificate key to exist after creation with alt name set"
+        );
+        assert!(
+            c.certificate_locations.cert.exists(),
+            "Expected certificate to exist after creation with alt name set"
+        );
+        let mut version_file = c.certificate_locations.key.clone();
+        version_file.set_extension("version");
+        assert!(
+            version_file.exists(),
+            "Expected certificate key version to exist after creation with alt name set"
+        );
+
+        assert_eq!(
+            get_certificate_version(&c).expect("Failed to obtain certificate version"),
+            expected_version,
+            "Expected certificate version to match after creation"
+        );
+    }
+}
