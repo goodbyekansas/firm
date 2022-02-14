@@ -6,8 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed Versions
+## [4.0.0] - 2022-02-14
+### Changed versions
 - Update Nedryland to 4.0.0
+
+### Packages
+- avery: 2.0.2
+- bendini: 2.0.0
+- firmRust: 1.0.0
+- firmTypes-python: 1.0.0
+- firmTypes-rust: 1.0.0
+- firmWindowsInstaller: 0.1.2
+- lomax: 2.1.0
+- protocols: 2.0.0
+- quinn: 2.0.0
+- tonicMiddleware: 1.0.0
+- windowsInstall: 0.1.0
+
+### Added
+- lomax: Support for expansion of `{hostname}` to the real hostname in the
+  `certificate_alt_names` config setting.
 
 ## [3.0.0] - 2022-01-21
 ### Packages
