@@ -70,6 +70,6 @@ nedryland.mkProject rec {
   };
 
   extraShells = { callFile }: {
-    release = callFile ./extensions/shells/release.nix { inherit components; };
+    release = callFile ./extensions/shells/release.nix { };
   };
 }

@@ -70,6 +70,7 @@ def check_component(
     changelog_file = os.path.join(folder, component)
     component_changelog = keepachangelog.to_dict(changelog_file, show_unreleased=True)
     latest_in_component = find_latest(component_changelog)
+    component = component.replace("_", ", ")
 
     # If we have unreleased changes
     if list(component_changelog.get("unreleased", {}).keys()) != ["metadata"]:

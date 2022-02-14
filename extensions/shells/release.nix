@@ -1,41 +1,36 @@
 { base, mkShell, linkFarm, python38, lib, components, gh }:
 let
-  components' = components { inherit (base) callFile; };
   allChangelogs =
     let
-      toList = set: if set ? changelog then set else (builtins.map toList (builtins.attrValues set));
-      # This is a bit messy because:
-      # 1. We have nested components
-      # 2. We have "internal" components, without changelogs
-      # 3. We have components that share a changelog
-      allComponentChangelogs = (lib.flatten
-        (builtins.map
-          toList
-          (builtins.attrValues
-            (lib.filterAttrsRecursive
-              (_: v: v != null)
-              (lib.mapAttrsRecursiveCond
-                (attr: !(attr ? isNedrylandComponent))
-                (
-                  names: comp:
-                    if comp ? path && (builtins.readDir (builtins.dirOf comp.path)) ? "CHANGELOG.md" then
-                      {
-                        component = builtins.concatStringsSep "-" names;
-                        changelog = builtins.toString ((builtins.dirOf comp.path) + /CHANGELOG.md);
-                      }
-                    else null
-                )
-                components')))));
-
+      allComponentChangelogs = base.collectComponentsRecursive (base.mapComponentsRecursive (
+        namePath: comp:
+        lib.optionalAttrs (comp ? path && (builtins.readDir (builtins.dirOf comp.path)) ? "CHANGELOG.md")
+          {
+            isNedrylandComponent = true;
+            inherit namePath;
+            changelog = builtins.toString ((builtins.dirOf comp.path) + /CHANGELOG.md);
+          }
+      )
+        components);
+      longestCommonList = a: b: 
+        let
+          longestCommonList' = curr: a: b:
+            if a != [] && b!= [] && builtins.head a == builtins.head b then
+              longestCommonList' (curr ++ [(builtins.head a)]) (builtins.tail a) (builtins.tail b)
+            else
+              curr;
+        in
+          longestCommonList' [] a b;
       uniqueChangelogs =
         lib.mapAttrsToList
-          (path: name: { inherit name path; })
+          (path: name: { inherit path; name = builtins.concatStringsSep "-" name; })
           (builtins.foldl'
             (acc: cur:
-              if acc ? "${cur.changelog}" then
-                acc // { "${cur.changelog}" = "${acc."${cur.changelog}"}, ${cur.component}"; }
+            acc //
+              (if acc ? "${cur.changelog}" then
+                { "${cur.changelog}" = longestCommonList acc."${cur.changelog}" cur.namePath; }
               else
-                acc // { "${cur.changelog}" = cur.component; }
+                { "${cur.changelog}" = cur.namePath; })
             )
             { }
             allComponentChangelogs);
