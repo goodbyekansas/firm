@@ -2,31 +2,38 @@
 let
   allChangelogs =
     let
-      allComponentChangelogs = base.collectComponentsRecursive (base.mapComponentsRecursive (
-        namePath: comp:
-        lib.optionalAttrs (comp ? path && (builtins.readDir (builtins.dirOf comp.path)) ? "CHANGELOG.md")
-          {
-            isNedrylandComponent = true;
-            inherit namePath;
-            changelog = builtins.toString ((builtins.dirOf comp.path) + /CHANGELOG.md);
-          }
-      )
+      allComponentChangelogs = base.collectComponentsRecursive (base.mapComponentsRecursive
+        (
+          namePath: comp:
+            lib.optionalAttrs (comp ? path && (builtins.readDir (builtins.dirOf comp.path)) ? "CHANGELOG.md")
+              {
+                isNedrylandComponent = true;
+                inherit namePath;
+                changelog = builtins.toString ((builtins.dirOf comp.path) + /CHANGELOG.md);
+              }
+        )
         components);
-      longestCommonList = a: b: 
+
+      longestCommonList =
         let
           longestCommonList' = curr: a: b:
-            if a != [] && b!= [] && builtins.head a == builtins.head b then
-              longestCommonList' (curr ++ [(builtins.head a)]) (builtins.tail a) (builtins.tail b)
+            if a != [ ] && b != [ ] && builtins.head a == builtins.head b then
+              longestCommonList'
+                (curr ++ [ (builtins.head a) ])
+                (builtins.tail a)
+                (builtins.tail b)
             else
               curr;
+
         in
-          longestCommonList' [] a b;
+        longestCommonList' [ ];
+
       uniqueChangelogs =
         lib.mapAttrsToList
           (path: name: { inherit path; name = builtins.concatStringsSep "-" name; })
           (builtins.foldl'
             (acc: cur:
-            acc //
+              acc //
               (if acc ? "${cur.changelog}" then
                 { "${cur.changelog}" = longestCommonList acc."${cur.changelog}" cur.namePath; }
               else
