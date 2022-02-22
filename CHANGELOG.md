@@ -6,7 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed versions
+- Update Nedryland to 5.0.0
+
 ## [4.0.0] - 2022-02-14
+
 ### Changed versions
 - Update Nedryland to 4.0.0
 
