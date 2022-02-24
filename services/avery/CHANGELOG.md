@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Channels module which contains definitions for working with `Channels`
+  and `ChannelSets`. A `ChannelSet` is a collection of named `Channels` and a
+  `Channel` represents a single stream of typed data that can be used as
+  an input or output for a function.
+
 ## [2.0.2] - 2021-12-17
 
 ### Fixed
