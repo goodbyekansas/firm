@@ -22,10 +22,11 @@ use firm_types::functions::{
     ChannelType as ProtoChannelType, Stream as ProtoChannelSet,
 };
 use futures::{FutureExt, StreamExt, TryFutureExt};
+use parking_lot::{Mutex as PMutex, MutexGuard as PMutexGuard};
 use thiserror::Error;
 use tokio::{
     io::AsyncSeek,
-    sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard},
+    sync::{RwLock, RwLockReadGuard},
 };
 
 #[derive(Error, Debug)]
@@ -115,11 +116,24 @@ where
     /// `optional` indicates optional [`Channel`]s and their types
     /// Returns an empty [`Result`] on success and a list of [`ChannelSetValidationError`]
     /// if anything in this [`ChannelSet`] violates the validation expectations.
-    pub async fn validate(
+    pub async fn validate<'a>(
         &self,
         required: &HashMap<String, ProtoChannelSpec>,
-        optional: Option<&HashMap<String, ProtoChannelSpec>>,
+        optional: Option<&'a HashMap<String, ProtoChannelSpec>>,
     ) -> Result<(), Vec<ChannelSetValidationError>> {
+        // We could run iter over this option in the chain call below. However, that
+        // confuses rustc greatly since it then loses track of the fact that the (name,
+        // channel_spec) tuple actually comes from a hashmap and therefore has the same
+        // lifetime for both tuple members. Instead we create a default empty map and get
+        // rid of the option early here. This seems like a rustc issue rather than
+        // something else but could also be an issue with how some of the involved methods
+        // are annotated.
+        let empty = HashMap::with_capacity(0);
+        let optional = match optional {
+            Some(specs) => specs,
+            None => &empty,
+        };
+
         let err: Vec<ChannelSetValidationError> = futures::stream::iter(
             required
                 .iter()
@@ -131,14 +145,11 @@ where
                             ChannelSetValidationError::RequiredChannelMissing(name.clone())
                         })
                 })
-                .chain(optional.iter().flat_map(|o| {
-                    o.iter().filter_map(|(name, channel_spec)| {
-                        self.0.get(name).map(|c| Ok((name, c, channel_spec)))
-                    })
+                .chain(optional.iter().filter_map(|(name, channel_spec)| {
+                    self.0.get(name).map(|c| Ok((name, c, channel_spec)))
                 }))
                 .chain(self.0.keys().filter_map(|k| {
-                    if required.contains_key(k) || optional.map_or(false, |opt| opt.contains_key(k))
-                    {
+                    if required.contains_key(k) || optional.contains_key(k) {
                         None
                     } else {
                         Some(Err(ChannelSetValidationError::UnexpectedChannel(k.clone())))
@@ -148,7 +159,7 @@ where
         .filter_map(|r| async {
             match r {
                 Ok((name, channel, channel_spec)) => {
-                    if channel.type_matches(channel_spec).await {
+                    if channel.type_matches(&channel_spec).await {
                         None
                     } else {
                         Some(ChannelSetValidationError::MismatchedChannelType {
@@ -187,7 +198,7 @@ where
     pub async fn merge(&self, other: &ChannelSet) -> ChannelSet<T> {
         // Take everything from both but right will overwrite conflicts with left.
         // It applies left before right and since right is last it overwrites.
-        self.merge_with(other, |from| async move { Some(from.to_owned().await) })
+        self.merge_with(other, |from| async move { Some(from.to_owned()) })
             .await
     }
 
@@ -222,14 +233,27 @@ where
     }
 
     /// Creates a new [`ChannelSet`] with reader capabilities from this [`ChannelSet`].
-    pub async fn reader(&self) -> ChannelSet<ChannelReader> {
+    pub fn reader(&self) -> ChannelSet<ChannelReader> {
         ChannelSet(
-            futures::stream::iter(self.0.iter())
-                .then(|(name, channel)| channel.clone().map(|chan| (name.to_owned(), chan)))
-                .collect()
-                .await,
+            self.0
+                .iter()
+                .map(|(name, channel)| (name.to_owned(), channel.clone()))
+                .collect(),
             ChannelReader(),
         )
+    }
+
+    pub async fn to_proto_channel_set(&self) -> ProtoChannelSet {
+        ProtoChannelSet {
+            channels: futures::stream::iter(self.0.iter())
+                .then(|(name, channel)| {
+                    channel
+                        .to_proto_channel()
+                        .map(|channel| (name.clone(), channel))
+                })
+                .collect()
+                .await,
+        }
     }
 }
 
@@ -273,6 +297,10 @@ impl ChannelSet<ChannelWriter> {
         };
     }
 
+    pub fn close_all_channels(&mut self) {
+        self.0.iter_mut().for_each(|(_, channel)| channel.close());
+    }
+
     /// Obtain a mutable reference to a [`Channel`] with `channel_name`
     ///
     /// Returns [`None`] if the [`Channel`] does not exist in the [`ChannelSet`]
@@ -291,10 +319,10 @@ pub enum FromChannelSet<'a> {
 
 impl FromChannelSet<'_> {
     /// Create an owned [`ChannelSet`] entry, cloning the contained values
-    pub async fn to_owned(&self) -> (String, Channel) {
+    pub fn to_owned(&self) -> (String, Channel) {
         match *self {
-            FromChannelSet::Left(name, channel) => (name.to_owned(), channel.clone().await),
-            FromChannelSet::Right(name, channel) => (name.to_owned(), channel.clone().await),
+            FromChannelSet::Left(name, channel) => (name.to_owned(), channel.clone()),
+            FromChannelSet::Right(name, channel) => (name.to_owned(), channel.clone()),
         }
     }
 
@@ -475,22 +503,22 @@ impl From<&ProtoChannelSpec> for TypedChannelData {
     }
 }
 
-struct WakerSlot(Mutex<Option<Waker>>);
+struct WakerSlot(PMutex<Option<Waker>>);
 
 impl WakerSlot {
     fn new() -> Self {
-        Self(Mutex::new(None))
+        Self(PMutex::new(None))
     }
 
-    async fn wake(&self) {
-        if let Some(waker) = self.0.lock().await.take() {
+    fn wake(&self) {
+        if let Some(waker) = self.0.lock().take() {
             waker.wake()
         }
     }
 }
 
 impl Deref for WakerSlot {
-    type Target = Mutex<Option<Waker>>;
+    type Target = PMutex<Option<Waker>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -513,7 +541,7 @@ pub enum ChannelError {
 pub struct Channel {
     closed: Arc<AtomicBool>,
     data: Arc<RwLock<TypedChannelData>>,
-    wakers_to_notify: Arc<Mutex<Vec<Arc<WakerSlot>>>>,
+    wakers_to_notify: Arc<PMutex<Vec<Arc<WakerSlot>>>>,
     pos: AtomicUsize,
     waker: Arc<WakerSlot>,
     seek_pos: Option<std::io::SeekFrom>,
@@ -524,7 +552,7 @@ impl Channel {
     pub fn new(data: TypedChannelData) -> Self {
         let waker = Arc::new(WakerSlot::new());
         Self {
-            wakers_to_notify: Arc::new(Mutex::new(vec![Arc::clone(&waker)])),
+            wakers_to_notify: Arc::new(PMutex::new(vec![Arc::clone(&waker)])),
             closed: Arc::new(false.into()),
             data: Arc::new(RwLock::new(data)),
             pos: AtomicUsize::new(0),
@@ -534,9 +562,9 @@ impl Channel {
     }
 
     /// Create a new [`Channel`] that refers to the same data but tracks a new position
-    async fn clone(&self) -> Self {
+    fn clone(&self) -> Self {
         let waker = Arc::new(WakerSlot::new());
-        self.wakers_to_notify.lock().await.push(Arc::clone(&waker));
+        self.wakers_to_notify.lock().push(Arc::clone(&waker));
         Self {
             closed: Arc::clone(&self.closed),
             data: Arc::clone(&self.data),
@@ -549,7 +577,8 @@ impl Channel {
 
     /// Close this [`Channel`] for further writing
     pub fn close(&mut self) {
-        self.closed.store(true, Ordering::SeqCst)
+        self.closed.store(true, Ordering::SeqCst);
+        self.notify_wakers()
     }
 
     /// Read data from the [`Channel`]
@@ -561,7 +590,7 @@ impl Channel {
         let lock_guard = self.data.read().await;
         let (start, end) = ChannelDataReadRequest {
             data_len: lock_guard.len(),
-            waker: self.waker.lock().await,
+            waker: self.waker.lock(),
             requested_size: size,
             closed: Arc::clone(&self.closed),
             pos: &self.pos,
@@ -617,10 +646,15 @@ impl Channel {
             )),
         }?;
 
-        futures::stream::iter(self.wakers_to_notify.lock().await.iter())
-            .for_each(|waker_slot| waker_slot.wake())
-            .await;
+        self.notify_wakers();
         Ok(())
+    }
+
+    fn notify_wakers(&self) {
+        self.wakers_to_notify
+            .lock()
+            .iter()
+            .for_each(|waker_slot| waker_slot.wake());
     }
 
     async fn type_matches(&self, spec: &ProtoChannelSpec) -> bool {
@@ -635,6 +669,44 @@ impl Channel {
             | (TypedChannelData::Bytes(_), Some(ProtoChannelType::Bytes))
             | (TypedChannelData::Null(_), None) => true,
             (_, _) => false,
+        }
+    }
+
+    pub async fn to_proto_channel(&self) -> ProtoChannel {
+        // Unfortunately we need to copy the data even though we
+        // should be able to consume it at this point.  There might be
+        // other Arcs still referencing the data (which would be
+        // wrong) but rust won't understand that.
+        let data = self.data.read().await;
+        ProtoChannel {
+            value: match data.deref() {
+                TypedChannelData::Strings(s) => {
+                    Some(ProtoValue::Strings(firm_types::functions::Strings {
+                        values: s.to_vec(),
+                    }))
+                }
+                TypedChannelData::Integers(i) => {
+                    Some(ProtoValue::Integers(firm_types::functions::Integers {
+                        values: i.to_vec(),
+                    }))
+                }
+                TypedChannelData::Floats(f) => {
+                    Some(ProtoValue::Floats(firm_types::functions::Floats {
+                        values: f.to_vec(),
+                    }))
+                }
+                TypedChannelData::Booleans(b) => {
+                    Some(ProtoValue::Booleans(firm_types::functions::Booleans {
+                        values: b.to_vec(),
+                    }))
+                }
+                TypedChannelData::Bytes(b) => {
+                    Some(ProtoValue::Bytes(firm_types::functions::Bytes {
+                        values: b.to_vec(),
+                    }))
+                }
+                TypedChannelData::Null(_) => None,
+            },
         }
     }
 }
@@ -766,6 +838,39 @@ impl ChannelDataView<'_> {
         }
     }
 
+    pub fn to_proto_channel(&self) -> ProtoChannel {
+        ProtoChannel {
+            value: match self.lock_guard.deref() {
+                TypedChannelData::Strings(s) => {
+                    Some(ProtoValue::Strings(firm_types::functions::Strings {
+                        values: s[self.start..self.end.unwrap_or(s.len())].to_vec(),
+                    }))
+                }
+                TypedChannelData::Integers(i) => {
+                    Some(ProtoValue::Integers(firm_types::functions::Integers {
+                        values: i[self.start..self.end.unwrap_or(i.len())].to_vec(),
+                    }))
+                }
+                TypedChannelData::Floats(f) => {
+                    Some(ProtoValue::Floats(firm_types::functions::Floats {
+                        values: f[self.start..self.end.unwrap_or(f.len())].to_vec(),
+                    }))
+                }
+                TypedChannelData::Booleans(b) => {
+                    Some(ProtoValue::Booleans(firm_types::functions::Booleans {
+                        values: b[self.start..self.end.unwrap_or(b.len())].to_vec(),
+                    }))
+                }
+                TypedChannelData::Bytes(b) => {
+                    Some(ProtoValue::Bytes(firm_types::functions::Bytes {
+                        values: b[self.start..self.end.unwrap_or(b.len())].to_vec(),
+                    }))
+                }
+                TypedChannelData::Null(_) => None,
+            },
+        }
+    }
+
     /// Retrieve the data in this view as a slice of type `T`
     ///
     /// Will fail with a [`ChannelError`] if the data cannot be interpreted as `T`
@@ -847,7 +952,7 @@ impl TypedChannelDataRef<'_> {
 
 struct ChannelDataReadRequest<'a> {
     data_len: usize,
-    waker: MutexGuard<'a, Option<Waker>>,
+    waker: PMutexGuard<'a, Option<Waker>>,
     requested_size: usize,
     closed: Arc<AtomicBool>,
     pos: &'a AtomicUsize,
@@ -907,6 +1012,43 @@ impl Display for ChannelSpecType {
 }
 
 #[cfg(test)]
+impl Default for ChannelSet {
+    fn default() -> Self {
+        Self(HashMap::new(), ChannelWriter())
+    }
+}
+
+#[cfg(test)]
+pub mod test_heplers {
+    #[macro_export]
+    macro_rules! channel_writer {
+        ({$($key:literal => $value_type:path | $value:expr ),*}) => {{
+            $crate::channel_writer!({
+                $($key | "N/A" => $value_type | $value),*
+            })
+        }};
+
+        ({$($key:tt | $description:literal => $value_type:path | $value:expr ),*}) => {{
+            let (required, _): (std::collections::HashMap<String, firm_types::functions::ChannelSpec>, Option<_>) = firm_types::channel_specs!({
+                $($key => firm_types::functions::ChannelSpec {
+                    r#type: $value_type as i32,
+                    description: String::from("N/A"),
+                }),*
+            });
+            let mut channel_set = $crate::channels::ChannelSet::from(&required);
+
+            $(
+                channel_set
+                    .append_channel($key, $value.as_slice())
+                    .await.unwrap();
+            );*
+
+            channel_set
+        }};
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::time::Duration;
 
@@ -923,7 +1065,6 @@ mod tests {
             channel_set.0.is_empty(),
             "Expected channelset with default to have an empty channel set"
         );
-
         let (required, optional) = channel_specs!(
             {
                 "grape" =>
@@ -1080,7 +1221,7 @@ mod tests {
             .append_channel("ananas", &[4, 5, 6, 7] as &[i32])
             .await;
 
-        let mut channel_ref = channel_set.channel("ananas").unwrap().clone().await;
+        let mut channel_ref = channel_set.channel("ananas").unwrap().clone();
 
         // Two partial reads
         match channel_ref.read(2).await.as_typed_data() {
@@ -1301,8 +1442,8 @@ mod tests {
 
         let mut write_channel_set = ChannelSet::from(&required);
         let (write_last, can_write_last) = oneshot::channel();
-        let read_channel_set_a = write_channel_set.reader().await;
-        let read_channel_set_b = read_channel_set_a.reader().await; // yields the same type of reader.
+        let read_channel_set_a = write_channel_set.reader();
+        let read_channel_set_b = read_channel_set_a.reader(); // yields the same type of reader.
 
         let write_task = tokio::spawn(async move {
             let mangosteen = write_channel_set
@@ -1348,8 +1489,8 @@ mod tests {
             .read_channel("mangosteen", 3)
             .await
             .expect("Mangosteen channel did not exist");
-        let read_channel_set_b1 = read_channel_set_b.reader().await;
-        let read_channel_set_b2 = read_channel_set_b1.reader().await;
+        let read_channel_set_b1 = read_channel_set_b.reader();
+        let read_channel_set_b2 = read_channel_set_b1.reader();
 
         let b1_data = read_channel_set_b1
             .read_channel("mangosteen", 3)

@@ -1,9 +1,14 @@
 use std::{convert::TryFrom, io, io::Read, io::Write, str::Utf8Error, sync::Arc, sync::Mutex};
 
-use crate::{auth::AuthService, runtime::FunctionDirectory};
+use crate::{
+    auth::AuthService,
+    channels::{ChannelReader, ChannelSet, ChannelWriter},
+    runtime::FunctionDirectory,
+};
 
 use super::{output::Output, sandbox::Sandbox, WasiError};
-use firm_types::functions::{Attachment, Stream};
+use firm_types::functions::Attachment;
+use parking_lot::Mutex as PMutex;
 use slog::Logger;
 use wasmer::{Array, HostEnvInitError, Instance, Item, Memory, ValueType, WasmPtr, WasmerEnv};
 use wasmer_wasi::WasiEnv;
@@ -118,7 +123,6 @@ pub mod connections {
         error::{ToErrorCode, WasiError},
         function,
     };
-    use firm_types::stream::StreamExt;
     use wasmer::{Array, Item, WasmPtr};
 
     pub fn get_input_len(
@@ -126,13 +130,17 @@ pub mod connections {
         key: WasmPtr<u8, Array>,
         keylen: u32,
         value: WasmPtr<u32, Item>,
+        read_length: u32,
     ) -> u32 {
-        function::get_input_len(
-            WasmString::new(WasmBuffer::new(api_state.wasi_env.memory(), key, keylen)),
-            WasmItemPtr::new(api_state.wasi_env.memory(), value),
-            &api_state.arguments,
-        )
-        .to_error_code()
+        api_state
+            .async_runtime
+            .block_on(function::get_input_len(
+                WasmString::new(WasmBuffer::new(api_state.wasi_env.memory(), key, keylen)),
+                WasmItemPtr::new(api_state.wasi_env.memory(), value),
+                read_length,
+                api_state.inputs.as_ref(),
+            ))
+            .to_error_code()
     }
 
     pub fn get_input(
@@ -141,13 +149,17 @@ pub mod connections {
         keylen: u32,
         value: WasmPtr<u8, Array>,
         valuelen: u32,
+        read_length: u32,
     ) -> u32 {
-        function::get_input(
-            WasmString::new(WasmBuffer::new(api_state.wasi_env.memory(), key, keylen)),
-            &mut WasmBuffer::new(api_state.wasi_env.memory(), value, valuelen),
-            &api_state.arguments,
-        )
-        .to_error_code()
+        api_state
+            .async_runtime
+            .block_on(function::get_input(
+                WasmString::new(WasmBuffer::new(api_state.wasi_env.memory(), key, keylen)),
+                &mut WasmBuffer::new(api_state.wasi_env.memory(), value, valuelen),
+                read_length,
+                api_state.inputs.as_ref(),
+            ))
+            .to_error_code()
     }
 
     pub fn set_output(
@@ -157,20 +169,14 @@ pub mod connections {
         val: WasmPtr<u8, Array>,
         vallen: u32,
     ) -> u32 {
-        function::set_output(
-            WasmString::new(WasmBuffer::new(api_state.wasi_env.memory(), key, keylen)),
-            WasmBuffer::new(api_state.wasi_env.memory(), val, vallen),
-        )
-        .and_then(|v| {
-            api_state
-                .results
-                .lock()
-                .map(|mut current_stream| {
-                    current_stream.merge(v);
-                })
-                .map_err(|e| WasiError::Unknown(format!("{}", e)))
-        })
-        .to_error_code()
+        api_state
+            .async_runtime
+            .block_on(function::set_output(
+                WasmString::new(WasmBuffer::new(api_state.wasi_env.memory(), key, keylen)),
+                WasmBuffer::new(api_state.wasi_env.memory(), val, vallen),
+                &mut (api_state.outputs.lock()),
+            ))
+            .to_error_code()
     }
 
     pub fn set_error(api_state: &ApiState, msg: WasmPtr<u8, Array>, msglen: u32) -> u32 {
@@ -294,7 +300,12 @@ pub mod attachments {
 
 #[derive(Clone)]
 pub struct ApiState {
-    pub arguments: Arc<Stream>,
+    // Perhaps these shouldn't be Arcs.
+    // WasmerEnv requires clone. While the Reader could get cloned to a Reader
+    // The Writer can't be cloned to a writer.
+    pub inputs: Arc<ChannelSet<ChannelReader>>,
+    pub outputs: Arc<PMutex<ChannelSet<ChannelWriter>>>,
+
     pub attachments: Arc<Vec<Attachment>>,
     pub sandbox: Sandbox,
     pub attachment_sandbox: Sandbox,
@@ -302,7 +313,6 @@ pub struct ApiState {
     pub logger: Logger,
     pub stdout: Output,
     pub stderr: Output,
-    pub results: Arc<Mutex<Stream>>,
     pub errors: Arc<Mutex<Vec<String>>>,
     pub wasi_env: WasiEnv,
     pub auth_service: AuthService,

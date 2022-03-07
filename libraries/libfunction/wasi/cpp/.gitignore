@@ -1,0 +1,10 @@
+# test executable
+/test
+
+*.o
+
+# clangd cache
+/.cache/
+
+# clangd build instructions
+compile_commands.json

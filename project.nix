@@ -67,6 +67,21 @@ nedryland.mkProject rec {
     windowsInstall = callFile ./libraries/rust/windows-install/windows-install.nix { };
 
     firmWindowsInstaller = callFile ./clients/firm-windows-installer/firm-windows-installer.nix { inherit version; };
+
+    libfunction = {
+      wasi =
+        let
+          # a version of clangd that understands wasi
+          wasi-clangd = nedryland.pkgs.callPackage ./libraries/libfunction/wasi/wasi-clangd.nix {
+            stdenv = nedryland.pkgs.pkgsCross.wasi32.clang12Stdenv;
+          };
+        in
+        {
+          c = callFile ./libraries/libfunction/wasi/c/c.nix { inherit wasi-clangd; };
+          cpp = callFile ./libraries/libfunction/wasi/cpp/cpp.nix { inherit wasi-clangd; };
+          rust = callFile ./libraries/libfunction/wasi/rust/rust.nix { };
+        };
+    };
   };
 
   extraShells = { callFile }: {

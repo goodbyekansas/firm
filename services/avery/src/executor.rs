@@ -15,9 +15,8 @@ use firm_types::{
         execution_server::Execution as ExecutionServiceTrait, registry_server::Registry,
         Attachment, AuthMethod, ExecutionError, ExecutionId, ExecutionParameters, ExecutionResult,
         Filters, Function, FunctionOutputChunk, Ordering, OrderingKey, Runtime as ProtoRuntime,
-        RuntimeFilters, RuntimeList, Stream as ValueStream, VersionRequirement,
+        RuntimeFilters, RuntimeList, VersionRequirement,
     },
-    stream::StreamExt,
     tonic,
 };
 use futures::{channel::mpsc::Receiver, channel::mpsc::Sender, TryFutureExt};
@@ -31,6 +30,7 @@ use uuid::Uuid;
 use crate::{
     auth::AuthService,
     auth::AuthenticationSource,
+    channels::{ChannelReader, ChannelSet},
     runtime::FunctionDirectory,
     runtime::{Runtime, RuntimeParameters, RuntimeSource},
 };
@@ -72,7 +72,7 @@ impl From<Sender<Result<FunctionOutputChunk, tonic::Status>>> for FunctionOutput
 #[derive(Debug)]
 pub struct QueuedFunction {
     function: Function,
-    arguments: ValueStream,
+    inputs: ChannelSet<ChannelReader>,
     output_receiver: Option<Receiver<Result<FunctionOutputChunk, tonic::Status>>>,
     output_sender: Sender<Result<FunctionOutputChunk, tonic::Status>>,
 }
@@ -175,8 +175,10 @@ impl ExecutionServiceTrait for ExecutionService {
         // 1. Only send keys to queue_function and validate the keys (user could change this in run function later which is bad)
         // 2. Only send to run_function and validate there. Bad part is getting late validation of args.
         // validate args
-        let args = payload.arguments.unwrap_or_default();
-        args.validate(&function.required_inputs, Some(&function.optional_inputs))
+        let mut inputs = ChannelSet::from(payload.arguments.unwrap_or_default());
+        inputs
+            .validate(&function.required_inputs, Some(&function.optional_inputs))
+            .await
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::InvalidArgument,
@@ -189,9 +191,11 @@ impl ExecutionServiceTrait for ExecutionService {
                     ),
                 )
             })?;
+        inputs.close_all_channels();
 
         // allocate an output message queue
         let (sender, receiver) = futures::channel::mpsc::channel(1024);
+        let inputs = inputs.reader();
 
         self.execution_queue
             .lock()
@@ -200,7 +204,7 @@ impl ExecutionServiceTrait for ExecutionService {
                 execution_id,
                 QueuedFunction {
                     function,
-                    arguments: args,
+                    inputs,
                     output_receiver: Some(receiver),
                     output_sender: sender,
                 },
@@ -281,6 +285,8 @@ impl ExecutionServiceTrait for ExecutionService {
                 let function_name = queued_function.function.name.clone();
                 let function_name2 = function_name.clone();
                 let runtime_name = runtime_name.clone();
+                let outputs = ChannelSet::from(&queued_function.function.outputs);
+                let outputs_reader = outputs.reader();
 
                 // Use a oneshot channel to make sure to not block the tokio thread
                 // while waiting for the rayon task to finish
@@ -306,13 +312,14 @@ impl ExecutionServiceTrait for ExecutionService {
                                         Some(runtime_spec.entrypoint)
                                     },
                                     code: queued_function.function.code.clone(),
-                                    arguments: runtime_spec.arguments,
                                     output_sink: queued_function.output_sender.into(),
                                     function_dir: execution_dir,
                                     auth_service,
                                     async_runtime,
+                                    arguments: runtime_spec.arguments,
                                 },
-                                queued_function.arguments,
+                                queued_function.inputs,
+                                outputs,
                                 queued_function.function.attachments.clone(),
                             )
                         });
@@ -322,24 +329,30 @@ impl ExecutionServiceTrait for ExecutionService {
                 });
 
                 match rx.await {
-                    Ok(Ok(Ok(r))) => r
-                        .validate(&output_spec, None)
-                        .map(|_| {
-                            tonic::Response::new(ExecutionResult {
-                                execution_id: Some(id),
-                                result: Some(ProtoResult::Ok(r)),
+                    Ok(Ok(Ok(_))) => {
+                        outputs_reader
+                            .validate(&output_spec, None)
+                            .and_then(|_| async {
+                                Ok(tonic::Response::new(ExecutionResult {
+                                    execution_id: Some(id),
+                                    result: Some(ProtoResult::Ok(
+                                        outputs_reader.to_proto_channel_set().await,
+                                    )),
+                                }))
                             })
-                        })
-                        .map_err(|e| {
-                            tonic::Status::invalid_argument(format!(
-                                r#"Function "{}" generated invalid result: {}"#,
-                                &function_name,
-                                e.iter()
-                                    .map(|ae| format!("{}", ae))
-                                    .collect::<Vec<String>>()
-                                    .join(", ")
-                            ))
-                        }),
+                            .map_err(|e| {
+                                tonic::Status::invalid_argument(format!(
+                                    r#"Function "{}" generated invalid result: {}"#,
+                                    &function_name,
+                                    e.iter()
+                                        .map(|ae| format!("{}", ae))
+                                        .collect::<Vec<String>>()
+                                        .join(", ")
+                                ))
+                            })
+                            .await
+                    }
+
                     Ok(Ok(Err(e))) => Ok(tonic::Response::new(ExecutionResult {
                         execution_id: Some(id),
                         result: Some(ProtoResult::Error(ExecutionError { msg: e })),

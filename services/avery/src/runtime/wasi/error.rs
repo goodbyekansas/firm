@@ -16,8 +16,8 @@ pub enum WasiError {
     #[error("Failed to read string pointer for \"{0}\": {1}")]
     FailedToReadStringPointer(String, std::str::Utf8Error),
 
-    #[error("Failed to find key: {0}")]
-    FailedToFindKey(String),
+    #[error("Failed to find channel with name: {0}")]
+    FailedToFindChannel(String),
 
     #[error("Failed to deref pointer.")]
     FailedToDerefPointer(),
@@ -51,6 +51,9 @@ pub enum WasiError {
 
     #[error("Failed to read WASI buffer: {0}")]
     FailedToReadBuffer(std::io::Error),
+
+    #[error("Failed to append to output channel \"{0}\": {1}")]
+    FailedToAppendToOutputChannel(String, String),
 }
 
 pub type WasiResult<T> = std::result::Result<T, WasiError>;
@@ -75,7 +78,7 @@ impl From<&WasiError> for u32 {
             WasiError::FailedToDerefPointer() => 2,
             WasiError::FailedToDecodeProtobuf(_) => 3,
             WasiError::FailedToReadStringPointer(..) => 5,
-            WasiError::FailedToFindKey(_) => 6,
+            WasiError::FailedToFindChannel(_) => 6,
             WasiError::FailedToEncodeProtobuf(_) => 7,
             WasiError::FailedToStartProcess(_) => 8,
             WasiError::FailedToOpenFile(_) => 9,
@@ -87,6 +90,7 @@ impl From<&WasiError> for u32 {
             WasiError::FailedToUnpackAttachment(..) => 15,
             WasiError::FailedToWriteBuffer(..) => 16,
             WasiError::FailedToReadBuffer(..) => 17,
+            WasiError::FailedToAppendToOutputChannel(..) => 18,
         }
     }
 }

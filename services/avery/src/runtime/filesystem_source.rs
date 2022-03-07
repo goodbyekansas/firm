@@ -7,9 +7,9 @@ use std::{
 };
 
 use firm_types::{
+    functions::Attachment,
     functions::AttachmentUrl,
     functions::AuthMethod,
-    functions::{Attachment, Stream as ValueStream},
     functions::{Checksums, Publisher},
     wasi::RuntimeContext,
 };
@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 use slog::{debug, info, o, warn, Logger};
 use tar::Archive;
 use thiserror::Error;
+
+use crate::channels::{ChannelReader, ChannelSet, ChannelWriter};
 
 use super::{wasi, Runtime, RuntimeError, RuntimeParameters, RuntimeSource};
 
@@ -67,16 +69,18 @@ impl NestedWasiRuntime {
 }
 
 impl Runtime for NestedWasiRuntime {
+    // TODO: Use inputs and outputs
     fn execute(
         &self,
         runtime_parameters: RuntimeParameters,
-        function_arguments: ValueStream,
+        function_inputs: ChannelSet<ChannelReader>,
+        function_outputs: ChannelSet<ChannelWriter>,
         function_attachments: Vec<Attachment>,
-    ) -> Result<Result<ValueStream, String>, RuntimeError> {
+    ) -> Result<Result<(), String>, RuntimeError> {
         let runtime_context = RuntimeContext {
             code: runtime_parameters.code,
             entrypoint: runtime_parameters.entrypoint.unwrap_or_default(),
-            arguments: runtime_parameters.arguments,
+            arguments: HashMap::new(), // TODO: Do we actually need this field?
             name: runtime_parameters.function_name.clone(),
         };
 
@@ -148,12 +152,13 @@ impl Runtime for NestedWasiRuntime {
                     }),
                     signature: None,
                 }),
-                arguments: HashMap::new(), // files on disk can not have arguments
                 function_dir: runtime_parameters.function_dir,
                 auth_service: runtime_parameters.auth_service,
                 async_runtime: runtime_parameters.async_runtime,
+                arguments: HashMap::new(), // Files on disk can't have arguments.
             },
-            function_arguments,
+            function_inputs,
+            function_outputs,
             function_attachments,
         )
     }
@@ -355,7 +360,6 @@ mod tests {
 
     use std::ops::Deref;
 
-    use firm_types::stream::StreamExt;
     use flate2::{write::GzEncoder, Compression};
     use sha2::Digest;
     use tempfile::TempDir;
@@ -532,8 +536,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_valid_runtimes() {
+    #[tokio::test]
+    async fn test_valid_runtimes() {
         with_runtime_dir!(fss, {
             assert!(
                 fss.get("good").is_some(),
@@ -550,12 +554,22 @@ mod tests {
 
             let good = fss.get("good").unwrap();
             let parameters = runtime_parameters!("good");
-            let res = good.execute(parameters.runtime_parameters, ValueStream::new(), vec![]);
+            let res = good.execute(
+                parameters.runtime_parameters,
+                ChannelSet::default().reader(),
+                ChannelSet::default(),
+                vec![],
+            );
             assert!(res.is_ok(), "Expected to execute successfully.");
 
             let symlink = fss.get("symlink").unwrap();
             let parameters = runtime_parameters!("symlink");
-            let res = symlink.execute(parameters.runtime_parameters, ValueStream::new(), vec![]);
+            let res = symlink.execute(
+                parameters.runtime_parameters,
+                ChannelSet::default().reader(),
+                ChannelSet::default(),
+                vec![],
+            );
             assert!(
                 res.is_ok(),
                 "Expected to execute symlink runtime successfully."
@@ -563,8 +577,8 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_invalid_and_missing_checksums() {
+    #[tokio::test]
+    async fn test_invalid_and_missing_checksums() {
         with_runtime_dir!(fss, {
             // Bad
             let bad = fss.get("bad");
@@ -574,7 +588,12 @@ mod tests {
             );
             let bad = bad.unwrap();
             let parameters = runtime_parameters!("bad");
-            let res = bad.execute(parameters.runtime_parameters, ValueStream::new(), vec![]);
+            let res = bad.execute(
+                parameters.runtime_parameters,
+                ChannelSet::default().reader(),
+                ChannelSet::default(),
+                vec![],
+            );
             assert!(
                 res.is_err(),
                 "Bad checksum must result in error during execution."
@@ -594,8 +613,8 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_archived_runtimes() {
+    #[tokio::test]
+    async fn test_archived_runtimes() {
         with_runtime_dir!(fss, {
             let bad = fss.get("bad_archived");
             assert!(
@@ -605,7 +624,12 @@ mod tests {
             let parameters = runtime_parameters!("bad");
             assert!(
                 bad.unwrap()
-                    .execute(parameters.runtime_parameters, ValueStream::new(), vec![])
+                    .execute(
+                        parameters.runtime_parameters,
+                        ChannelSet::default().reader(),
+                        ChannelSet::default(),
+                        vec![]
+                    )
                     .is_err(),
                 "An invalid runtime archive should generate an error when executing"
             );
@@ -618,7 +642,12 @@ mod tests {
             let parameters = runtime_parameters!("good");
             assert!(
                 good.unwrap()
-                    .execute(parameters.runtime_parameters, ValueStream::new(), vec![])
+                    .execute(
+                        parameters.runtime_parameters,
+                        ChannelSet::default().reader(),
+                        ChannelSet::default(),
+                        vec![]
+                    )
                     .is_ok(),
                 "A valid runtime should be executable"
             );

@@ -6,6 +6,7 @@ use std::{
 };
 
 use flate2::read::GzDecoder;
+use futures::TryFutureExt;
 use prost::Message;
 use tar::Archive;
 
@@ -14,11 +15,13 @@ use super::{
     error::{WasiError, WasiResult},
     sandbox::Sandbox,
 };
-use crate::{auth::AuthenticationSource, executor::AttachmentDownload, runtime::FunctionDirectory};
-use firm_types::{
-    functions::{Attachment, Channel, Stream},
-    stream::StreamExt,
+use crate::{
+    auth::AuthenticationSource,
+    channels::{ChannelReader, ChannelSet, ChannelWriter},
+    executor::AttachmentDownload,
+    runtime::FunctionDirectory,
 };
+use firm_types::functions::{channel::Value as ProtoValue, Attachment, Channel as ProtoChannel};
 
 use slog::{info, Logger};
 
@@ -188,46 +191,118 @@ pub async fn map_attachment_from_descriptor(
         .map(|_bytes_written| ())
 }
 
-pub fn get_input_len(key: WasmString, len: WasmItemPtr<u32>, arguments: &Stream) -> WasiResult<()> {
-    let key: String = key
-        .try_into()
-        .map_err(|e| WasiError::FailedToReadStringPointer("input key".to_owned(), e))?;
+// TODO: Note that in order to get data to wasi we copy it twice. We
+// drag the data out of the channel and then convert it into a proto
+// type (this is where copy happens) to just get the length of the
+// encoded data. After that we get the data in get_input which will
+// copy the data again... Not very effective.
+pub async fn get_input_len(
+    channel_name: WasmString,
+    len: WasmItemPtr<u32>,
+    read_length: u32,
+    reader: &ChannelSet<ChannelReader>,
+) -> WasiResult<()> {
+    // Get a new reader from the reader so we get a new seek position
+    // for each channel in the channel set. This ensures we get the
+    // same values later when we do get_input where we want to move
+    // the actual seek position.
+    let reader = reader.reader();
 
-    arguments
-        .get_channel(&key)
-        .ok_or(WasiError::FailedToFindKey(key))
-        .and_then(|a| len.set(a.encoded_len() as u32))
+    futures::future::ready(
+        channel_name
+            .try_into()
+            .map_err(|e| WasiError::FailedToReadStringPointer("input channel".to_owned(), e))
+            .and_then(|channel_name: String| {
+                reader
+                    .channel(&channel_name)
+                    .ok_or(WasiError::FailedToFindChannel(channel_name))
+            }),
+    )
+    .and_then(|channel| async { Ok(channel.read(read_length as usize).await) })
+    .await
+    .and_then(|data_view| len.set(data_view.to_proto_channel().encoded_len() as u32))
 }
 
-pub fn get_input(key: WasmString, value: &mut WasmBuffer, arguments: &Stream) -> WasiResult<()> {
-    let key: String = key
-        .try_into()
-        .map_err(|e| WasiError::FailedToReadStringPointer("input key".to_owned(), e))?;
-
-    arguments
-        .get_channel(&key)
-        .ok_or(WasiError::FailedToFindKey(key))
-        .and_then(|a| {
-            a.encode(&mut value.buffer_mut())
-                .map_err(WasiError::FailedToEncodeProtobuf)
-        })
+pub async fn get_input(
+    channel_name: WasmString,
+    value: &mut WasmBuffer,
+    read_length: u32,
+    reader: &ChannelSet<ChannelReader>,
+) -> WasiResult<()> {
+    futures::future::ready(
+        channel_name
+            .try_into()
+            .map_err(|e| WasiError::FailedToReadStringPointer("input channel".to_owned(), e))
+            .and_then(|channel_name: String| {
+                reader
+                    .channel(&channel_name)
+                    .ok_or(WasiError::FailedToFindChannel(channel_name))
+            }),
+    )
+    .and_then(|channel| async { Ok(channel.read(read_length as usize).await) })
+    .await
+    .and_then(|data_view| {
+        data_view
+            .to_proto_channel()
+            .encode(&mut value.buffer_mut())
+            .map_err(WasiError::FailedToEncodeProtobuf)
+    })
 }
 
-pub fn set_output(key: WasmString, value: WasmBuffer) -> WasiResult<Stream> {
-    let key: String = key
-        .try_into()
-        .map_err(|e| WasiError::FailedToReadStringPointer("output key".to_owned(), e))?;
-
-    let mut stream = Stream {
-        channels: std::collections::HashMap::new(),
-    };
-
-    stream.set_channel(
-        &key,
-        Channel::decode(value.buffer()).map_err(WasiError::FailedToDecodeProtobuf)?,
-    );
-
-    Ok(stream)
+pub async fn set_output(
+    channel_name: WasmString,
+    value: WasmBuffer,
+    writer: &mut ChannelSet<ChannelWriter>,
+) -> WasiResult<()> {
+    futures::future::ready(
+        channel_name
+            .try_into()
+            .map_err(|e| WasiError::FailedToReadStringPointer("output channel".to_owned(), e))
+            .and_then(|channel_name: String| {
+                ProtoChannel::decode(value.buffer())
+                    .map(|proto_channel| (channel_name, proto_channel))
+                    .map_err(WasiError::FailedToDecodeProtobuf)
+            }),
+    )
+    .and_then(|(channel_name, proto_channel)| async move {
+        match proto_channel.value {
+            Some(ProtoValue::Strings(s)) => writer
+                .append_channel(&channel_name, s.values.as_slice())
+                .await
+                .map_err(|e| {
+                    WasiError::FailedToAppendToOutputChannel(channel_name.to_owned(), e.to_string())
+                }),
+            Some(ProtoValue::Integers(i)) => writer
+                .append_channel(&channel_name, i.values.as_slice())
+                .await
+                .map_err(|e| {
+                    WasiError::FailedToAppendToOutputChannel(channel_name.to_owned(), e.to_string())
+                }),
+            Some(ProtoValue::Floats(f)) => writer
+                .append_channel(&channel_name, f.values.as_slice())
+                .await
+                .map_err(|e| {
+                    WasiError::FailedToAppendToOutputChannel(channel_name.to_owned(), e.to_string())
+                }),
+            Some(ProtoValue::Booleans(b)) => writer
+                .append_channel(&channel_name, b.values.as_slice())
+                .await
+                .map_err(|e| {
+                    WasiError::FailedToAppendToOutputChannel(channel_name.to_owned(), e.to_string())
+                }),
+            Some(ProtoValue::Bytes(b)) => writer
+                .append_channel(&channel_name, b.values.as_slice())
+                .await
+                .map_err(|e| {
+                    WasiError::FailedToAppendToOutputChannel(channel_name.to_owned(), e.to_string())
+                }),
+            None => Err(WasiError::FailedToAppendToOutputChannel(
+                channel_name.to_owned(),
+                String::from("Tried to set a None value."),
+            )),
+        }
+    })
+    .await
 }
 
 pub fn set_error(msg: WasmString) -> WasiResult<String> {
@@ -243,7 +318,8 @@ mod tests {
 
     use std::convert::TryFrom;
 
-    use firm_types::{attachment, stream, stream::ToChannel};
+    use crate::channel_writer;
+    use firm_types::{attachment, stream::ToChannel};
     use tempfile::Builder;
     use wasmer::{Memory, MemoryType, Store, WasmPtr};
 
@@ -288,20 +364,24 @@ mod tests {
         }};
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic]
-    fn test_bad_input_len_key() {
+    async fn test_bad_input_len_key() {
+        let channel_set = channel_writer!({"chorizo korvén" => firm_types::functions::ChannelType::Int | [1u8, 2u8, 3u8]});
         let mem = create_mem!();
         get_input_len(
             invalid_wasm_string!(&mem),
             WasmItemPtr::new(&mem, WasmPtr::new(0)),
-            &stream!({"chorizo korvén" => vec![1u8, 2u8, 3u8]}),
+            1,
+            &channel_set.reader(),
         )
+        .await
         .unwrap();
     }
 
-    #[test]
-    fn test_get_input_len() {
+    #[tokio::test]
+    async fn test_get_input_len() {
+        let channel_set = channel_writer!({"chorizo korvén" => firm_types::functions::ChannelType::Int | [1u8, 2u8, 3u8]});
         // get non existant input
         let mem = create_mem!();
         let key = wasm_string!(&mem, 0, "inte chorizo korvén");
@@ -311,16 +391,22 @@ mod tests {
                 &mem,
                 WasmPtr::new(key.buffer_len() /* after the string in memory */),
             ),
-            &stream!({"chorizo korvén" => vec![1u8, 2u8, 3u8]}),
-        );
+            1,
+            &channel_set.reader(),
+        )
+        .await;
 
         assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), WasiError::FailedToFindKey(..)));
+        assert!(matches!(
+            res.unwrap_err(),
+            WasiError::FailedToFindChannel(..)
+        ));
 
-        // get existing input
+        // TODO: Figure out what this is actually testing.
+        // get existing input (how could this ever work!?)
         let mem = create_mem!();
         let key = wasm_string!(&mem, 0, "input1");
-        let function_argument = stream!({"input1" => vec![1u8, 2u8, 3u8]});
+        let channel_set = channel_writer!({"input1" => firm_types::functions::ChannelType::Int | [1u8, 2u8, 3u8]});
 
         let out_len = WasmItemPtr::new(
             &mem,
@@ -328,12 +414,15 @@ mod tests {
                 key.buffer_len(), /* put it after the string in memory */
             ),
         );
-        let res = get_input_len(key, out_len.clone(), &function_argument);
+
+        let res = get_input_len(key, out_len.clone(), 3, &channel_set.reader()).await;
         assert!(res.is_ok());
         assert_eq!(
-            function_argument
-                .get_channel("input1")
+            channel_set
+                .channel("input1")
                 .unwrap()
+                .to_proto_channel()
+                .await
                 .encoded_len(),
             out_len.get().unwrap() as usize
         );
@@ -342,11 +431,9 @@ mod tests {
         let mem = create_mem!();
         let key = wasm_string!(&mem, 0, "input1");
 
-        let function_argument = stream!({"input1" => vec![1u8, 2u8, 3u8]});
-
         // creates a pointer that points beyond the end of memory
         let val = WasmItemPtr::new(&mem, WasmPtr::new(std::u32::MAX));
-        let res = get_input_len(key, val, &function_argument);
+        let res = get_input_len(key, val, 1, &channel_set.reader()).await;
 
         assert!(res.is_err());
         assert!(matches!(
@@ -355,35 +442,45 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_get_input() {
+    #[tokio::test]
+    async fn test_get_input() {
         // testing failed to find key
         let mem = create_mem!();
+        let channel_set = ChannelSet::default();
 
         let res = get_input(
             wasm_string!(&mem, 0, "input1"),
             &mut out_buffer!(&mem, 0u32, 0u32), // no point in creating a valid buffer
-            &stream!(),
-        );
+            5,
+            &channel_set.reader(),
+        )
+        .await;
 
         assert!(res.is_err());
-        assert!(matches!(res.unwrap_err(), WasiError::FailedToFindKey(..)));
+        assert!(matches!(
+            res.unwrap_err(),
+            WasiError::FailedToFindChannel(..)
+        ));
 
         // testing failed to encode protobuf
         let mem = create_mem!();
-        let function_argument = stream!({"input1" => vec![1u8, 2u8, 3u8]});
+        let channel_set = channel_writer!({"input1" => firm_types::functions::ChannelType::Int | [1u8, 2u8, 3u8]});
 
-        let encoded_len = function_argument
-            .get_channel("input1")
+        let encoded_len = channel_set
+            .channel("input1")
             .unwrap()
+            .to_proto_channel()
+            .await
             .encoded_len();
 
         let key = wasm_string!(&mem, 0, "input1");
         let res = get_input(
             key.clone(),
             &mut out_buffer!(&mem, key.buffer_len(), (encoded_len - 1) as u32), // make buffer 1 too small
-            &function_argument,
-        );
+            3,
+            &channel_set.reader(),
+        )
+        .await;
 
         assert!(res.is_err());
         assert!(matches!(
@@ -394,17 +491,21 @@ mod tests {
         // testing getting valid input
         let mem = create_mem!();
 
-        let stream = stream!({"input1" => vec![1u8, 2u8, 3u8]});
+        let channel_set = channel_writer!({"input1" => firm_types::functions::ChannelType::Int | [1u8, 2u8, 3u8]});
 
         let key = wasm_string!(&mem, 0, "input1");
 
-        let function_argument = stream.get_channel("input1").unwrap();
+        let function_argument = channel_set
+            .channel("input1")
+            .unwrap()
+            .to_proto_channel()
+            .await;
         let encoded_len = function_argument.encoded_len();
         let mut reference_value = Vec::with_capacity(encoded_len);
         function_argument.encode(&mut reference_value).unwrap();
 
         let out_ptr = out_buffer!(&mem, key.buffer_len(), encoded_len as u32);
-        let res = get_input(key, &mut out_ptr.clone(), &stream);
+        let res = get_input(key, &mut out_ptr.clone(), 3, &channel_set.reader()).await;
 
         assert!(res.is_ok());
 
@@ -412,26 +513,35 @@ mod tests {
         assert_eq!(reference_value, out_ptr.buffer());
     }
 
-    #[test]
-    fn test_set_output() {
+    #[tokio::test]
+    async fn test_set_output() {
         let mem = create_mem!();
 
-        let return_value = vec![1u8, 2u8, 3u8, 4u8, 5u8, 6u8, 7u8, 8u8].to_channel();
+        let return_values = vec![1u8, 2u8, 3u8, 4u8, 5u8, 6u8, 7u8, 8u8].to_channel();
         let name = wasm_string!(&mem, 0, "sune");
-        let mut buf = WasmBuffer::new(
+        let mut expected_buf = WasmBuffer::new(
             &mem,
             WasmPtr::new(name.buffer_len()),
-            return_value.encoded_len() as u32,
+            return_values.encoded_len() as u32,
         );
-        return_value.encode(&mut buf.buffer_mut()).unwrap();
+        return_values
+            .encode(&mut expected_buf.buffer_mut())
+            .unwrap();
 
-        let res = set_output(name, buf);
-
+        let bytes: Vec<u8> = Vec::new(); // TODO: Inline this in some way.
+        let mut channel_set =
+            channel_writer!({"sune" => firm_types::functions::ChannelType::Bytes | bytes});
+        let res = set_output(name.clone(), expected_buf, &mut channel_set).await;
+        channel_set.close_all_channels();
         assert!(res.is_ok());
 
-        let mut expected_stream = stream!();
-        expected_stream.set_channel("sune", return_value);
-        assert_eq!(expected_stream, res.unwrap());
+        let values = channel_set
+            .read_channel("sune", 10)
+            .await
+            .unwrap()
+            .to_proto_channel();
+
+        assert_eq!(return_values, values);
     }
 
     #[tokio::test]

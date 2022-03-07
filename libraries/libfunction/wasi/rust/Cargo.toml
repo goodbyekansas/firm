@@ -1,0 +1,14 @@
+[package]
+name = "firm-function"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1.0.30"
+libc = "0.2.120"
+
+[dev-dependencies]
+paste = "1.0.7"
+
+[features]
+host = []

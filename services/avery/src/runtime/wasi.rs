@@ -13,16 +13,20 @@ use std::{
 
 use futures::TryFutureExt;
 use output::{NamedFunctionOutputSink, Output};
+use parking_lot::Mutex as PMutex;
 use slog::{info, o, Logger};
 
 use wasmer::{imports, ChainableNamedResolver, Function, ImportObject, Instance, Module, Store};
 use wasmer_wasi::WasiState;
 
-use super::{Runtime, RuntimeParameters, StreamExt};
-use crate::executor::{AttachmentDownload, RuntimeError};
+use super::{Runtime, RuntimeParameters};
+use crate::{
+    channels::{ChannelReader, ChannelSet, ChannelWriter},
+    executor::{AttachmentDownload, RuntimeError},
+};
 use api::ApiState;
 use error::WasiError;
-use firm_types::functions::{Attachment, Stream};
+use firm_types::functions::Attachment;
 use sandbox::Sandbox;
 
 #[derive(Debug, Clone)]
@@ -87,9 +91,10 @@ impl Runtime for WasiRuntime {
     fn execute(
         &self,
         runtime_parameters: RuntimeParameters,
-        arguments: Stream,
+        inputs: ChannelSet<ChannelReader>,
+        outputs: ChannelSet<ChannelWriter>,
         attachments: Vec<Attachment>,
-    ) -> Result<Result<Stream, String>, RuntimeError> {
+    ) -> Result<Result<(), String>, RuntimeError> {
         let function_logger = self
             .logger
             .new(o!("function" => runtime_parameters.function_name.to_owned()));
@@ -196,7 +201,6 @@ impl Runtime for WasiRuntime {
             .and_then(|state| state.finalize())
             .map_err(|e| format!("Failed to create wasi state: {:?}", e))?;
 
-        let results = Arc::new(Mutex::new(Stream::new()));
         let errors = Arc::new(Mutex::new(Vec::new()));
 
         let store = Store::default();
@@ -235,8 +239,22 @@ impl Runtime for WasiRuntime {
         )
         .map_err(|e| format!("failed to compile wasm: {}", e))?;
 
+        // TODO: I really do not like having to add both an Arc and a
+        // Mutex when the data inside the type already have arcs and
+        // mutexes. This could also be solved by implementing a
+        // "clone" function that does not clone the data inside the
+        // type.
+        //
+        // We need the Arc and the Mutex to send the outputs as
+        // writable to both ApiState and later to run
+        // close_all_channels() here. Perhaps there is a better place
+        // to run close_all_channels()?
+        let outputs = Arc::new(PMutex::new(outputs));
+        let outputs2 = Arc::clone(&outputs);
+
         let api_state = ApiState {
-            arguments: Arc::new(arguments),
+            inputs: Arc::new(inputs),
+            outputs,
             attachments: Arc::new(attachments),
             sandbox,
             attachment_sandbox,
@@ -244,7 +262,6 @@ impl Runtime for WasiRuntime {
             logger: function_logger.new(o!("scope" => "api")),
             stdout,
             stderr,
-            results: results.clone(),
             errors: errors.clone(),
             wasi_env: wasi_env.clone(),
             auth_service: runtime_parameters.auth_service.clone(),
@@ -274,15 +291,9 @@ impl Runtime for WasiRuntime {
         .call(&[])
         .map_err(|e| format!("Failed to call entrypoint function {}: {}", &entrypoint, e))?;
 
-        let results = Arc::try_unwrap(results)
-            .map_err(|e| {
-                format!(
-                    "Failed to get function results. There are still {} references to the results stream.",
-                    Arc::strong_count(&e)
-                )
-            })?
-            .into_inner()
-            .map_err(|e| format!("Failed to acquire lock for results: {}", e))?;
+        // Ideally everyone should close their channels as they are done.
+        // Closing all manually for niceness sake.
+        outputs2.lock().close_all_channels();
 
         let errors = Arc::try_unwrap(errors)
             .map_err(|e| {
@@ -295,7 +306,7 @@ impl Runtime for WasiRuntime {
             .map_err(|e| format!("Failed to acquire lock for errors: {}", e))?;
 
         Ok(if errors.is_empty() {
-            Ok(results)
+            Ok(())
         } else {
             Err(errors.join("\n"))
         })
@@ -307,7 +318,7 @@ mod tests {
     use crate::{auth::AuthService, executor::FunctionOutputSink, runtime::FunctionDirectory};
 
     use super::*;
-    use firm_types::{code_file, stream};
+    use firm_types::code_file;
 
     macro_rules! null_logger {
         () => {{
@@ -315,8 +326,8 @@ mod tests {
         }};
     }
 
-    #[test]
-    fn test_execution() {
+    #[tokio::test]
+    async fn test_execution() {
         let tmp_fold = tempfile::tempdir().unwrap();
         let executor = WasiRuntime::new(null_logger!());
         let res = executor.execute(
@@ -339,7 +350,8 @@ mod tests {
                     .build()
                     .unwrap(),
             },
-            stream!(),
+            ChannelSet::from(&HashMap::with_capacity(0)).reader(),
+            ChannelSet::from(&HashMap::with_capacity(0)),
             vec![],
         );
 

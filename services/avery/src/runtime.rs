@@ -7,15 +7,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use firm_types::{
-    functions::{Attachment, Stream as ValueStream},
-    stream::StreamExt,
-};
+use firm_types::functions::Attachment;
 use slog::{o, Logger};
 use tokio::runtime::Runtime as TokioRuntime;
 
 use crate::{
     auth::AuthService,
+    channels::{ChannelReader, ChannelSet, ChannelWriter},
     executor::{FunctionOutputSink, RuntimeError},
 };
 
@@ -25,10 +23,10 @@ pub struct RuntimeParameters {
     pub function_name: String,
     pub entrypoint: Option<String>,
     pub code: Option<Attachment>,
-    pub arguments: HashMap<String, String>,
     pub output_sink: FunctionOutputSink,
     pub auth_service: AuthService,
     pub async_runtime: TokioRuntime,
+    pub arguments: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,10 +84,10 @@ impl RuntimeParameters {
             function_name: function_name.to_owned(),
             entrypoint: None,
             code: None,
-            arguments: HashMap::new(),
             output_sink: FunctionOutputSink::null(),
             function_dir: execution_dir,
             auth_service: AuthService::default(),
+            arguments: HashMap::new(),
             async_runtime: tokio::runtime::Builder::new_current_thread()
                 .build()
                 .map_err(|e| e.to_string())?,
@@ -101,13 +99,13 @@ impl RuntimeParameters {
         self
     }
 
-    pub fn code(mut self, code: Attachment) -> Self {
-        self.code = Some(code);
+    pub fn arguments(mut self, arguments: HashMap<String, String>) -> Self {
+        self.arguments = arguments;
         self
     }
 
-    pub fn arguments(mut self, arguments: HashMap<String, String>) -> Self {
-        self.arguments = arguments;
+    pub fn code(mut self, code: Attachment) -> Self {
+        self.code = Some(code);
         self
     }
 
@@ -126,9 +124,10 @@ pub trait Runtime: Debug + Send {
     fn execute(
         &self,
         runtime_parameters: RuntimeParameters,
-        arguments: ValueStream,
+        inputs: ChannelSet<ChannelReader>,
+        outputs: ChannelSet<ChannelWriter>,
         attachments: Vec<Attachment>,
-    ) -> Result<Result<ValueStream, String>, RuntimeError>;
+    ) -> Result<Result<(), String>, RuntimeError>;
 }
 
 pub trait RuntimeSource: Send + Sync {
