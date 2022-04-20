@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
-use super::error::WasiError;
+#[allow(dead_code)] // TODO remove me
 #[derive(Clone, Debug)]
 pub struct Sandbox {
     host_path: PathBuf,
@@ -10,19 +10,18 @@ pub struct Sandbox {
     guest_path: PathBuf,
 }
 
+#[allow(dead_code)] // TODO remove me
 impl Sandbox {
-    pub fn new(root_dir: &Path, guest_path: &Path) -> Result<Self, WasiError> {
+    pub fn new(root_dir: &Path, guest_path: &Path) -> Result<Self, String> {
         let host_path = root_dir.join(guest_path);
 
-        std::fs::create_dir_all(&host_path).map_err(|e| {
-            WasiError::SandboxError(format!("Failed to create sandbox folder: {}", e))
-        })?;
+        std::fs::create_dir_all(&host_path)
+            .map_err(|e| format!("Failed to create sandbox folder: {}", e))?;
 
         Ok(Self {
             host_path,
-            regex: Regex::new(&format!(r#"(^|[=\s;:"]){}(\b)"#, guest_path.display())).map_err(
-                |e| WasiError::SandboxError(format!("Failed to create regex for sandbox: {}", e)),
-            )?,
+            regex: Regex::new(&format!(r#"(^|[=\s;:"]){}(\b)"#, guest_path.display()))
+                .map_err(|e| format!("Failed to create regex for sandbox: {}", e))?,
             guest_path: guest_path.to_owned(),
         })
     }

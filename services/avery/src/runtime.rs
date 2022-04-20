@@ -1,5 +1,5 @@
 pub mod filesystem_source;
-pub mod wasi;
+pub mod wasm;
 
 use std::{
     collections::HashMap,
@@ -9,7 +9,6 @@ use std::{
 
 use firm_types::functions::Attachment;
 use slog::{o, Logger};
-use tokio::runtime::Runtime as TokioRuntime;
 
 use crate::{
     auth::AuthService,
@@ -25,7 +24,6 @@ pub struct RuntimeParameters {
     pub code: Option<Attachment>,
     pub output_sink: FunctionOutputSink,
     pub auth_service: AuthService,
-    pub async_runtime: TokioRuntime,
     pub arguments: HashMap<String, String>,
 }
 
@@ -88,9 +86,6 @@ impl RuntimeParameters {
             function_dir: execution_dir,
             auth_service: AuthService::default(),
             arguments: HashMap::new(),
-            async_runtime: tokio::runtime::Builder::new_current_thread()
-                .build()
-                .map_err(|e| e.to_string())?,
         })
     }
 
@@ -124,8 +119,8 @@ pub trait Runtime: Debug + Send {
     fn execute(
         &self,
         runtime_parameters: RuntimeParameters,
-        inputs: ChannelSet<ChannelReader>,
-        outputs: ChannelSet<ChannelWriter>,
+        inputs: &ChannelSet<ChannelReader>,
+        outputs: &mut ChannelSet<ChannelWriter>,
         attachments: Vec<Attachment>,
     ) -> Result<Result<(), String>, RuntimeError>;
 }
@@ -150,8 +145,13 @@ impl InternalRuntimeSource {
 impl RuntimeSource for InternalRuntimeSource {
     fn get(&self, name: &str) -> Option<Box<dyn Runtime>> {
         match name {
-            "wasi" => Some(Box::new(wasi::WasiRuntime::new(
+            "wasi" => Some(Box::new(wasm::WasmRuntime::new(
                 self.logger.new(o!("runtime" => "wasi")),
+                true,
+            ))),
+            "wasm" => Some(Box::new(wasm::WasmRuntime::new(
+                self.logger.new(o!("runtime" => "wasm")),
+                false,
             ))),
             _ => None,
         }

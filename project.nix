@@ -82,6 +82,7 @@ nedryland.mkProject rec {
           rust = callFile ./libraries/libfunction/wasi/rust/rust.nix { };
         };
     };
+    turboISLC = callFile ./clients/turbo-islc/turbo-islc.nix { };
   };
 
   extraShells = { callFile }: {

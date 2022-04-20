@@ -321,6 +321,14 @@ pub unsafe fn append_channel_data<T: FromChannelData>(
         })
 }
 
+#[no_mangle]
+// This function is used as a global export for the WASI host to be able to allocate
+// memory on the guest side
+// TODO change this to be some sort of interface to set the allocator, right now everyone assumes that it is malloc so when we change we need some way to delete the memory
+pub extern "C" fn allocate_wasi_mem(size: ApiSize) -> *mut c_void {
+    unsafe { libc::malloc(size as usize) }
+}
+
 #[cfg_attr(not(any(test, host_test)), link(wasm_import_module = "firm"))]
 extern "C" {
     pub fn __input_data(

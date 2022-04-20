@@ -1,12 +1,18 @@
+use std::{
+    any::Any,
+    fmt::Debug,
+    io::{self, Write},
+    sync::Arc,
+};
+
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use slog::{warn, Logger};
-use std::{
-    fmt::Debug,
-    io::{self, Read, Seek, Write},
-    sync::Arc,
-    sync::Mutex,
+use wasi_common::{
+    file::WasiFile,
+    file::{FdFlags, FileType},
+    Error as WasmtimeError, ErrorExt,
 };
-use wasmer_wasi::{WasiFile, WasiFsError};
 
 use crate::executor::FunctionOutputSink;
 
@@ -23,6 +29,46 @@ impl Output {
         Self {
             sinks: Arc::new(Mutex::new(sinks)),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl WasiFile for Output {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    async fn get_filetype(&mut self) -> Result<FileType, WasmtimeError> {
+        Ok(FileType::CharacterDevice)
+    }
+
+    fn isatty(&mut self) -> bool {
+        false
+    }
+
+    async fn sock_accept(&mut self, _fdflags: FdFlags) -> Result<Box<dyn WasiFile>, WasmtimeError> {
+        Err(WasmtimeError::badf())
+    }
+
+    async fn datasync(&mut self) -> Result<(), WasmtimeError> {
+        self.sync().await
+    }
+
+    async fn sync(&mut self) -> Result<(), WasmtimeError> {
+        Write::flush(&mut self).map_err(Into::into)
+    }
+
+    async fn write_vectored<'a>(
+        &mut self,
+        bufs: &[std::io::IoSlice<'a>],
+    ) -> Result<u64, WasmtimeError> {
+        Write::write_vectored(&mut self, bufs)
+            .map_err(Into::into)
+            .map(|bytes| bytes as u64)
+    }
+
+    async fn writable(&self) -> Result<(), WasmtimeError> {
+        Ok(())
     }
 }
 
@@ -65,65 +111,10 @@ impl Write for NamedFunctionOutputSink {
     }
 }
 
-#[typetag::serde]
-impl WasiFile for Output {
-    fn last_accessed(&self) -> wasmer_wasi::types::__wasi_timestamp_t {
-        0
-    }
-
-    fn last_modified(&self) -> wasmer_wasi::types::__wasi_timestamp_t {
-        0
-    }
-
-    fn created_time(&self) -> wasmer_wasi::types::__wasi_timestamp_t {
-        0
-    }
-
-    fn size(&self) -> u64 {
-        0
-    }
-
-    fn set_len(
-        &mut self,
-        _new_size: wasmer_wasi::types::__wasi_filesize_t,
-    ) -> Result<(), WasiFsError> {
-        Err(WasiFsError::NotAFile)
-    }
-
-    fn unlink(&mut self) -> Result<(), WasiFsError> {
-        Ok(())
-    }
-
-    fn bytes_available(&self) -> Result<usize, WasiFsError> {
-        Ok(0)
-    }
-}
-
-impl Seek for Output {
-    fn seek(&mut self, _pos: io::SeekFrom) -> io::Result<u64> {
-        Err(io::Error::new(io::ErrorKind::Other, "can not seek output"))
-    }
-}
-
-impl Read for Output {
-    fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            "can not read from output",
-        ))
-    }
-}
-
 impl Write for Output {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.sinks
             .lock()
-            .map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    "Failed to aquire write lock for output sinks.",
-                )
-            })?
             .iter_mut()
             .try_for_each(|s| s.write(buf).map(|_| ()))
             .map(|_| buf.len())
@@ -132,12 +123,6 @@ impl Write for Output {
     fn flush(&mut self) -> io::Result<()> {
         self.sinks
             .lock()
-            .map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    "Failed to aquire flush lock for output sinks.",
-                )
-            })?
             .iter_mut()
             .try_for_each(|s| s.flush())
     }

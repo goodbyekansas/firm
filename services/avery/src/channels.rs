@@ -116,10 +116,10 @@ where
     /// `optional` indicates optional [`Channel`]s and their types
     /// Returns an empty [`Result`] on success and a list of [`ChannelSetValidationError`]
     /// if anything in this [`ChannelSet`] violates the validation expectations.
-    pub async fn validate<'a>(
+    pub async fn validate(
         &self,
         required: &HashMap<String, ProtoChannelSpec>,
-        optional: Option<&'a HashMap<String, ProtoChannelSpec>>,
+        optional: Option<&HashMap<String, ProtoChannelSpec>>,
     ) -> Result<(), Vec<ChannelSetValidationError>> {
         // We could run iter over this option in the chain call below. However, that
         // confuses rustc greatly since it then loses track of the fact that the (name,
@@ -159,7 +159,7 @@ where
         .filter_map(|r| async {
             match r {
                 Ok((name, channel, channel_spec)) => {
-                    if channel.type_matches(&channel_spec).await {
+                    if channel.type_matches(channel_spec).await {
                         None
                     } else {
                         Some(ChannelSetValidationError::MismatchedChannelType {

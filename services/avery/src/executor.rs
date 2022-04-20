@@ -284,45 +284,36 @@ impl ExecutionServiceTrait for ExecutionService {
                 let output_spec = queued_function.function.outputs.clone();
                 let function_name = queued_function.function.name.clone();
                 let function_name2 = function_name.clone();
-                let runtime_name = runtime_name.clone();
-                let outputs = ChannelSet::from(&queued_function.function.outputs);
+                let mut outputs = ChannelSet::from(&queued_function.function.outputs);
                 let outputs_reader = outputs.reader();
 
                 // Use a oneshot channel to make sure to not block the tokio thread
                 // while waiting for the rayon task to finish
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 self.thread_pool.spawn(move || {
-                    let res = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|e| RuntimeError::RuntimeError {
-                            name: runtime_name,
-                            message: format!(
-                                "Failed to create async runtime for function execution: {}",
-                                e
-                            ),
-                        })
-                        .and_then(|async_runtime| {
-                            runtime.execute(
-                                RuntimeParameters {
-                                    function_name: function_name2,
-                                    entrypoint: if runtime_spec.entrypoint.is_empty() {
-                                        None
-                                    } else {
-                                        Some(runtime_spec.entrypoint)
-                                    },
-                                    code: queued_function.function.code.clone(),
-                                    output_sink: queued_function.output_sender.into(),
-                                    function_dir: execution_dir,
-                                    auth_service,
-                                    async_runtime,
-                                    arguments: runtime_spec.arguments,
-                                },
-                                queued_function.inputs,
-                                outputs,
-                                queued_function.function.attachments.clone(),
-                            )
-                        });
+                    let res = runtime.execute(
+                        RuntimeParameters {
+                            function_name: function_name2,
+                            entrypoint: if runtime_spec.entrypoint.is_empty() {
+                                None
+                            } else {
+                                Some(runtime_spec.entrypoint)
+                            },
+                            code: queued_function.function.code.clone(),
+                            output_sink: queued_function.output_sender.into(),
+                            function_dir: execution_dir,
+                            auth_service,
+                            arguments: runtime_spec.arguments,
+                        },
+                        &queued_function.inputs,
+                        &mut outputs,
+                        queued_function.function.attachments.clone(),
+                    );
+
+                    // In cases where the function is not even allowed to run, we cannot
+                    // expect all outputs to be closed so we make sure they are always
+                    // closed after the function completes
+                    outputs.close_all_channels();
 
                     // scream into the unknown...
                     let _ = tx.send(res);
@@ -465,15 +456,15 @@ impl AttachmentDownload for Attachment {
             Ok(target_path)
         } else {
             self.download(auth)
+                .await
                 .and_then(|content| {
-                    tokio::fs::write(&target_path, content).map_err(|e| {
+                    fs::write(&target_path, content).map_err(|e| {
                         RuntimeError::AttachmentDownloadError(
                             attachment_url.url.clone(),
                             format!("Failed to write attachment to cache file: {}", e),
                         )
                     })
                 })
-                .await
                 .map(move |_| target_path)
         }
     }

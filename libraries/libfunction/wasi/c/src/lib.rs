@@ -10,13 +10,6 @@ use firm_function::{
 };
 use thiserror::Error;
 
-#[no_mangle]
-// This function is used as a global export for the WASI host to be able to allocate
-// memory on the guest side
-pub extern "C" fn allocate_wasi_mem(size: ApiSize) -> *mut c_void {
-    unsafe { libc::malloc(size as usize) }
-}
-
 macro_rules! c_str_to_str {
     ($value:expr) => {{
         let string = CStr::from_ptr($value).to_str().map_err(|e| {

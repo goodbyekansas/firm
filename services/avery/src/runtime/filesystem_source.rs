@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use crate::channels::{ChannelReader, ChannelSet, ChannelWriter};
 
-use super::{wasi, Runtime, RuntimeError, RuntimeParameters, RuntimeSource};
+use super::{wasm, Runtime, RuntimeError, RuntimeParameters, RuntimeSource};
 
 type RuntimeWrapper = Box<dyn Fn(&Path) -> Option<Box<dyn Runtime>> + Send + Sync>;
 pub struct FileSystemSource {
@@ -32,7 +32,7 @@ pub struct FileSystemSource {
 
 #[derive(Debug)]
 struct NestedWasiRuntime {
-    wasi_runtime: wasi::WasiRuntime,
+    wasi_runtime: wasm::WasmRuntime,
     runtime_name: String,
     runtime_executable: PathBuf,
     runtime_checksums: Checksums,
@@ -48,7 +48,7 @@ impl NestedWasiRuntime {
         logger: Logger,
     ) -> Self {
         Self {
-            wasi_runtime: wasi::WasiRuntime::new(logger.new(o!())),
+            wasi_runtime: wasm::WasmRuntime::new(logger.new(o!()), true),
             runtime_executable: executable.to_owned(),
             runtime_name: name.to_owned(),
             runtime_checksums: checksums,
@@ -73,8 +73,8 @@ impl Runtime for NestedWasiRuntime {
     fn execute(
         &self,
         runtime_parameters: RuntimeParameters,
-        function_inputs: ChannelSet<ChannelReader>,
-        function_outputs: ChannelSet<ChannelWriter>,
+        function_inputs: &ChannelSet<ChannelReader>,
+        function_outputs: &mut ChannelSet<ChannelWriter>,
         function_attachments: Vec<Attachment>,
     ) -> Result<Result<(), String>, RuntimeError> {
         let runtime_context = RuntimeContext {
@@ -154,7 +154,6 @@ impl Runtime for NestedWasiRuntime {
                 }),
                 function_dir: runtime_parameters.function_dir,
                 auth_service: runtime_parameters.auth_service,
-                async_runtime: runtime_parameters.async_runtime,
                 arguments: HashMap::new(), // Files on disk can't have arguments.
             },
             function_inputs,
@@ -556,8 +555,8 @@ mod tests {
             let parameters = runtime_parameters!("good");
             let res = good.execute(
                 parameters.runtime_parameters,
-                ChannelSet::default().reader(),
-                ChannelSet::default(),
+                &ChannelSet::default().reader(),
+                &mut ChannelSet::default(),
                 vec![],
             );
             assert!(res.is_ok(), "Expected to execute successfully.");
@@ -566,8 +565,8 @@ mod tests {
             let parameters = runtime_parameters!("symlink");
             let res = symlink.execute(
                 parameters.runtime_parameters,
-                ChannelSet::default().reader(),
-                ChannelSet::default(),
+                &ChannelSet::default().reader(),
+                &mut ChannelSet::default(),
                 vec![],
             );
             assert!(
@@ -590,8 +589,8 @@ mod tests {
             let parameters = runtime_parameters!("bad");
             let res = bad.execute(
                 parameters.runtime_parameters,
-                ChannelSet::default().reader(),
-                ChannelSet::default(),
+                &ChannelSet::default().reader(),
+                &mut ChannelSet::default(),
                 vec![],
             );
             assert!(
@@ -626,8 +625,8 @@ mod tests {
                 bad.unwrap()
                     .execute(
                         parameters.runtime_parameters,
-                        ChannelSet::default().reader(),
-                        ChannelSet::default(),
+                        &ChannelSet::default().reader(),
+                        &mut ChannelSet::default(),
                         vec![]
                     )
                     .is_err(),
@@ -644,8 +643,8 @@ mod tests {
                 good.unwrap()
                     .execute(
                         parameters.runtime_parameters,
-                        ChannelSet::default().reader(),
-                        ChannelSet::default(),
+                        &ChannelSet::default().reader(),
+                        &mut ChannelSet::default(),
                         vec![]
                     )
                     .is_ok(),

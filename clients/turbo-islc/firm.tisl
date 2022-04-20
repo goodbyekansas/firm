@@ -1,0 +1,26 @@
+;; Main definition file for the Firm API
+(mod firm
+  (rec environment-variable
+    (
+      :key string
+      :value string))
+
+  (rec start-host-process-request
+    (
+      :command string
+      :env-vars (list environment-variable) ; yesh, you can have comments here
+      :wait bool))
+
+  (fun host-os
+    "Get the OS that the host executing the function is running on"
+    ()
+    (:os string))
+
+  (fun host-path-exists
+    (:path string)
+    (:exists bool))
+  
+  (fun start-host-process
+    (:request start-host-process-request)
+    (:pid int
+      :exit-code int)))

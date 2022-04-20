@@ -31,13 +31,12 @@
     };
   };
 
-  shellHook = ''
-    testSocketActivation() {
+  shellCommands = {
+    testSocketActivation = ''
       cargo build
       systemd-socket-activate -l "/tmp/avery-dev.sock" "target/debug/avery"
-    }
-  '';
-
+    '';
+  };
 }).overrideAttrs (avery: {
   withRuntimes = base.callFile ./avery-with-runtimes.nix {
     inherit avery;

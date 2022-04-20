@@ -5,7 +5,7 @@
   defaultTarget = "wasi";
 
   doCrossCheck = true;
-  useNightly = "2021-11-22";
+  useNightly = "2022-04-20";
 
   checkInputs = [ pkgs.wasmtime ];
   shellInputs = [ pkgs.bear ];

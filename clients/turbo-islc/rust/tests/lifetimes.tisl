@@ -1,0 +1,8 @@
+(mod attackments 
+    (rec heart (:bpm int))
+    (rec human (:name string :shoe-size int :heart heart))
+    (rec attachment (:name string :path string :publisher (ref human) :authors (ref list human)))
+
+    (fun get-attachment (:name string) (:attachment  attachment))
+    (fun add-attachment (:attachment attachment) ())
+)

@@ -159,27 +159,29 @@ async fn execute() {
     let correct_args = stream!({ "say" => "sune", "count" => 7i64 });
 
     // Test without reading output
-    let r = futures::executor::block_on(execution_service.queue_function(tonic::Request::new(
-        ExecutionParameters {
+    let r = execution_service
+        .queue_function(tonic::Request::new(ExecutionParameters {
             name: ff.name.clone(),
             version_requirement: ff.version.clone(),
             arguments: Some(correct_args.clone()),
-        },
-    )));
+        }))
+        .await;
     assert!(r.is_ok());
     let eid = r.unwrap().into_inner();
 
-    let r = futures::executor::block_on(execution_service.run_function(tonic::Request::new(eid)));
+    let r = execution_service
+        .run_function(tonic::Request::new(eid))
+        .await;
     assert!(r.is_ok());
 
     // Test checking for correct args and output is getting propagated
-    let r = futures::executor::block_on(execution_service.queue_function(tonic::Request::new(
-        ExecutionParameters {
+    let r = execution_service
+        .queue_function(tonic::Request::new(ExecutionParameters {
             name: ff.name.clone(),
             version_requirement: ff.version.clone(),
             arguments: Some(correct_args),
-        },
-    )));
+        }))
+        .await;
     assert!(r.is_ok());
     let eid = r.unwrap().into_inner();
 

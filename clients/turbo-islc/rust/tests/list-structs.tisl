@@ -1,0 +1,14 @@
+(mod ocean 
+    (enu fish-type (:bony :jawless :cartilaginous))
+
+    (rec fish (:name string :size float :type fish-type :data bytes))
+    (rec fish-name-ref (:name (ref string)))
+
+    (fun add-fish-to-school (:fish fish) ())
+    (fun add-fishes-to-school (:fishes (list fish)) ())
+    (fun compare (:fish1 fish :fish2 fish) (:winner fish))
+    (fun get-fish (:name string) (:fish (ref fish)))
+    (fun get-fish-name (:fish fish) (:name (ref fish-name-ref)))
+    (fun get-fish-name-real (:fish fish) (:name (ref string)))
+    (fun get-fishes-of-type (:type fish-type) (:fishes (list fish)))
+)

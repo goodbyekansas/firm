@@ -1,0 +1,3 @@
+(mod ocean 
+    (fun fish (:name string :size float :is-angry bool) (:big bool :name string))
+)

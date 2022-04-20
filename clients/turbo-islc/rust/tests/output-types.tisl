@@ -1,0 +1,36 @@
+(mod hats
+    (rec hat
+        (:name string
+        :color string
+        :water-proof bool))
+
+    (fun hat-is-funny
+        "Check if the hat is funny or boring
+Everyone wants a funny hat so this function is essential"
+        (:name string)
+        (:funny bool))
+
+    (fun random
+        "Get the name of a hat, at random!"
+        (:seed int)
+        (:name string))
+
+    (fun size-to-diameter
+        (:size int)
+        (:diameter float))
+
+    (fun diameter-to-size
+        (:diameter float)
+        (:size int))
+
+    (fun get-hat
+        (:name string)
+        (:name string :color string))
+
+    (fun get-random-hat-names
+        (:amount int)
+        (:hats (list string)))
+
+    (fun get-random-hats
+        (:amount int)
+        (:hats (list hat))))
