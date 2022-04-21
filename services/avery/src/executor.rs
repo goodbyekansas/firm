@@ -109,10 +109,7 @@ impl ExecutionService {
                     .thread_name(|tid| format!("function-execution-thread-{}", tid))
                     .build()
                     .map_err(|e| {
-                        format!(
-                            "Failed to create function execution thread pool: {}",
-                            e.to_string()
-                        )
+                        format!("Failed to create function execution thread pool: {}", e)
                     })?,
             ),
         })
@@ -231,7 +228,7 @@ impl ExecutionServiceTrait for ExecutionService {
             .ok_or_else(|| {
                 tonic::Status::not_found(format!(
                     "Failed to find queued execution with id \"{}\"",
-                    uuid.to_string()
+                    uuid
                 ))
             })?;
 
@@ -378,7 +375,7 @@ impl ExecutionServiceTrait for ExecutionService {
             .ok_or_else(|| {
                 tonic::Status::not_found(format!(
                     "Failed to find queued execution with id \"{}\"",
-                    uuid.to_string()
+                    uuid
                 ))
             })?
             .output_receiver

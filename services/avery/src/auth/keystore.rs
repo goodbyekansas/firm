@@ -89,7 +89,7 @@ impl SimpleKeyStore {
                         .ok_or_else(|| {
                             KeyStoreError::AuthenticationError(format!(
                                 "Url \"{}\" is missing hostname.",
-                                url.to_string(),
+                                url,
                             ))
                         })
                         .map(|host| (host.to_string(), url.clone()))
@@ -189,7 +189,7 @@ impl KeyStore for SimpleKeyStore {
                         .ok_or_else(|| {
                             KeyStoreError::AuthenticationError(format!(
                                 "Url \"{}\" is missing hostname.",
-                                url.to_string(),
+                                url,
                             ))
                         })
                         .map(|host| (url.clone(), host.to_string()))

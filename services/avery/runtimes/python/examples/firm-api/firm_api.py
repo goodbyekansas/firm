@@ -7,7 +7,7 @@ import firm  # type: ignore # pylint: disable=import-error
 
 
 def main() -> None:
-    """ get inputs, set outputs, map attachments etc """
+    """get inputs, set outputs, map attachments etc"""
     inputs = ["str_input", "int_input", "float_input", "bool_input", "bytes_input"]
     for func_input in inputs:
         print(f"{func_input} is: {firm.get_input(func_input)}")
@@ -56,20 +56,20 @@ def main() -> None:
     data_path = firm.map_attachment("data")
     print(f"Data path: {data_path}")
     print("Data content:")
-    with open(data_path, "r") as data_file:
+    with open(data_path, "r", encoding="utf-8") as data_file:
         print(data_file.read())
 
     compressed_data_path = firm.map_attachment("compressed_data", unpack=True)
     print(f"Compressed data path: {compressed_data_path}")
     print("Compressed data content:")
     with open(
-        os.path.join(compressed_data_path, "much_data.dat"), "r"
+        os.path.join(compressed_data_path, "much_data.dat"), "r", encoding="utf-8"
     ) as compressed_data_file:
         print(compressed_data_file.read())
 
 
 def main_with_error() -> None:
-    """ Demonstrate settings errors """
+    """Demonstrate settings errors"""
     print("Setting error")
     firm.set_error("Everything actually went fine")
 

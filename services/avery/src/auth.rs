@@ -640,10 +640,7 @@ impl TokenProviders {
                 .and_then(|oidc| {
                     oidc.authenticate(login_command_stream.clone())
                         .map_err(|e| {
-                            AcquireTokenError::Generic(format!(
-                                "OIDC login failed: {}",
-                                e.to_string()
-                            ))
+                            AcquireTokenError::Generic(format!("OIDC login failed: {}", e))
                         })
                         .map_ok(|t| (scope.to_owned(), TypedToken::Oidc(t)))
                 })

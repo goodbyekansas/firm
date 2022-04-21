@@ -277,7 +277,7 @@ impl RegistryService {
 
         let name_filter = filters.name;
 
-        let order = filters.order.unwrap_or_else(|| Ordering {
+        let order = filters.order.unwrap_or(Ordering {
             key: OrderingKey::NameVersion as i32,
             reverse: false,
             offset: 0,

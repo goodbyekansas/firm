@@ -128,6 +128,7 @@ base.extend.mkExtension {
 
           package = (base.languages.python.mkComponent {
             inherit name version pythonVersion src;
+            checkInputs = dependencies;
             preDistPhases = [ "generateManifestPhase" ];
             nativeBuildInputs = (p: [ p.setuptools ]);
             format = "custom";
