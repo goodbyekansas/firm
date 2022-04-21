@@ -5,7 +5,7 @@ import firm  # type: ignore # pylint: disable=import-error
 
 
 def main() -> None:
-    """ ports and sockets """
+    """ports and sockets"""
     port = firm.get_input("port")
     sock = socket.socket()
     sock.connect(("localhost", port))

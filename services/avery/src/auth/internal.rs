@@ -446,7 +446,6 @@ impl TokenGenerator {
                 hostname::get()
                     .map_err(SelfSignedTokenError::FailedToDetermineHostName)?
                     .to_string_lossy()
-                    .to_string()
             ),
             subject.to_owned(),
             TokenExpiry::ExpiresIn(3600u64),

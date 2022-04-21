@@ -430,10 +430,7 @@ impl Oidc {
             })
             .await
             .map_err(|e| {
-                OidcError::AuthError(format!(
-                    "Failed to send open browser command: {}",
-                    e.to_string(),
-                ))
+                OidcError::AuthError(format!("Failed to send open browser command: {}", e,))
             })?;
 
         let auth_response = reader
@@ -764,7 +761,7 @@ r#"
         let oidc = create_oidc!();
         let _m = mock("POST", Matcher::Any)
             .with_status(400)
-            .with_body("oh no".to_owned())
+            .with_body("oh no")
             .create();
 
         // Invalid server url
@@ -800,8 +797,7 @@ r#"
                 r#"
 {
  "boll": "true"
-}"#
-                .to_owned(),
+}"#,
             )
             .create();
 
@@ -874,7 +870,7 @@ r#"
         let oidc = create_oidc!(mockito::server_url());
         let _m = mock("GET", Matcher::Any)
             .with_status(400)
-            .with_body("oh no".to_owned())
+            .with_body("oh no")
             .create();
         let res = oidc.get_config().await;
         assert!(res.is_err());

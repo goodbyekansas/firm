@@ -184,7 +184,7 @@ impl FunctionManifest {
         #[cfg(windows)]
         let fullpath = fullpath.join(attachment.path.replace("/", r#"\"#));
         #[cfg(unix)]
-        let fullpath = fullpath.join(attachment.path.replace(r#"\"#, "/"));
+        let fullpath = fullpath.join(attachment.path.replace('\\', "/"));
         fullpath
             .canonicalize()
             .map_err(|e| ManifestError::AttachmentFileReadError {

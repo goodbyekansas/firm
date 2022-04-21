@@ -21,7 +21,7 @@ class ChannelConversionError(BaseException):
 
 
 def channel(subject: ChannelTypes) -> execution.Channel:
-    """ Convert an object to a channel """
+    """Convert an object to a channel"""
 
     if subject == []:
         return execution.Channel()
@@ -57,7 +57,7 @@ def channel(subject: ChannelTypes) -> execution.Channel:
 def value(
     from_channel: execution.Channel, as_type: typing.Optional[type] = None
 ) -> ChannelTypes:
-    """ Convert from a channel to a python type """
+    """Convert from a channel to a python type"""
 
     def get_exactly_one(values: typing.List) -> ChannelTypes:
         if len(values) == 1:
@@ -69,6 +69,10 @@ def value(
         raise ChannelConversionError("No values in channel, asked for exactly one")
 
     which_one = from_channel.WhichOneof("value")
+    if not which_one:
+        raise ChannelConversionError(
+            f"Could not get type to convert from, got {which_one}"
+        )
     channel_value = getattr(from_channel, which_one).values
     if as_type is None:
         return channel_value

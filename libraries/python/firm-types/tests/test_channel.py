@@ -8,7 +8,7 @@ from firm_types.types import execution
 
 
 def test_channel() -> None:
-    """ test converting to a channel from a value """
+    """test converting to a channel from a value"""
     chan = channel.channel(1)
     assert chan.WhichOneof("value") == "integers"
     assert chan.integers == execution.Integers(values=[1])
@@ -59,7 +59,7 @@ def test_channel() -> None:
 
 
 def test_value() -> None:
-    """ Test converting from channels to regular stuff """
+    """Test converting from channels to regular stuff"""
     chan = channel.channel(1)
     assert channel.value(chan) == [1]
     assert channel.value(chan, as_type=int) == 1

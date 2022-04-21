@@ -185,7 +185,7 @@ impl From<&TOMLChecksums> for Checksums {
             sha256: toml_checksums
                 .executable_sha256
                 .as_deref()
-                .unwrap_or_else(|| toml_checksums.sha256.as_str())
+                .unwrap_or(toml_checksums.sha256.as_str())
                 .to_owned(),
         }
     }

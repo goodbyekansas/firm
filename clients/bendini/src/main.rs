@@ -417,8 +417,8 @@ async fn connect(endpoint: Endpoint) -> Result<(Channel, bool), BendiniError> {
         }
         #[cfg(unix)]
         Some("unix") => endpoint
-            .connect_with_connector(service_fn(|uri: Uri| {
-                UnixStream::connect(uri.path().to_owned())
+            .connect_with_connector(service_fn(|uri: Uri| async move {
+                UnixStream::connect(uri.path()).await
             }))
             .await
             .map(|channel| (channel, false)),
