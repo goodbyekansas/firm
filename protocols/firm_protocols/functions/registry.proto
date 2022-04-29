@@ -68,8 +68,8 @@ message VersionRequirement {
 message Ordering {
   OrderingKey key = 1;
   bool reverse = 2;
-  uint32 offset = 3;
-  uint32 limit = 4;
+  uint64 offset = 3;
+  uint64 limit = 4;
 }
 
 

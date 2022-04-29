@@ -270,8 +270,8 @@ macro_rules! filters {
             order: Some($crate::functions::Ordering {
                 reverse: false,
                 key: $crate::functions::OrderingKey::NameVersion as i32,
-                offset: $offset as u32,
-                limit: $limit as u32,
+                offset: $offset as u64,
+                limit: $limit as u64,
             }),
             version_requirement: None,
             publisher_email: String::from($publisher_email),
