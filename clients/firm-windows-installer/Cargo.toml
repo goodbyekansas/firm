@@ -11,5 +11,6 @@ thiserror = "1"
 slog = { version="2", features=["release_max_level_debug"] }
 slog-term = "2"
 slog-async = "2"
+console = "0.15"
 
 windows-install = { version = "0.1.0", registry = "nix" }

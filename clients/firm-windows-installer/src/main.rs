@@ -1,9 +1,12 @@
 use std::{
     collections::HashMap,
-    fs, io,
+    fs::{self, OpenOptions},
+    io,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
+use console::Term;
 use flate2::bufread::GzDecoder;
 use slog::{debug, error, info, o, Drain, Logger};
 use slog_term::{FullFormat, TermDecorator};
@@ -23,18 +26,21 @@ const LOMAX: &str = "Lomax";
 const APPLICATION_NAME: &str = "Firm";
 
 #[derive(Error, Debug)]
-pub enum InstallerError {
+enum InstallerError {
     #[error(r#"Failed to copy file "{0}": {1}"#)]
     FailedToCopyFile(String, io::Error),
-
-    #[error(r#"Failed to remove files from "{0}": {1}"#)]
-    FailedToRemoveFiles(PathBuf, io::Error),
 
     #[error("Failed to find this executable path: {0}")]
     FailedToFindCurrentExe(io::Error),
 
     #[error("Archive error: {0}")]
     ArchiveError(String),
+
+    #[error("Args error: {0}")]
+    ArgumentError(String),
+
+    #[error("Failed to create logger: {0}")]
+    CreateLogError(String),
 
     #[error(transparent)]
     ServiceError(#[from] ServiceError),
@@ -44,18 +50,49 @@ pub enum InstallerError {
 
     #[error(transparent)]
     EventLogError(#[from] EventLogError),
+
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
 }
 
 impl From<InstallerError> for u32 {
     fn from(installer_error: InstallerError) -> Self {
         match installer_error {
             InstallerError::FailedToCopyFile(_, _) => 1,
-            InstallerError::FailedToRemoveFiles(_, _) => 2,
             InstallerError::FailedToFindCurrentExe(_) => 3,
             InstallerError::ArchiveError(_) => 4,
+            InstallerError::CreateLogError(_) => 5,
             InstallerError::ServiceError(e) => e.into(),
             InstallerError::RegistryError(e) => e.into(),
             InstallerError::EventLogError(e) => e.into(),
+            InstallerError::ArgumentError(_) => 6,
+            InstallerError::IoError(_) => 7,
+        }
+    }
+}
+
+#[derive(StructOpt, Debug)]
+enum InstallLogLevel {
+    Silent,
+    Info,
+    Warning,
+    Error,
+    Debug,
+}
+
+impl FromStr for InstallLogLevel {
+    type Err = InstallerError;
+    fn from_str(log_level: &str) -> Result<Self, Self::Err> {
+        match log_level.to_lowercase().as_str() {
+            "silent" => Ok(InstallLogLevel::Silent),
+            "info" => Ok(InstallLogLevel::Info),
+            "warning" => Ok(InstallLogLevel::Warning),
+            "error" => Ok(InstallLogLevel::Error),
+            "debug" => Ok(InstallLogLevel::Debug),
+            _ => Err(InstallerError::ArgumentError(format!(
+                "{} is not a valid log level.",
+                log_level
+            ))),
         }
     }
 }
@@ -82,8 +119,8 @@ struct InstallerArguments {
     #[structopt(subcommand)]
     operation: InstallOperation,
 
-    #[structopt(long, short)]
-    verbose: bool,
+    #[structopt(long, short, default_value = "silent")]
+    log_level: InstallLogLevel,
 }
 
 macro_rules! pass_result {
@@ -100,10 +137,23 @@ macro_rules! pass_result {
     }};
 }
 
+struct Terminal {
+    logger: Logger,
+    terminal: Term,
+}
+
+macro_rules! write_term {
+    ($term:expr, $text:expr) => {{
+        if let Err(e) = $term.terminal.write_line($text) {
+            debug!($term.logger, "Failed to write to terminal: {}", e)
+        }
+    }};
+}
+
 const DEFAULT_FIRM_BIN_PATH: &str = r#"C:\Program Files\Firm"#;
 const DEFAULT_FIRM_DATA_PATH: &str = r#"C:\ProgramData\Firm"#;
 
-pub fn find_firm<F: Fn() -> PathBuf, G: Fn() -> PathBuf>(
+fn find_firm<F: Fn() -> PathBuf, G: Fn() -> PathBuf>(
     reg_edit: &RegistryEditor,
     logger: &Logger,
     default_program_files: F,
@@ -201,7 +251,7 @@ where
         .and_then(|_| {
             entry
                 .unpack_in(data_path)
-                .and_then(|_| entry.path().map(|p| data_path.join(p.to_path_buf())))
+                .and_then(|_| entry.path().map(|p| data_path.join(p)))
         })
         .map_err(|e| {
             InstallerError::FailedToCopyFile(
@@ -217,11 +267,13 @@ where
 
 fn copy_files(
     logger: &Logger,
+    terminal: &Terminal,
     install_path: &Path,
     data_path: &Path,
 ) -> Vec<Result<PathBuf, InstallerError>> {
     let archive = include_bytes!("../install-data");
-    debug!(logger, "🗜️ Unpacking archive...");
+    write_term!(terminal, "🗜️ Unpacking archive...");
+    debug!(logger, "Unpacking");
 
     match Archive::new(GzDecoder::new(&archive[..])).entries() {
         Err(e) => {
@@ -278,8 +330,9 @@ fn get_service_manager() -> Result<ServiceManager, InstallerError> {
     ServiceManager::try_new().map_err(Into::into)
 }
 
-fn upgrade(logger: Logger) -> Result<(), InstallerError> {
-    info!(logger, "☝️ Upgrading...");
+fn upgrade(logger: Logger, terminal: &Terminal) -> Result<(), InstallerError> {
+    write_term!(terminal, "☝️ Upgrading...");
+    info!(logger, "Upgrading");
     let reg_edit = RegistryEditor::new();
     let (exe_path, data_path) = find_firm(
         &reg_edit,
@@ -288,31 +341,41 @@ fn upgrade(logger: Logger) -> Result<(), InstallerError> {
         || default_path_from_env(&logger, "PROGRAMDATA", DEFAULT_FIRM_DATA_PATH),
     );
 
-    uninstall(logger.new(o!("scope" => "uninstall")));
+    uninstall(logger.new(o!("scope" => "uninstall")), terminal);
 
-    install(logger.new(o!("scope" => "install")), &exe_path, &data_path)
-        .and_then(|_| get_service_manager())
-        .and_then(|service_manager| {
-            let service_filter = format!("{}_", AVERY);
-            debug!(logger, "Starting services: \"{}\"", service_filter);
-            service_manager
-                .start_services(&service_filter)
-                .map_err(Into::into)
-        })
+    install(
+        logger.new(o!("scope" => "install")),
+        terminal,
+        &exe_path,
+        &data_path,
+    )
+    .and_then(|_| get_service_manager())
+    .and_then(|service_manager| {
+        let service_filter = format!("{}_", AVERY);
+        debug!(logger, "Starting services: \"{}\"", service_filter);
+        service_manager
+            .start_services(&service_filter)
+            .map_err(Into::into)
+    })
 }
 
-fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), InstallerError> {
+fn install(
+    logger: Logger,
+    terminal: &Terminal,
+    install_path: &Path,
+    data_path: &Path,
+) -> Result<(), InstallerError> {
     debug!(
         logger,
         r#"Using executable dir: "{}" and data dir: "{}""#,
         install_path.to_string_lossy(),
         data_path.to_string_lossy()
     );
-    info!(logger, "💾 Installing...");
+    write_term!(terminal, "✨ Starting installation.");
     let reg_edit = RegistryEditor::new();
     pass_result!(logger, reg_edit.cancel_pending_deletions(install_path));
 
-    copy_files(&logger, install_path, data_path)
+    copy_files(&logger, terminal, install_path, data_path)
         .into_iter()
         .map(|file_result| match file_result {
             Ok(file) => reg_edit
@@ -341,7 +404,7 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
         })
         .and_then(|_| get_service_manager())
         .and_then(|service_manager| {
-            debug!(logger, "🏃‍♀️ Starting services.");
+            debug!(logger, "Starting services.");
             service_manager
                 .create_user_service(
                     AVERY,
@@ -404,15 +467,18 @@ fn install(logger: Logger, install_path: &Path, data_path: &Path) -> Result<(), 
                 .map_err(Into::into)
         })
         .map_err(|e| {
-            error!(logger, "🧹 Install failed, cleaning up...");
-            uninstall(logger.new(o!("scope" => "cleanup")));
+            write_term!(terminal, "🧹 Install failed, cleaning up...");
+            error!(logger, "Installation failed: {}", e);
+            error!(logger, "Running cleanup.");
+            uninstall(logger.new(o!("scope" => "cleanup")), terminal);
             e
         })
 }
 
-fn uninstall(logger: Logger) {
+fn uninstall(logger: Logger, terminal: &Terminal) {
     // uninstall does a best effort and removes as much as possible
-    info!(logger, "🪓 Uninstalling...");
+    write_term!(terminal, "🪓 Uninstalling...");
+    info!(logger, "Uninstalling");
 
     pass_result!(
         logger,
@@ -494,48 +560,94 @@ fn uninstall(logger: Logger) {
     pass_result!(logger, reg_edit.deregister_uninstaller(APPLICATION_NAME));
 }
 
-fn main() -> Result<(), u32> {
-    let args = InstallerArguments::from_args();
-    let log = Logger::root(
-        slog::LevelFilter::new(
-            slog_async::Async::new(FullFormat::new(TermDecorator::new().build()).build().fuse())
-                .build()
-                .fuse(),
-            if args.verbose {
-                slog::Level::Debug
-            } else {
-                slog::Level::Info
-            },
-        )
-        .fuse(),
-        o!(),
+fn create_logger(log_level: InstallLogLevel) -> Result<(Logger, PathBuf), InstallerError> {
+    let log_file_path = std::env::temp_dir()
+        .join("firm-installer")
+        .join("install.log");
+
+    let log_drain = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_file_path)
+        .map(slog_term::PlainDecorator::new)
+        .map(|log| FullFormat::new(log).build().fuse())
+        .map_err(|e| InstallerError::CreateLogError(e.to_string()))?;
+
+    // Terminal drain is mostly useful for developers.
+    // It's silent by default.
+    let terminal_drain = slog::LevelFilter::new(
+        FullFormat::new(TermDecorator::new().build()).build().fuse(),
+        match log_level {
+            InstallLogLevel::Debug => slog::Level::Debug,
+            InstallLogLevel::Info => slog::Level::Info,
+            InstallLogLevel::Warning => slog::Level::Warning,
+            InstallLogLevel::Error => slog::Level::Error,
+            InstallLogLevel::Silent => slog::Level::Critical, // Almost silent
+        },
     );
+    let combined = slog_async::Async::new(slog::Duplicate::new(terminal_drain, log_drain).fuse())
+        .build()
+        .fuse();
+
+    Ok((Logger::root(combined.fuse(), o!()), log_file_path))
+}
+
+fn main() -> Result<(), u32> {
+    // TODO: Add dry-run option!
+    let args = InstallerArguments::from_args();
+    let term = Term::stdout();
+    let (log, log_file) = create_logger(args.log_level).unwrap();
+
+    let term = Terminal {
+        logger: log.new(o!("scope" => "terminal")),
+        terminal: term,
+    };
 
     match args.operation {
         InstallOperation::Install {
             install_path,
             data_path,
-        } => install(
-            log.new(o!("scope" => "install")),
-            &install_path.unwrap_or_else(|| {
-                default_path_from_env(&log, "PROGRAMFILES", DEFAULT_FIRM_BIN_PATH)
-            }),
-            &data_path.unwrap_or_else(|| {
-                default_path_from_env(&log, "PROGRAMDATA", DEFAULT_FIRM_DATA_PATH)
-            }),
-        )
-        .map(|_| info!(log, "Avery user service will start on next log in.")),
-        InstallOperation::Upgrade => upgrade(log.new(o!("scope" => "upgrade"))),
+        } => {
+            write_term!(term, "💾 Installing...");
+            install(
+                log.new(o!("scope" => "install")),
+                &term,
+                &install_path.unwrap_or_else(|| {
+                    default_path_from_env(&log, "PROGRAMFILES", DEFAULT_FIRM_BIN_PATH)
+                }),
+                &data_path.unwrap_or_else(|| {
+                    default_path_from_env(&log, "PROGRAMDATA", DEFAULT_FIRM_DATA_PATH)
+                }),
+            )
+        }
+        .map(|_| {
+            write_term!(term, "Installation is complete! 🥂 🍾");
+            write_term!(term, "Averys user service will start on next log in.");
+            info!(log, "Installation operation done.");
+        }),
+        InstallOperation::Upgrade => upgrade(log.new(o!("scope" => "upgrade")), &term),
         InstallOperation::Uninstall => {
-            uninstall(log.new(o!("scope" => "uninstall")));
+            uninstall(log.new(o!("scope" => "uninstall")), &term);
             Ok(())
         }
     }
     .map_err(|e| {
+        write_term!(term, "Frim installer encountered an unexpected error.");
+        write_term!(
+            term,
+            &format!(
+                "More info can be found in the log file \"{}\"",
+                log_file.display()
+            )
+        );
         error!(log, "{}", e);
         e.into()
     })
-    .map(|_| info!(log, "💪 Done!"))
+    .map(|_| {
+        write_term!(term, "💪 Done!");
+        info!(log, "Installation complete.");
+    })
 }
 
 #[cfg(test)]
