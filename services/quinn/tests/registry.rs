@@ -1,3 +1,5 @@
+use ::config::File as ConfigFile;
+
 use firm_types::{
     functions::{registry_server::Registry, Filters, FunctionId, Ordering},
     tonic,
@@ -17,13 +19,13 @@ macro_rules! registry_with_memory_storage {
     () => {{
         let config = futures::executor::block_on(config::Configuration::new_with_init(
             null_logger!(),
-            |s| {
-                s.set("functions_storage_uri", "memory://".to_owned())?;
-                s.set(
-                    "attachment_storage_uri",
-                    "https://attachment-issues.net/".to_owned(),
-                )
-            },
+            ConfigFile::from_str(
+                r#"
+attachment_storage_uri = "https://attachment-issues.net/"
+functions_storage_uri = "memory://"
+"#,
+                ::config::FileFormat::Toml,
+            ),
         ))
         .unwrap();
         futures::executor::block_on(RegistryService::new(config, null_logger!())).unwrap()

@@ -720,11 +720,11 @@ impl storage::FunctionStorage for PostgresStorage {
 
 #[cfg(all(test, feature = "postgres-tests"))]
 mod tests {
-
     use std::collections::HashMap;
     use std::panic::{self, AssertUnwindSafe};
     use tokio::sync::Mutex;
 
+    use config::File as ConfigFile;
     use futures::FutureExt;
     use lazy_static::lazy_static;
     use semver::{Version, VersionReq};
@@ -746,9 +746,15 @@ mod tests {
 
     macro_rules! with_db {
         ($database:ident, $body:block) => {{
-            let config = Configuration::new_with_init(null_logger!(), |c| {
-                c.set("attachment_storage_uri", "https://i-am-attachment.org")
-            })
+            let config = Configuration::new_with_init(
+                null_logger!(),
+                ConfigFile::from_str(
+                    r#"
+attachment_storage_uri = "https://i-am-attachment.org"
+"#,
+                    config::FileFormat::Toml,
+                ),
+            )
             .await
             .unwrap();
             let url = Url::parse(&config.functions_storage_uri).unwrap();

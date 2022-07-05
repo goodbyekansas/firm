@@ -1,3 +1,4 @@
+use config::File as ConfigFile;
 use quinn::storage;
 use slog::{o, Drain, Logger};
 use std::collections::HashMap;
@@ -9,12 +10,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let drain = slog_async::Async::new(drain).build().fuse();
     let log = Logger::root(drain, o!());
 
-    let config = quinn::config::Configuration::new_with_init(log.clone(), |c| {
-        c.set(
-            "attachment_storage_uri",
-            "https://false.com/no-attachments/",
-        )
-    })
+    let config = quinn::config::Configuration::new_with_init(
+        log.clone(),
+        ConfigFile::from_str(
+            r#"
+attachment_storage_uri = "https://false.com/no-attachments/"
+"#,
+            config::FileFormat::Toml,
+        ),
+    )
     .await?;
     let storage = storage::create_storage(config.functions_storage_uri, log).await?;
     storage

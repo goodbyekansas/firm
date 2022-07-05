@@ -193,57 +193,60 @@ const ENVIRONMENT_PREFIX: &str = "AVERY";
 
 impl Config {
     pub fn new(logger: Logger) -> Result<Self, ConfigError> {
-        let mut c = config::Config::new();
-
-        // try some default config file locations
         let current_folder_cfg = Path::new(DEFAULT_CFG_FILE_NAME);
-        if current_folder_cfg.exists() {
-            info!(
-                logger,
-                "📒 Reading configuration file: \"./{}\"",
-                current_folder_cfg.display()
-            );
-            c.merge(File::from(current_folder_cfg))?;
-        } else {
-            // first, a global config file
-            if let Some(global_cfg_path) = crate::system::global_config_path() {
-                let path = global_cfg_path.join(DEFAULT_CFG_FILE_NAME);
-                if path.exists() {
-                    info!(
-                        logger,
-                        "📒 Reading configuration file: \"{}\"",
-                        path.display()
-                    );
-                    c.merge(File::from(path))?;
-                }
-            }
+        current_folder_cfg
+            .exists()
+            .then(|| {
+                // try some default config file locations
+                info!(
+                    logger,
+                    "📒 Reading configuration file: \"./{}\"",
+                    current_folder_cfg.display()
+                );
+                config::Config::builder().add_source(File::from(current_folder_cfg))
+            })
+            .or_else(|| {
+                // first, a global config file
+                let builder = crate::system::global_config_path()
+                    .and_then(|global_cfg_path| {
+                        let path = global_cfg_path.join(DEFAULT_CFG_FILE_NAME);
+                        path.exists().then(|| {
+                            info!(
+                                logger,
+                                "📒 Reading configuration file: \"{}\"",
+                                path.display()
+                            );
+                            config::Config::builder().add_source(File::from(path))
+                        })
+                    })
+                    .unwrap_or_else(config::Config::builder);
 
-            // overridden by a local one
-            if let Some(user_cfg_path) = crate::system::user_config_path() {
-                let path = user_cfg_path.join(DEFAULT_CFG_FILE_NAME);
-                if path.exists() {
-                    info!(
-                        logger,
-                        "📒 Reading user configuration overrides. File: \"{}\"",
-                        path.display()
-                    );
-                    c.merge(File::from(path))?;
-                }
-            }
-        }
-
-        c.merge(Environment::with_prefix(ENVIRONMENT_PREFIX))?;
-
-        c.try_into()
+                // overridden by a local one
+                crate::system::user_config_path().and_then(|user_cfg_path| {
+                    let path = user_cfg_path.join(DEFAULT_CFG_FILE_NAME);
+                    path.exists().then(|| {
+                        info!(
+                            logger,
+                            "📒 Reading user configuration overrides. File: \"{}\"",
+                            path.display()
+                        );
+                        builder.add_source(File::from(path))
+                    })
+                })
+            })
+            .unwrap_or_else(config::Config::builder)
+            .add_source(Environment::with_prefix(ENVIRONMENT_PREFIX))
+            .build()?
+            .try_deserialize()
     }
 
     #[allow(dead_code)]
     pub fn new_with_toml_string<S: AsRef<str>>(cfg: S) -> Result<Self, ConfigError> {
-        let mut c = config::Config::new();
-        c.merge(File::from_str(cfg.as_ref(), FileFormat::Toml))?;
-        c.merge(Environment::with_prefix(ENVIRONMENT_PREFIX))?;
-
-        c.try_into()
+        config::Config::builder()
+            .add_source(File::from_str(cfg.as_ref(), FileFormat::Toml))
+            .add_source(Environment::with_prefix(ENVIRONMENT_PREFIX))
+            .build()?
+            .try_deserialize()
     }
 
     pub fn new_with_file<P: AsRef<Path>>(path: P, logger: Logger) -> Result<Self, ConfigError> {
@@ -252,11 +255,12 @@ impl Config {
             "📒 Reading configuration from file: \"{}\"",
             path.as_ref().display(),
         );
-        let mut c = config::Config::new();
-        c.merge(File::from(path.as_ref()))?;
-        c.merge(Environment::with_prefix(ENVIRONMENT_PREFIX))?;
 
-        c.try_into()
+        config::Config::builder()
+            .add_source(File::from(path.as_ref()))
+            .add_source(Environment::with_prefix(ENVIRONMENT_PREFIX))
+            .build()?
+            .try_deserialize()
     }
 }
 
