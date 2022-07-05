@@ -26,39 +26,40 @@ pub struct Configuration {
 
 impl Configuration {
     pub async fn new(log: Logger) -> Result<Self, ConfigError> {
-        Self::new_with_init(log, |c| Ok(c)).await
+        Self::new_with_init(log, Config::default()).await
     }
 
-    pub async fn new_with_init<F>(log: Logger, init: F) -> Result<Self, ConfigError>
+    pub async fn new_with_init<T>(log: Logger, init: T) -> Result<Self, ConfigError>
     where
-        F: FnOnce(&mut Config) -> Result<&mut Config, ConfigError>,
+        T: config::Source + Send + Sync + 'static,
     {
-        let mut s = Config::new();
-        let mut c: Configuration = init(&mut s)?
-            .merge(Environment::with_prefix("REGISTRY").separator("__"))?
-            .clone()
-            .try_into()?;
+        let mut config: Self = Config::builder()
+            .add_source(init)
+            .add_source(Environment::with_prefix("REGISTRY").try_parsing(true))
+            .build()?
+            .try_deserialize()?;
+
         let secret_resolvers: &[&dyn SecretResolver] = &[&GcpSecretResolver::new(
             log.new(o!("scope" => "secret-resolver", "type" => "gcp")),
         )];
 
-        c.functions_storage_uri = resolve_secrets(
-            &c.functions_storage_uri,
+        config.functions_storage_uri = resolve_secrets(
+            &config.functions_storage_uri,
             secret_resolvers,
             true,
-            log.new(o!("scope" => "resolve-secret", "field" => "functions_storage_uri", "uri" => c.functions_storage_uri.clone())),
+            log.new(o!("scope" => "resolve-secret", "field" => "functions_storage_uri", "uri" => config.functions_storage_uri.clone())),
         )
         .map_err(|e| ConfigError::Foreign(Box::new(e)))?;
 
-        c.attachment_storage_uri = resolve_secrets(
-            &c.attachment_storage_uri,
+        config.attachment_storage_uri = resolve_secrets(
+            &config.attachment_storage_uri,
             secret_resolvers,
             true,
-            log.new(o!("scope" => "resolve-secret", "field" => "attachment_storage_uri", "uri" => c.attachment_storage_uri.clone())),
+            log.new(o!("scope" => "resolve-secret", "field" => "attachment_storage_uri", "uri" => config.attachment_storage_uri.clone())),
         )
         .map_err(|e| ConfigError::Foreign(Box::new(e)))?;
 
-        Ok(c)
+        Ok(config)
     }
 }
 
