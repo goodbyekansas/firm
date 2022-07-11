@@ -112,7 +112,7 @@ impl Interceptor for AcquireAuthInterceptor {
                 .map_err(|_| tonic::Status::internal("Failed to join acquire token thread"))?
             })
             .and_then(|token| {
-                AsciiMetadataValue::from_str(&format!("bearer {}", token.get_ref().token)).map_err(
+                AsciiMetadataValue::try_from(&format!("bearer {}", token.get_ref().token)).map_err(
                     |e| {
                         tonic::Status::internal(format!(
                             "Invalid metadata value for bearer token: {}",

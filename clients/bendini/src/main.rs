@@ -409,7 +409,8 @@ async fn connect(endpoint: Endpoint) -> Result<(Channel, bool), BendiniError> {
                     format!("Cannot construct firm:// URI: {}", e),
                 )
             })?
-            .tls_config(ClientTlsConfig::new().rustls_client_config(rustls_config))
+            .tls_config(
+                ClientTlsConfig::new().rustls_client_config(rustls_config))
             {
                 Ok(endpoint_tls) => endpoint_tls.connect().await.map(|channel| (channel, true)),
                 Err(e) => Err(e),
@@ -524,7 +525,7 @@ async fn run() -> Result<(), error::BendiniError> {
             }
         }
         .map(|t| {
-            tonic::metadata::MetadataValue::from_str(&format!("bearer {}", t)).map_err(|e| {
+            tonic::metadata::MetadataValue::try_from(&format!("bearer {}", t)).map_err(|e| {
                 BendiniError::InvalidOauthToken(format!(
                     "Failed to convert oauth token to metadata value: {}",
                     e
