@@ -11,10 +11,10 @@ use firm_types::{
     functions::AuthMethod,
     functions::{Attachment, Stream as ValueStream},
     functions::{Checksums, Publisher},
+    prost::Message,
     wasi::RuntimeContext,
 };
 use flate2::read::GzDecoder;
-use prost::Message;
 use serde::{Deserialize, Serialize};
 use slog::{debug, info, o, warn, Logger};
 use tar::Archive;

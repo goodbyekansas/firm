@@ -17,8 +17,8 @@ pub async fn functions<T>(
 ) -> Result<(), error::BendiniError>
 where
     T: tonic::client::GrpcService<tonic::body::BoxBody>,
-    T::ResponseBody: Body + Send + 'static,
     T::Error: Into<StdError>,
+    T::ResponseBody: Body<Data = tonic::codegen::Bytes> + Send + 'static,
     <T::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
     let list_response = client
@@ -44,8 +44,8 @@ pub async fn versions<T>(
 ) -> Result<(), error::BendiniError>
 where
     T: tonic::client::GrpcService<tonic::body::BoxBody>,
-    T::ResponseBody: Body + Send + 'static,
     T::Error: Into<StdError>,
+    T::ResponseBody: Body<Data = tonic::codegen::Bytes> + Send + 'static,
     <T::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
     let list_response = client

@@ -6,7 +6,6 @@ use std::{
 };
 
 use flate2::read::GzDecoder;
-use prost::Message;
 use tar::Archive;
 
 use super::{
@@ -17,6 +16,7 @@ use super::{
 use crate::{auth::AuthenticationSource, executor::AttachmentDownload, runtime::FunctionDirectory};
 use firm_types::{
     functions::{Attachment, Channel, Stream},
+    prost::Message,
     stream::StreamExt,
 };
 

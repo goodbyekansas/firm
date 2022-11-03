@@ -12,8 +12,8 @@ use crate::{error, formatting::DisplayExt};
 pub async fn run<T>(mut client: ExecutionClient<T>, name: String) -> Result<(), error::BendiniError>
 where
     T: tonic::client::GrpcService<tonic::body::BoxBody>,
-    T::ResponseBody: Body + Send + 'static,
     T::Error: Into<StdError>,
+    T::ResponseBody: Body<Data = tonic::codegen::Bytes> + Send + 'static,
     <T::ResponseBody as Body>::Error: Into<StdError> + Send,
 {
     println!("Listing runtimes");

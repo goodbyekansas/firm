@@ -7,7 +7,6 @@ use std::{
     process::{Command, Stdio},
 };
 
-use prost::Message;
 use slog::{info, o, warn, Logger};
 
 use super::{
@@ -16,7 +15,7 @@ use super::{
     output::Output,
     sandbox::Sandbox,
 };
-use firm_types::wasi::StartProcessRequest;
+use firm_types::{prost::Message, wasi::StartProcessRequest};
 
 pub fn get_args_and_envs(
     request: &StartProcessRequest,

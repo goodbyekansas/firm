@@ -26,10 +26,10 @@ pub enum WasiError {
     FailedToStartProcess(io::Error),
 
     #[error("Failed to decode value from protobuf: {0}")]
-    FailedToDecodeProtobuf(#[from] prost::DecodeError),
+    FailedToDecodeProtobuf(#[from] firm_types::prost::DecodeError),
 
     #[error("Failed to encode value from protobuf: {0}")]
-    FailedToEncodeProtobuf(#[from] prost::EncodeError),
+    FailedToEncodeProtobuf(#[from] firm_types::prost::EncodeError),
 
     #[error("Failed to open file descriptor: {0}")]
     FailedToOpenFile(String),

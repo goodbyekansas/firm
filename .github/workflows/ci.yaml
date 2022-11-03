@@ -11,10 +11,10 @@ jobs:
 
     steps:
     - name: Clone repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Install Nix
-      uses: cachix/install-nix-action@v14
+      uses: cachix/install-nix-action@v18
       with:
         install_url: https://releases.nixos.org/nix/nix-2.4/install
 
@@ -31,10 +31,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install Nix
-      uses: cachix/install-nix-action@v14
+      uses: cachix/install-nix-action@v18
       with:
         install_url: https://releases.nixos.org/nix/nix-2.4/install
 
@@ -51,10 +51,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
 
     - name: Install Nix
-      uses: cachix/install-nix-action@v14
+      uses: cachix/install-nix-action@v18
       with:
         install_url: https://releases.nixos.org/nix/nix-2.4/install
 
@@ -73,7 +73,7 @@ jobs:
     steps:
 
     - name: Clone the repo
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Setup ssh agent and ssh options
       env:
@@ -84,7 +84,7 @@ jobs:
       run: .github/workflows/setup-builders-ssh.sh
 
     - name: Install Nix
-      uses: cachix/install-nix-action@v14
+      uses: cachix/install-nix-action@v18
       with:
         install_url: https://releases.nixos.org/nix/nix-2.4/install
         nix_path: nixpkgs=channel:nixpkgs-unstable
@@ -95,7 +95,7 @@ jobs:
         cp .github/workflows/nix.conf ~/.config/nix/nix.conf
 
     - name: Setup cachix
-      uses: cachix/cachix-action@v10
+      uses: cachix/cachix-action@v12
       with:
         name: firm
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'

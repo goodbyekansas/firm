@@ -1,1 +1,3 @@
+{}:
+
 (import ./project.nix { }).matrix

@@ -1,5 +1,6 @@
 #! @bash@
 # shellcheck disable=SC2239
+# shellcheck shell=bash
 
 copyAttachments() {
   echo "  📜 [manifest] Copying attachments to output folder..."

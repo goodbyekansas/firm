@@ -6,11 +6,11 @@ use std::{
 
 use firm_types::{
     functions::{Attachment, Channel, Stream},
+    prost::Message,
     stream::StreamExt,
     wasi::StartProcessRequest,
 };
 use lazy_static::lazy_static;
-use prost::Message;
 
 /// Get attachment path len
 ///

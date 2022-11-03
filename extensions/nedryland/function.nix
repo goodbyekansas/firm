@@ -97,6 +97,7 @@ base.extend.mkExtension {
         , metadata ? { }
         , attachments ? { }
         , dependencies ? (_: [ ])
+        , hostCheckDependencies ? (_: [ ])
         }:
         let
           pythonVersion = pkgs.python38;
@@ -128,7 +129,7 @@ base.extend.mkExtension {
 
           package = (base.languages.python.mkComponent {
             inherit name version pythonVersion src;
-            checkInputs = dependencies;
+            checkInputs = (pypkgs: (dependencies pypkgs) ++ (hostCheckDependencies pypkgs));
             preDistPhases = [ "generateManifestPhase" ];
             nativeBuildInputs = (p: [ p.setuptools ]);
             format = "custom";

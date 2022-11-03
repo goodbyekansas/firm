@@ -32,12 +32,12 @@ pub async fn register_and_upload_attachment<T1, T2>(
 ) -> Result<AttachmentId, String>
 where
     T1: tonic::client::GrpcService<tonic::body::BoxBody> + Clone + Send,
-    T1::ResponseBody: Body + Send + 'static,
     T1::Error: Into<StdError>,
     T1::Future: Send,
+    T1::ResponseBody: Body<Data = tonic::codegen::Bytes> + Send + 'static,
     <T1::ResponseBody as Body>::Error: Into<StdError> + Send,
     T2: tonic::client::GrpcService<tonic::body::BoxBody> + Clone + Send,
-    T2::ResponseBody: Body + Send + 'static,
+    T2::ResponseBody: Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T2::Error: Into<StdError>,
     T2::Future: Send,
     <T2::ResponseBody as Body>::Error: Into<StdError> + Send,
@@ -142,7 +142,7 @@ trait AuthBuilder {
     ) -> reqwest::RequestBuilder
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody> + Send,
-        T::ResponseBody: Body + Send + 'static,
+        T::ResponseBody: Body<Data = tonic::codegen::Bytes> + Send + 'static,
         T::Error: Into<StdError>,
         T::Future: Send,
         <T::ResponseBody as Body>::Error: Into<StdError> + Send;
@@ -157,7 +157,7 @@ impl AuthBuilder for reqwest::RequestBuilder {
     ) -> reqwest::RequestBuilder
     where
         T: tonic::client::GrpcService<tonic::body::BoxBody> + Send,
-        T::ResponseBody: Body + Send + 'static,
+        T::ResponseBody: Body<Data = tonic::codegen::Bytes> + Send + 'static,
         T::Error: Into<StdError>,
         T::Future: Send,
         <T::ResponseBody as Body>::Error: Into<StdError> + Send,
@@ -202,7 +202,7 @@ async fn upload_via_http<T>(
 ) -> Result<(), String>
 where
     T: tonic::client::GrpcService<tonic::body::BoxBody> + Send,
-    T::ResponseBody: Body + Send + 'static,
+    T::ResponseBody: Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<StdError>,
     T::Future: Send,
     <T::ResponseBody as Body>::Error: Into<StdError> + Send,
@@ -244,7 +244,7 @@ async fn upload_via_grpc<T>(
 ) -> Result<(), String>
 where
     T: tonic::client::GrpcService<tonic::body::BoxBody> + Send,
-    T::ResponseBody: Body + Send + 'static,
+    T::ResponseBody: Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<StdError>,
     <T::ResponseBody as Body>::Error: Into<StdError> + Send,
 {

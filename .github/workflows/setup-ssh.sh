@@ -1,3 +1,5 @@
+#! /usr/bin/env bash
+
 which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )
 ##
 ## Run ssh-agent (inside the build environment)
