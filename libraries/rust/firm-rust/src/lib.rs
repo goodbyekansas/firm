@@ -10,13 +10,12 @@ use std::{
     string::FromUtf8Error,
 };
 
-use prost::Message;
 use thiserror::Error;
 
 pub use firm_types::functions::Stream;
 use firm_types::{
-    functions::Attachment, functions::Channel, stream::ToChannel, stream::TryFromChannel,
-    wasi::StartProcessRequest,
+    functions::Attachment, functions::Channel, prost::Message, stream::ToChannel,
+    stream::TryFromChannel, wasi::StartProcessRequest,
 };
 
 #[cfg(all(not(test), not(feature = "mock")))]
@@ -48,10 +47,10 @@ impl ToResult for u32 {
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Failed to decode: {0}")]
-    FailedToDecodeResult(#[from] prost::DecodeError),
+    FailedToDecodeResult(#[from] firm_types::prost::DecodeError),
 
     #[error("Failed to encode: {0}")]
-    FailedToEncodeOutputValue(#[from] prost::EncodeError),
+    FailedToEncodeOutputValue(#[from] firm_types::prost::EncodeError),
 
     #[error("Host error occured. Error code: {0}")]
     HostError(u32),
@@ -393,8 +392,7 @@ pub mod runtime_context {
 
     use std::path::{Path, PathBuf};
 
-    pub use firm_types::wasi::RuntimeContext;
-    use prost::Message;
+    pub use firm_types::{prost::Message, wasi::RuntimeContext};
 
     const DEFAULT_FILE_PATH: &str = "/runtime-context/context";
 
@@ -409,7 +407,7 @@ pub mod runtime_context {
         #[error("Failed to decode context file at {path}: {source}")]
         FailedToDecodeContextFile {
             path: PathBuf,
-            source: prost::DecodeError,
+            source: firm_types::prost::DecodeError,
         },
     }
 

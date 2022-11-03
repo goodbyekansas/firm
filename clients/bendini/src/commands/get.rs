@@ -15,7 +15,7 @@ pub async fn run<T>(
 ) -> Result<(), error::BendiniError>
 where
     T: tonic::client::GrpcService<tonic::body::BoxBody>,
-    T::ResponseBody: Body + Send + 'static,
+    T::ResponseBody: Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<StdError>,
     <T::ResponseBody as Body>::Error: Into<StdError> + Send,
 {

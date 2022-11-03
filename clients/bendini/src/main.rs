@@ -371,28 +371,49 @@ async fn connect(endpoint: Endpoint) -> Result<(Channel, bool), BendiniError> {
                     Ok(p)
                 })?;
 
-            let mut rustls_config = rustls::ClientConfig::new();
-            rustls_config.root_store =
-                rustls_native_certs::load_native_certs().map_err(|(_, e)| {
-                    BendiniError::ConnectionError(
-                        uri.to_string(),
-                        format!("Failed to load system CA roots: {}", e),
+            let rustls_config = rustls::ClientConfig::builder()
+                .with_safe_defaults()
+                .with_custom_certificate_verifier(Arc::new(
+                    interactive_cert_verifier::InteractiveCertVerifier::new(
+                        &data_path,
+                        rustls_native_certs::load_native_certs()
+                            .map_err(|e| {
+                                BendiniError::ConnectionError(
+                                    uri.to_string(),
+                                    format!("Failed to load system CA roots: {}", e),
+                                )
+                            })?
+                            .iter()
+                            .map(|cert| rustls::Certificate(cert.0.clone()))
+                            .collect::<Vec<_>>()
+                            .as_slice(),
                     )
-                })?;
-            rustls_config.set_protocols(&["h2".as_bytes().to_vec()]);
-            rustls_config.dangerous().set_certificate_verifier(Arc::new(
-                interactive_cert_verifier::InteractiveCertVerifier::new(&data_path).map_err(
-                    |e| {
+                    .map_err(|e| {
                         BendiniError::ConnectionError(
                             uri.to_string(),
                             format!("Failed to create internal cert verifier: {}", e),
                         )
-                    },
-                )?,
-            ));
+                    })?,
+                ))
+                .with_no_client_auth();
+
+            let mut http = hyper::client::HttpConnector::new();
+            http.enforce_http(false);
+
+            let connector = tower::ServiceBuilder::new()
+                .layer_fn(move |s| {
+                    let tls = rustls_config.clone();
+
+                    hyper_rustls::HttpsConnectorBuilder::new()
+                        .with_tls_config(tls)
+                        .https_only()
+                        .enable_http2()
+                        .wrap_connector(s)
+                })
+                .service(http);
 
             // add some defaults for the firm:// protocol (is also the default one, hence None)
-            match Endpoint::from_shared(format!(
+            Endpoint::from_shared(format!(
                 "https://{}{}{}",
                 uri.authority().map(|a| a.to_string()).unwrap_or_default(),
                 uri.authority()
@@ -409,11 +430,9 @@ async fn connect(endpoint: Endpoint) -> Result<(Channel, bool), BendiniError> {
                     format!("Cannot construct firm:// URI: {}", e),
                 )
             })?
-            .tls_config(ClientTlsConfig::new().rustls_client_config(rustls_config))
-            {
-                Ok(endpoint_tls) => endpoint_tls.connect().await.map(|channel| (channel, true)),
-                Err(e) => Err(e),
-            }
+            .connect_with_connector(connector)
+            .await
+            .map(|channel| (channel, true))
         }
         #[cfg(unix)]
         Some("unix") => endpoint
@@ -476,7 +495,7 @@ async fn run() -> Result<(), error::BendiniError> {
         .await
         .map(AuthenticationClient::new)?;
 
-    let bearer = if acquire_credentials {
+    let bearer: Option<tonic::metadata::MetadataValue<_>> = if acquire_credentials {
         println!(
             "Acquiring credentials for host {} from Avery at {}...",
             args.host.clone(),
@@ -524,7 +543,7 @@ async fn run() -> Result<(), error::BendiniError> {
             }
         }
         .map(|t| {
-            tonic::metadata::MetadataValue::from_str(&format!("bearer {}", t)).map_err(|e| {
+            format!("bearer {}", t).parse().map_err(|e| {
                 BendiniError::InvalidOauthToken(format!(
                     "Failed to convert oauth token to metadata value: {}",
                     e
@@ -541,12 +560,14 @@ async fn run() -> Result<(), error::BendiniError> {
     // to handle these edge cases. We convert it into normal tonic statuses that tonic can
     // handle.
     let channel = tower::ServiceBuilder::new()
-        .option_layer(bearer.map(|bearer| {
-            tonic::service::interceptor(move |mut req: tonic::Request<()>| {
-                req.metadata_mut().insert("authorization", bearer.clone());
+        .layer(tonic::service::interceptor(
+            move |mut req: tonic::Request<()>| {
+                if let Some(bearer) = bearer.clone() {
+                    req.metadata_mut().insert("authorization", bearer);
+                }
                 Ok(req)
-            })
-        }))
+            },
+        ))
         .layer_fn(HttpStatusInterceptor::new)
         .service(channel);
 

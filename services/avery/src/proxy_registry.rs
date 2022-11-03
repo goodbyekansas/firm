@@ -11,7 +11,6 @@ use firm_types::{
     tonic::{
         self,
         codegen::InterceptedService,
-        metadata::AsciiMetadataValue,
         service::Interceptor,
         transport::{ClientTlsConfig, Endpoint, Error as TonicTransportError},
         Code, Request, Response, Status, Streaming,
@@ -112,14 +111,14 @@ impl Interceptor for AcquireAuthInterceptor {
                 .map_err(|_| tonic::Status::internal("Failed to join acquire token thread"))?
             })
             .and_then(|token| {
-                AsciiMetadataValue::from_str(&format!("bearer {}", token.get_ref().token)).map_err(
-                    |e| {
+                format!("bearer {}", token.get_ref().token)
+                    .parse()
+                    .map_err(|e| {
                         tonic::Status::internal(format!(
                             "Invalid metadata value for bearer token: {}",
                             e
                         ))
-                    },
-                )
+                    })
             })
             .map(|token| {
                 request.metadata_mut().insert("authorization", token);

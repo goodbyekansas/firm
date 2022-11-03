@@ -1,5 +1,6 @@
 #! /usr/bin/env nix-shell
 #! nix-shell -i bash -p jq curl
+# shellcheck shell=bash
 
 shopt -s nullglob
 
@@ -15,8 +16,8 @@ github_pre_build_hook() {
   index=0
   mkdir -p .check_ids
 
-  for drv in $derivations_dir/*; do
-    get_package_name $drv
+  for drv in "$derivations_dir"/*; do
+    get_package_name "$drv"
     echo "Posting build start for $package_name to github."
 
     payload="{
@@ -27,15 +28,15 @@ github_pre_build_hook() {
         }
         "
 
-    if [[ ! -z $GITHUB_TOKEN ]]; then
+    if [ -n "$GITHUB_TOKEN" ]; then
       curl_result=$(curl -s -X POST \
-        https://api.github.com/repos/${repo}/check-runs \
+        https://api.github.com/repos/"${repo}"/check-runs \
         -H "Accept: application/vnd.github.antiope-preview+json" \
         -H 'Content-Type: text/json; charset=utf-8' \
         -H "Authorization: Bearer $GITHUB_TOKEN" \
         -d "$payload")
 
-      echo $(jq -r ".id" <<<"$curl_result") >.check_ids/$index
+      jq -r ".id" <<<"$curl_result" >.check_ids/$index
     else
       echo "GITHUB_TOKEN not set, this would have been the payload:"
       echo "$payload"
@@ -58,8 +59,7 @@ all_output_paths_exists() {
 }
 
 get_log_output() {
-  log_output=$(nix-store --read-log "$1" 2>/dev/null)
-  if [ ! $? -eq 0 ]; then
+  if ! log_output=$(nix-store --read-log "$1" 2>/dev/null); then
     log_output=""
   fi
 }
@@ -69,12 +69,12 @@ github_post_build_hook() {
   derivations_dir="$2"
   index=0
 
-  for drv in $derivations_dir/*; do
-    get_package_name $drv
+  for drv in "$derivations_dir"/*; do
+    get_package_name "$drv"
     check_id=$(cat .check_ids/$index)
-    get_log_output $drv
-    all_output_paths_exists $drv
-    [[ ! -z $log_output ]] && log_exists=true || log_exists=false
+    get_log_output "$drv"
+    all_output_paths_exists "$drv"
+    [ -n "$log_output" ] && log_exists=true || log_exists=false
     case $output_paths_exists$log_exists in
     truetrue)
       conclusion="success"
@@ -113,9 +113,9 @@ $log_output
       }
     }"
 
-    if [[ ! -z $GITHUB_TOKEN ]]; then
+    if [ -n "$GITHUB_TOKEN" ]; then
       jq --null-input --rawfile log_output log.txt --compact-output "$payload" | curl -s -X PATCH \
-        https://api.github.com/repos/$repo/check-runs/$check_id \
+        https://api.github.com/repos/"$repo"/check-runs/"$check_id" \
         -H "Accept: application/vnd.github.antiope-preview+json" \
         -H 'Content-Type: text/json; charset=utf-8' \
         -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -132,12 +132,12 @@ command="$1"
 case $command in
 "pre")
   shift
-  github_pre_build_hook $@
+  github_pre_build_hook "$@"
   ;;
 
 "post")
   shift
-  github_post_build_hook $@
+  github_post_build_hook "$@"
   ;;
 *)
   echo "Unknown command $command."

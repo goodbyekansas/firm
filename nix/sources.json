@@ -1,10 +1,15 @@
 {
     "nedryland": {
         "branch": "main",
-        "repo": "ssh://git@github.com/goodbyekansas/nedryland",
-        "rev": "106e8804026b6199482a243a86ee722920925e34",
-        "type": "git",
-        "version": "6.0.0"
+        "description": "Nedryland is a collection of utilities and a build system for declaring, building and deploying microservice solutions.",
+        "homepage": "https://goodbyekansas.github.io/nedryland/",
+        "owner": "goodbyekansas",
+        "repo": "nedryland",
+        "rev": "7.0.0",
+        "sha256": "0dycma243hbdkw91miwrrki69j68j3hplypzh5afq63krf5yfl36",
+        "type": "tarball",
+        "url": "https://github.com/goodbyekansas/nedryland/archive/7.0.0.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
     },
     "niv": {
         "branch": "master",
@@ -12,10 +17,10 @@
         "homepage": "https://github.com/nmattia/niv",
         "owner": "nmattia",
         "repo": "niv",
-        "rev": "9cb7ef336bb71fd1ca84fc7f2dff15ef4b033f2a",
-        "sha256": "1ajyqr8zka1zlb25jx1v4xys3zqmdy3prbm1vxlid6ah27a8qnzh",
+        "rev": "351d8bc316bf901a81885bab5f52687ec8ccab6e",
+        "sha256": "1yzhz7ihkh6p2sxhp3amqfbmm2yqzaadqqii1xijymvl8alw5rrr",
         "type": "tarball",
-        "url": "https://github.com/nmattia/niv/archive/9cb7ef336bb71fd1ca84fc7f2dff15ef4b033f2a.tar.gz",
+        "url": "https://github.com/nmattia/niv/archive/351d8bc316bf901a81885bab5f52687ec8ccab6e.tar.gz",
         "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
     },
     "python": {

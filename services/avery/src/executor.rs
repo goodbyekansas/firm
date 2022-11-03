@@ -629,7 +629,7 @@ pub enum RuntimeError {
     FunctionMissingId,
 
     #[error("Failed to encode proto data: {0}")]
-    EncodeError(#[from] prost::EncodeError),
+    EncodeError(#[from] firm_types::prost::EncodeError),
 
     #[error("Code is missing even though it is required for the \"{0}\" runtime.")]
     MissingCode(String),
