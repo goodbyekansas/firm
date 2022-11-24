@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2022-11-24
+
 ### Added
 - Channels module which contains definitions for working with `Channels`
   and `ChannelSets`. A `ChannelSet` is a collection of named `Channels` and a

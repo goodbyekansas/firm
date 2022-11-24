@@ -6,16 +6,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2022-11-24
 ### Changed versions
 - Update Nedryland to 7.0.0
 
-## [4.1.0] - 2022-04-29
+### Packages
+- avery: 2.1.0
+- bendini: 2.0.0
+- firmRust: 1.0.0
+- firmTypes-python: 1.0.0
+- firmTypes-rust: 1.0.0
+- firmWindowsInstaller: 0.1.2
+- lomax: 2.1.0
+- protocols: 2.0.0
+- quinn: 2.0.0
+- tonicMiddleware: 1.0.0
+- windowsInstall: 0.1.0
 
+### Added
+- avery: Channels module which contains definitions for working with `Channels`
+  and `ChannelSets`. A `ChannelSet` is a collection of named `Channels` and a
+  `Channel` represents a single stream of typed data that can be used as
+  an input or output for a function.
+
+## [4.1.0] - 2022-04-29
 ### Changed versions
 - Update Nedryland to 6.0.0
 
-## [4.0.0] - 2022-02-14
+### Packages
+- avery: 2.0.2
+- bendini: 2.0.0
+- firmRust: 1.0.0
+- firmTypes-python: 1.0.0
+- firmTypes-rust: 1.0.0
+- firmWindowsInstaller: 0.1.2
+- lomax: 2.1.0
+- protocols: 2.0.0
+- quinn: 2.0.0
+- tonicMiddleware: 1.0.0
+- windowsInstall: 0.1.0
 
+## [4.0.0] - 2022-02-14
 ### Changed versions
 - Update Nedryland to 4.0.0
 
