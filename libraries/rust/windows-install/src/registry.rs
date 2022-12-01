@@ -319,7 +319,7 @@ impl<'a> RegistryEditor<'a> {
                 })
                 .map_err(|e| {
                     RegistryError::InstallFileError(
-                        format!("Failed to get install files for {}", name.to_string()),
+                        format!("Failed to get install files for {}", name),
                         e,
                     )
                 }),
@@ -355,7 +355,7 @@ impl<'a> RegistryEditor<'a> {
             .open_subkey("SOFTWARE")
             .and_then(|key| key.create_subkey(name))
             .and_then(|key| {
-                key.set_value("InstallPath", &exe_path.to_string_lossy().into_owned())
+                key.set_value("InstallPath", &exe_path.to_string_lossy())
                     .and_then(|_| {
                         additional_data
                             .iter()
@@ -486,10 +486,7 @@ impl<'a> RegistryEditor<'a> {
                 path.to_string_lossy().into_owned().escape_default()
             ))
             .map_err(|e| {
-                RegistryError::FailedToCancelFileDeletion(format!(
-                    "Failed to create regex: {}",
-                    e.to_string()
-                ))
+                RegistryError::FailedToCancelFileDeletion(format!("Failed to create regex: {}", e))
             })
             .and_then(|regex| {
                 self.get_pending_deletions(transaction.as_ref())
@@ -565,9 +562,9 @@ impl<'a> RegistryEditor<'a> {
             .and_then(|key| {
                 key.set_value(
                     PENDING_OPERATIONS,
-                    &pending_deletions.iter().fold(String::new(), |acc, entry| {
-                        format!("{}{}\n\n", acc, entry.to_owned())
-                    }),
+                    &pending_deletions
+                        .iter()
+                        .fold(String::new(), |acc, entry| format!("{}{}\n\n", acc, entry)),
                 )
                 .map_err(|e| RegistryError::FailedToSetFileDeletion(format!("{}", e)))
             })

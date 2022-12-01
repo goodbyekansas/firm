@@ -17,8 +17,8 @@ pub enum EventLogError {
 impl From<EventLogError> for u32 {
     fn from(event_log_error: EventLogError) -> Self {
         match event_log_error {
-            EventLogError::FailedToAddLogSource(_,_,_) => 50,
-            EventLogError::FailedToRemoveLogSource(_,_) => 51,
+            EventLogError::FailedToAddLogSource(_, _, _) => 50,
+            EventLogError::FailedToRemoveLogSource(_, _) => 51,
         }
     }
 }

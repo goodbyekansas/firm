@@ -1,7 +1,5 @@
-{ pkgs, name, manifest }:
+{ pkgs, python3, name, manifest, bash, j2cli }:
 let
-  j2 = pkgs.python3.withPackages (ps: with ps; [ j2cli setuptools ]);
-
   normalizeAttachments = pkgs.lib.mapAttrs
     (
       _: path:
@@ -20,8 +18,9 @@ let
   };
 in
 pkgs.stdenv.mkDerivation {
+  inherit bash j2cli python3;
   name = "${name}-manifest";
-  propagatedBuildInputs = [ j2 ];
+
   manifestData = builtins.toJSON manifestWithNormalizedAttachments;
   passAsFile = [ "manifestData" ];
 

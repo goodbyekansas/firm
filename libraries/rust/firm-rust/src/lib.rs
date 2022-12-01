@@ -88,15 +88,15 @@ fn _map_attachment<S: AsRef<str> + std::fmt::Display>(
         &mut attachment_path_bytes_len as *mut usize
     ))?;
 
-    let mut attachment_path_buffer = Vec::with_capacity(attachment_path_bytes_len as usize);
+    let mut attachment_path_buffer = Vec::with_capacity(attachment_path_bytes_len);
     host_call!(raw::map_attachment(
         attachment_name.as_ref().as_ptr(),
         attachment_name.as_ref().as_bytes().len(),
         unpack as u8,
         attachment_path_buffer.as_mut_ptr(),
-        attachment_path_bytes_len as usize,
+        attachment_path_bytes_len,
     ))?;
-    unsafe { attachment_path_buffer.set_len(attachment_path_bytes_len as usize) };
+    unsafe { attachment_path_buffer.set_len(attachment_path_bytes_len) };
 
     Ok(PathBuf::from(String::from_utf8(attachment_path_buffer)?))
 }
@@ -135,15 +135,15 @@ fn _map_attachment_from_descriptor(
         &mut attachment_path_bytes_len as *mut usize
     ))?;
 
-    let mut attachment_path_buffer = Vec::with_capacity(attachment_path_bytes_len as usize);
+    let mut attachment_path_buffer = Vec::with_capacity(attachment_path_bytes_len);
     host_call!(raw::map_attachment_from_descriptor(
         value.as_ptr(),
         value.len(),
         unpack as u8,
         attachment_path_buffer.as_mut_ptr(),
-        attachment_path_bytes_len as usize,
+        attachment_path_bytes_len,
     ))?;
-    unsafe { attachment_path_buffer.set_len(attachment_path_bytes_len as usize) };
+    unsafe { attachment_path_buffer.set_len(attachment_path_bytes_len) };
 
     Ok(PathBuf::from(String::from_utf8(attachment_path_buffer)?))
 }

@@ -10,7 +10,7 @@ base.mkComponent {
   package = pkgs.pkgsCross.wasi32.clang12Stdenv.mkDerivation {
     name = "wasi-python38";
     src = pythonSource;
-    buildInputs = [ wasiPythonShims.package zlib ];
+    buildInputs = [ wasiPythonShims.c zlib ];
     nativeBuildInputs = [ pkgs.autoreconfHook pkgs.pkg-config pkgs.python38 ];
     # gdb is needed for JIT debugging with lldb. I know, it's a weird relationship they have together.
     shellInputs = [ pkgs.bear pkgs.lldb_12 pkgs.gdb pkgs.wasmtime ];

@@ -131,7 +131,7 @@ impl hyper::service::Service<http::Uri> for crate::run::LocalAveryConnector {
         let uri = format!(
             r#"\\{}{}"#,
             self.uri.host().unwrap_or("."),
-            self.uri.path().replace("/", "\\")
+            self.uri.path().replace('/', "\\")
         );
 
         Box::pin(async move {

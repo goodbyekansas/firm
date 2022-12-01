@@ -1,16 +1,25 @@
-{ nedrylandOverride ? null }:
+{ nedryland
+, nedryglot
+, pkgs
+, oxalica ? (import ./dependencies.nix).oxalica
+, ...
+}:
 let
-  sources = import ./nix/sources.nix;
-  nedryland = (if nedrylandOverride == null then (import sources.nedryland { }) else nedrylandOverride);
+  nedryland' = nedryland { inherit pkgs; };
+  nedryglot' = nedryglot { };
 in
-nedryland.mkProject rec {
+nedryland'.mkProject rec {
   name = "firm";
   version = "5.0.0";
   baseExtensions = [
+    nedryglot'.languages
+    (import ./extensions/nedryland/rust.nix oxalica)
+    nedryglot'.protobuf
     ./extensions/nedryland/function.nix
     ./extensions/nedryland/runtime.nix
   ];
-  ci = nedryland.ci;
+
+  checks = nedryland'.checks;
 
   components = { callFile }: rec {
     protocols = callFile ./protocols/protocols.nix { };
@@ -30,8 +39,11 @@ nedryland.mkProject rec {
     };
 
     wasiPythonShims = callFile ./services/avery/runtimes/python/wasi-python-shims/wasi-python-shims.nix { };
-    wasiPython = callFile ./services/avery/runtimes/python/wasiPython.nix {
-      pythonSource = sources.python;
+    wasiPython = callFile ./services/avery/runtimes/python/wasi-python.nix {
+      pythonSource = builtins.fetchTarball {
+        url = "https://github.com/goodbyekansas/cpython/archive/3c8f8d80d2f71197b702da6540af4f97e8fadafe.tar.gz";
+        sha256 = "1ify5di2fmxrk6ss22vskvvp63r92xm0g4d21y29slxp74vr4kmx";
+      };
     };
 
     runtimes = {

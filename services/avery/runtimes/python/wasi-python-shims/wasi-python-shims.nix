@@ -1,36 +1,31 @@
-{ base, pkgs }: # TODO: Make one deriv for the C output and another for rust
-(base.languages.rust.mkLibrary {
+{ base, pkgs, }:
+((base.languages.rust.nightly.withWasi.override {
+  crossTargets.rust = base.languages.rust.nightly.withWasi.crossTargets.wasi;
+}).mkLibrary {
   name = "wasi-python-shims";
   src = ./.;
-  defaultTarget = "wasi";
-
-  doCrossCheck = true;
-  useNightly = "2021-11-22";
 
   checkInputs = [ pkgs.wasmtime ];
   shellInputs = [ pkgs.bear ];
-}
-).overrideAttrs (
-  oldAttrs: {
-    package = oldAttrs.wasi.overrideAttrs (packageAttrs: {
-      RUSTFLAGS = "${packageAttrs.RUSTFLAGS} -Ctarget-feature=-crt-static";
-      installPhase = ''
-        ${packageAttrs.installPhase}
-        mkdir -p $out/lib $out/include
-        cp target/wasm32-wasi/release/libwasi_python_shims.a $out/lib
 
-        # Inputting the build target platform manually to not run wasi here.
-        cp $(cargo run --target ${base.languages.rust.toRustTarget pkgs.stdenv.buildPlatform} --release header) $out/include
-      '';
+}).overrideAttrs (old: {
+  c = old.rust.overrideAttrs (rust: {
+    RUSTFLAGS = "${rust.RUSTFLAGS or ""} -Ctarget-feature=-crt-static";
+    buildPhase = ''
+      runHook preBuild
+      cargo build --release
+      runHook postBuild  
+    '';
 
-      buildPhase = ''
-        cargo build --release
-      '';
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out/lib $out/include
+      cp target/wasm32-wasi/release/libwasi_python_shims.a $out/lib
+      # Inputting the build target platform manually to not run wasi here.
+      cp $(cargo run --target ${base.languages.rust.toRustTarget pkgs.stdenv.buildPlatform} --release header) $out/include
+      runHook postBuild
+    '';
 
-      checkPhase = ''
-        ${packageAttrs.checkPhase}
-        make check
-      '';
-    });
-  }
-)
+    postCheck = "make check";
+  });
+})

@@ -1,8 +1,8 @@
-{ base, pkgs, protocols }:
+{ base, lib, stdenv, darwin, protocols }:
 base.languages.rust.mkLibrary {
   name = "firm-types";
   src = ./.;
   propagatedBuildInputs = [ protocols ];
   buildInputs =
-    pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.darwin.apple_sdk.frameworks.Security;
+    lib.optional stdenv.isDarwin darwin.apple_sdk.frameworks.Security;
 }

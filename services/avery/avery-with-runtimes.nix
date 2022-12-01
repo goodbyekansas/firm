@@ -12,7 +12,7 @@ let
       flattenAttrs additionalRuntimes;
   mkBundle = iswindows:
     let
-      avery' = if iswindows then avery.windows else avery.package;
+      avery' = if iswindows then avery.windows else avery._default;
       runtimeRoot = if iswindows then "avery" else "share/avery";
       configRoot = if iswindows then "" else "etc/avery";
       name = if iswindows then "avery-bundle-windows" else "avery-bundle";
