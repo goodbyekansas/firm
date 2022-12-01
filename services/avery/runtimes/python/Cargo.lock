@@ -147,7 +147,6 @@ source = "registry+https://fake-nix-registry/not-really-an-index"
 dependencies = [
  "firm-types",
  "lazy_static",
- "prost",
  "thiserror",
 ]
 
@@ -167,7 +166,6 @@ version = "1.0.0"
 source = "registry+https://fake-nix-registry/not-really-an-index"
 dependencies = [
  "firm-protocols",
- "prost",
  "thiserror",
 ]
 
@@ -394,9 +392,9 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.9.0"
+version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "444879275cb4fd84958b1a1d5420d15e6fcf7c235fe47f053c9c2a80aceb6001"
+checksum = "71adf41db68aa0daaefc69bb30bcd68ded9b9abaad5d1fbb6304c4fb390e083e"
 dependencies = [
  "bytes",
  "prost-derive",
@@ -404,9 +402,9 @@ dependencies = [
 
 [[package]]
 name = "prost-derive"
-version = "0.9.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9cc1a3263e07e0bf68e96268f37665207b49560d98739662cdfaae215c720fe"
+checksum = "7b670f45da57fb8542ebdbb6105a925fe571b67f9e7ed9f47a06a84e72b4e7cc"
 dependencies = [
  "anyhow",
  "itertools",

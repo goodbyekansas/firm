@@ -26,12 +26,13 @@ let
     '';
   };
 in
-base.languages.rust.mkClient rec {
+(base.languages.rust.nativeTools.override {
+  crossTargets.rust = base.languages.rust.nativeTools.crossTargets.windows;
+}).mkClient rec {
   name = "firm-windows-installer";
   src = ./.;
   inherit version;
   buildInputs = [ windowsInstall ];
-  defaultTarget = "windows";
 
   shellHook = ''
     copyInstaller() {

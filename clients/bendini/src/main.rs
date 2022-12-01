@@ -448,7 +448,7 @@ async fn connect(endpoint: Endpoint) -> Result<(Channel, bool), BendiniError> {
                 let pipe_path = format!(
                     r#"\\{}{}"#,
                     uri.host().unwrap_or("."),
-                    uri.path().replace("/", "\\")
+                    uri.path().replace('/', "\\")
                 );
 
                 async move {

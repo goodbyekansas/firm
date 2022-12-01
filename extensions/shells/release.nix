@@ -1,5 +1,17 @@
-{ base, mkShell, linkFarm, python38, lib, components, gh }:
+{ base, mkShell, linkFarm, python3, lib, components, gh, fetchFromGitHub }:
 let
+  keepachangelog = python3.pkgs.buildPythonPackage rec{
+    pname = "keepachangelog";
+    version = "2.0.0.dev1";
+
+    src = fetchFromGitHub {
+      owner = "Colin-b";
+      repo = pname;
+      rev = "82523116d91c7009a28fa3c082d790891e441ebd";
+      sha256 = "0fx9i17l6c6i58vcglvafpkqbwn9xw81c623sy0qvga78x90y5c6";
+    };
+    doCheck = false;
+  };
   allChangelogs =
     let
       allComponentChangelogs = base.collectComponentsRecursive (base.mapComponentsRecursive
@@ -47,7 +59,7 @@ let
       uniqueChangelogs;
 in
 mkShell {
-  nativeBuildInputs = [ python38 python38.pkgs.keepachangelog gh ];
+  nativeBuildInputs = [ python3 keepachangelog gh ];
   inherit allChangelogs;
   CHANGELOG_SCRIPT = ./release/changelog.py;
   shellHook = ''

@@ -1,6 +1,6 @@
-{ base, pkgs, bendini, avery }:
+{ base, pkgs, bendini, avery, coreutils, wabt, wasmtime, lib }:
 let
-  mkRuntime = attrs@{ name, runtimeName ? name, src, examples ? { }, fileSystemImage ? null, ... }:
+  mkRuntime = rust: attrs@{ name, runtimeName ? name, src, examples ? { }, fileSystemImage ? null, ... }:
     let
       env = (builtins.mapAttrs
         (_: v: {
@@ -14,7 +14,7 @@ let
         text = builtins.foldl'
           (acc: curr: ''
             ${acc}
-            declare -x ${curr}="${pkgs.lib.strings.escape [ "$" "\"" ] (builtins.toString (builtins.getAttr curr env).function)}"
+            declare -x ${curr}="${lib.strings.escape [ "$" "\"" ] (builtins.toString (builtins.getAttr curr env).function)}"
             declare -x ${curr}_name="${(builtins.getAttr curr env).name}"
           '')
           ""
@@ -38,15 +38,29 @@ let
       curatedAttrs = builtins.removeAttrs attrs [ "name" "src" "examples" "fileSystemImage" "runtimeName" ];
       extension = if fileSystemImage == null then ".wasm" else ".tar.gz";
     in
-    (base.languages.rust.mkComponent (curatedAttrs // {
+    assert lib.assertMsg (rust.crossTargets ? wasi) "Wasi is required for mkRuntime to work";
+    ((rust.override
+      {
+        crossTargets = {
+          inherit (rust.crossTargets) wasi;
+          rust = rust.crossTargets.wasi;
+        };
+      }).mkComponent (curatedAttrs // {
       inherit name src;
       nedrylandType = "avery-runtime";
-      defaultTarget = "wasi";
 
-      nativeBuildInputs = [ pkgs.wasmtime ] ++ pkgs.lib.optional pkgs.stdenv.isDarwin pkgs.llvmPackages_12.llvm ++ curatedAttrs.nativeBuildInputs or [ ];
-      shellInputs = [ pkgs.wabt pkgs.coreutils bendini avery runner ] ++ curatedAttrs.shellInputs or [ ];
+      nativeBuildInputs = rust.combineInputs
+        (wasiPkgs: [ wasmtime ] ++ lib.optional wasiPkgs.stdenv.buildPlatform.isDarwin wasiPkgs.buildPackages.llvm)
+        curatedAttrs.nativeBuildInputs or [ ];
+
+      shellInputs = rust.combineInputs
+        [ wabt coreutils bendini avery runner ]
+        curatedAttrs.shellInputs or [ ];
+
       extraCargoConfig = attrs.extraCargoConfig or "";
-      checkInputs = pkgs.lib.optional curatedAttrs.exposeRunnerInChecks or false runner ++
+
+      checkInputs = rust.combineInputs
+        (lib.optional curatedAttrs.exposeRunnerInChecks or false runner)
         curatedAttrs.checkInputs or [ ];
 
       shellHook = ''
@@ -54,7 +68,6 @@ let
         ${attrs.shellHook or ""}
       '';
 
-      useNightly = curatedAttrs.useNightly or "2022-04-08";
       installPhase = ''
         mkdir -p $out/share/avery/runtimes
         cp target/wasm32-wasi/release/*.wasm $out/share/avery/runtimes/${runtimeName}.wasm
@@ -88,9 +101,11 @@ let
       inherit runtimeName examples;
     });
 in
-base.extend.mkExtension {
-  componentTypes = base.extend.mkComponentType {
-    name = "runtime";
-    createFunction = mkRuntime;
-  };
+with base.languages.rust; {
+  languages.rust.withWasi = withWasi.addAttributes (_: {
+    mkRuntime = mkRuntime withWasi;
+  });
+  languages.rust.nightly.withWasi = nightly.withWasi.addAttributes (_: {
+    mkRuntime = mkRuntime nightly.withWasi;
+  });
 }

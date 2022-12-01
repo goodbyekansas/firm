@@ -6,113 +6,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  format-nix:
+  lint:
+    name: Lint
+    uses: goodbyekansas/nedryland/.github/workflows/checks.yml@8.0.0
+    with:
+      nix-version: 2.11.1
+
+  check:
+    name: Check Flake
     runs-on: ubuntu-latest
-
     steps:
-    - name: Clone repo
-      uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
 
-    - name: Install Nix
-      uses: cachix/install-nix-action@v18
-      with:
-        install_url: https://releases.nixos.org/nix/nix-2.4/install
+      - name: Setup Nix
+        uses: goodbyekansas/nedryland/.github/actions/setup-nix@8.0.0
+        with:
+          version: 2.11.1
 
-    - name: Setup ssh agent and ssh options
-      env:
-        CI_ACCESS_KEY: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
-      run: .github/workflows/setup-ssh.sh .github/workflows/ssh-config
+      - name: Check
+        run: nix flake check
 
-    - name: Format the Firm 💋
-      run: nix-build -A ci && result/bin/nixfmt
-
-
-  shell-check:
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Install Nix
-      uses: cachix/install-nix-action@v18
-      with:
-        install_url: https://releases.nixos.org/nix/nix-2.4/install
-
-    - name: Setup ssh agent and ssh options
-      env:
-        CI_ACCESS_KEY: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
-      run: .github/workflows/setup-ssh.sh .github/workflows/ssh-config
-
-    - name: Check the shell scripts 🐢 🐌 💶
-      run:  nix-build -A ci && result/bin/shellcheck
-
-
-  nix-lint:
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Install Nix
-      uses: cachix/install-nix-action@v18
-      with:
-        install_url: https://releases.nixos.org/nix/nix-2.4/install
-
-    - name: Setup ssh agent and ssh options
-      env:
-        CI_ACCESS_KEY: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
-      run: .github/workflows/setup-ssh.sh .github/workflows/ssh-config
-
-    - name: Lint .nix files 🦕 📝 👀
-      run:  nix-build -A ci && result/bin/nix-lint
-
-  build-package-with-checks:
-    name: "Build all components with checks"
-    runs-on: ubuntu-latest
-
-    steps:
-
-    - name: Clone the repo
-      uses: actions/checkout@v3
-
-    - name: Setup ssh agent and ssh options
-      env:
-        CI_ACCESS_KEY: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
-      run: .github/workflows/setup-ssh.sh .github/workflows/ssh-config
-
-    - name: Set up nix builders ssh connection
-      run: .github/workflows/setup-builders-ssh.sh
-
-    - name: Install Nix
-      uses: cachix/install-nix-action@v18
-      with:
-        install_url: https://releases.nixos.org/nix/nix-2.4/install
-        nix_path: nixpkgs=channel:nixpkgs-unstable
-
-    - name: Create Nix configuration
-      run: |
-        mkdir -p ~/.config/nix
-        cp .github/workflows/nix.conf ~/.config/nix/nix.conf
-
-    - name: Setup cachix
-      uses: cachix/cachix-action@v12
-      with:
-        name: firm
-        signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
-
-    - name: Generate list of derivations to build
-      run: nix-instantiate check.nix -A all --add-root ./derivations/drv --indirect
-
-    - name: Create Github checks for each derivation
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: .github/workflows/github-package-status.bash pre ${{ github.repository }} ${{ github.sha }} ${{ github.job }} ./derivations
-
-    - name: Build all derivations
-      run: nix build --keep-going -L ./derivations/* --show-trace --max-jobs 0
-
-    - name: Finish Github checks for each derivation
-      if: ${{ always() }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: .github/workflows/github-package-status.bash post ${{ github.repository }} ./derivations
+  build:
+    name: Build
+    uses: goodbyekansas/nedryland/.github/workflows/build-components.yml@8.0.0
+    secrets:
+      nix-access-key: ${{ secrets.NEDRYLAND_ACCESS_KEY }}
+      cachix-signing-key: ${{ secrets.CACHIX_SIGNING_KEY }}
+    with:
+      nix-version: 2.11.1
+      build-platform: x86_64-linux
+      nix-config-path: ./.github/workflows/nix.conf
+      nix-builders: root@nix-builders.goodbyekansas.com
+      cachix-name: firm

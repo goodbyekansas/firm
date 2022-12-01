@@ -1,0 +1,83 @@
+#! /usr/bin/env nix-shell
+#! nix-shell -i bash -p curl jq
+set -eu
+set -o pipefail
+
+github() {
+  output=$(curl -s --fail-with-body -H 'accept: application/vnd.github+json' -X GET "$1")
+  status=$?
+  if [ $status -eq 0 ] ; then
+    echo "$output"
+  else
+    echo "Github request failed with code: $status: $output" >&2
+    exit $status
+  fi
+}
+
+displayHelp() {
+    echo "Fetch the latest commit from a public github repository to use as a firm dependency i dependencies.nix"
+    echo ""
+    echo "Usage: get-latest REPOSPEC, where repospec is on the format <owner (default=goodbyekansas)>/<repo>"
+    echo ""
+    echo "  -r/--ref <ref-name>    The ref to fetch from."
+    echo "  -h/--help              Show this help text."
+}
+
+positionalArgs=()
+ref="main"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -r|--ref)
+      ref="$2"
+      shift
+      shift
+      ;;
+    -h|--help)
+      displayHelp
+      exit 0
+      ;;
+    -*|--*)
+      echo "Unknown option $1"
+      displayHelp
+      exit1
+      ;;
+    *)
+      positionalArgs+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ ${#positionalArgs[*]} -lt 1 ]; then
+  echo "Invalid arguments: need to specify which repo to fetch from."
+  echo ""
+  displayHelp
+  exit 1
+fi
+
+repoSpec="${positionalArgs[0]}"
+
+
+IFS='/' read -r owner repo <<< "$repoSpec"
+if [ -z "${repo:-}" ]; then
+  repo=$owner
+  owner="goodbyekansas"
+fi
+
+echo "Fetching latest commit from github ($owner/$repo, ref: $ref)..."
+headSha=$(github "https://api.github.com/repos/$owner/$repo/commits/$ref" | jq -r '.sha')
+echo "Latest commit is: $headSha"
+
+url="https://github.com/$owner/$repo/archive/$headSha.tar.gz"
+
+echo "Prefetching to calculate hash..."
+sha256=$(nix hash to-sri "sha256:$(nix-prefetch-url --unpack "$url")")
+
+echo "Use this in your dependencies.nix:"
+echo "
+builtins.fetchTarball {
+  url = \"$url\";
+  sha256 = \"$sha256\";
+}
+"

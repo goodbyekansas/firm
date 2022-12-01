@@ -188,6 +188,7 @@ lazy_static! {
 type MockCallbacks<T> = HashMap<ThreadId, Box<T>>;
 
 #[derive(Default)]
+#[allow(clippy::type_complexity)]
 pub struct MockResultRegistry {
     get_attachment_path_len_closure: MockCallbacks<dyn Fn(&str) -> Result<usize, u32> + Send>,
     map_attachment_closure: MockCallbacks<dyn Fn(&str, bool) -> Result<String, u32> + Send>,

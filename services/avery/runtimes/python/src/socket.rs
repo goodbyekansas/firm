@@ -1,10 +1,11 @@
+#![allow(clippy::borrow_deref_ref)] // pyfunction procmacro causes this lint to trigger.
 use std::io::{Read, Write};
 
 use pyo3::{
     create_exception,
     exceptions::PyException,
     ffi,
-    proc_macro::{pyclass, pyfunction, pymodule},
+    prelude::{pyclass, pyfunction, pymodule},
     types::PyModule,
     wrap_pyfunction, PyAny, PyResult, Python,
 };

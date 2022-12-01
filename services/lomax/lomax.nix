@@ -5,9 +5,10 @@
 , xcbuild ? null
 , pkg-config
 , lib
+, system
 , systemd
 }:
-base.languages.rust.mkService rec {
+base.languages.rust.nativeTools.mkService {
   name = "lomax";
   src = ./.;
 
@@ -16,17 +17,15 @@ base.languages.rust.mkService rec {
   nativeBuildInputs = [ pkg-config ]
     ++ lib.optional stdenv.hostPlatform.isDarwin xcbuild;
 
-  shellInputs = [ systemd ];
+  shellInputs = lib.optional (builtins.elem system lib.systems.doubles.linux) systemd;
 
-  shellHook = ''
-    testSocketActivation() {
-      systemd-socket-activate -l 1939 target/debug/lomax
-    }
-  '';
-
-  crossTargets = {
-    windows = {
-      inherit buildInputs;
+  shellCommands = lib.optionalAttrs (builtins.elem system lib.systems.doubles.linux) {
+    testSocketActivation = {
+      script = ''
+        systemd-socket-activate -l ''${1:-0} target/debug/lomax
+      '';
+      args = "[PORT]";
+      description = "Run lomax with systemd socket activation";
     };
   };
 }

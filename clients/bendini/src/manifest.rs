@@ -182,7 +182,7 @@ impl FunctionManifest {
             .parent()
             .ok_or_else(|| ManifestError::InvalidManifestPath(self.path.clone()))?;
         #[cfg(windows)]
-        let fullpath = fullpath.join(attachment.path.replace("/", r#"\"#));
+        let fullpath = fullpath.join(attachment.path.replace('/', r#"\"#));
         #[cfg(unix)]
         let fullpath = fullpath.join(attachment.path.replace('\\', "/"));
         fullpath

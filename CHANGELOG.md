@@ -6,7 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed versions
+- Update Nedryland to 8.0.0
+
+### Added
+- Flake support. Firm is now a flake and its nixpkgs can follow the user's.
+
 ## [5.0.0] - 2022-11-24
+
 ### Changed versions
 - Update Nedryland to 7.0.0
 
