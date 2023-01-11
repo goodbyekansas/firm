@@ -1,6 +1,5 @@
 # Firm
-
-![Checks](https://github.com/goodbyekansas/firm/workflows/Checks/badge.svg?branch=master)
+[![Checks](https://github.com/goodbyekansas/firm/actions/workflows/ci.yaml/badge.svg)](https://github.com/goodbyekansas/firm/actions/workflows/ci.yaml)
 
 The Firm is a collection of [Nedryland](https://github.com/goodbyekansas/nedryland) components that
 adds the notion of a "function".
