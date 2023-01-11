@@ -10,7 +10,7 @@ let
 in
 nedryland'.mkProject rec {
   name = "firm";
-  version = "5.0.0";
+  version = "6.0.0";
   baseExtensions = [
     nedryglot'.languages
     (import ./extensions/nedryland/rust.nix oxalica)

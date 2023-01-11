@@ -6,14 +6,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.0] - 2023-01-11
+
 ### Changed versions
 - Update Nedryland to 8.0.0
 
 ### Added
 - Flake support. Firm is now a flake and its nixpkgs can follow the user's.
 
-## [5.0.0] - 2022-11-24
+### Packages
+- avery: 2.1.0
+- bendini: 2.0.0
+- firmRust: 1.0.0
+- firmWindowsInstaller: 0.1.2
+- lomax: 2.1.0
+- protocols: 2.0.0
+- quinn: 2.0.0
+- tonicMiddleware: 1.0.0
+- windowsInstall: 0.1.0
 
+## [5.0.0] - 2022-11-24
 ### Changed versions
 - Update Nedryland to 7.0.0
 
@@ -32,9 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - avery: Channels module which contains definitions for working with `Channels`
-  and `ChannelSets`. A `ChannelSet` is a collection of named `Channels` and a
-  `Channel` represents a single stream of typed data that can be used as
-  an input or output for a function.
+- and `ChannelSets`. A `ChannelSet` is a collection of named `Channels` and a
+- `Channel` represents a single stream of typed data that can be used as
+- an input or output for a function.
 
 ## [4.1.0] - 2022-04-29
 ### Changed versions
@@ -72,7 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - lomax: Support for expansion of `{hostname}` to the real hostname in the
-  `certificate_alt_names` config setting.
+- `certificate_alt_names` config setting.
 
 ## [3.0.0] - 2022-01-21
 ### Packages
@@ -90,9 +102,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - firmWindowsInstaller: Installer removing files it did not own during uninstall.
-  The installer now only work on files it extracted itself. If you manually add
-  extra files in for example the install directory it will ignore those during
-  uninstall.
+- The installer now only work on files it extracted itself. If you manually add
+- extra files in for example the install directory it will ignore those during
+- uninstall.
 - firmWindowsInstaller: Issue where installer could not mark files for deletion.
 
 ### Added
@@ -113,10 +125,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - windowsInstaller: Installer removing files it did not own during uninstall.
-  The installer now only work on files it extracted itself. If you
-  manually add extra files in for example the install directory
-  it will ignore those during uninstall.
-  windowsInstaller: Issue where installer could not mark files for deletion.
+- The installer now only work on files it extracted itself. If you
+- manually add extra files in for example the install directory
+- it will ignore those during uninstall.
+- windowsInstaller: Issue where installer could not mark files for deletion.
 
 ## [2.0.2] - 2021-12-17
 ### Packages
