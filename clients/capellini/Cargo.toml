@@ -1,0 +1,10 @@
+[package]
+name = "capellini"
+version = "0.1.0"
+authors = ["GBK Pipeline Team <pipeline@goodbyekansas.com>"]
+edition = "2021"
+
+[dependencies]
+fuser = "0.12"
+libc = "0.2"
+thiserror = "1"

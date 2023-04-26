@@ -79,19 +79,20 @@
       "inputs": {
         "flake-utils": "flake-utils_2",
         "nedryland": "nedryland",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs",
+        "nixpkgs_22_11": "nixpkgs_22_11"
       },
       "locked": {
-        "lastModified": 1673429117,
-        "narHash": "sha256-k+2dEigmuS+QWzCA4+rGOsaugzk7Gt8WomGQ6tDaI0A=",
+        "lastModified": 1682077934,
+        "narHash": "sha256-JD+if3AwxWQuYMwvfwEd8HlLSuBXKv4+ilswNEkKst0=",
         "owner": "goodbyekansas",
         "repo": "nedryglot",
-        "rev": "c9fe90d22293b20c36dcdc52e976f02b7a8df2e7",
+        "rev": "378324ebb323f507e52e91d7e653b7ac5083d6af",
         "type": "github"
       },
       "original": {
         "owner": "goodbyekansas",
-        "ref": "1.0.0",
+        "ref": "1.1.0",
         "repo": "nedryglot",
         "type": "github"
       }
@@ -99,19 +100,22 @@
     "nedryland": {
       "inputs": {
         "flake-utils": "flake-utils_3",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": [
+          "nedryglot",
+          "nixpkgs"
+        ]
       },
       "locked": {
-        "lastModified": 1673272639,
-        "narHash": "sha256-XtKB0LzKvmivvCiJSK4NeT2HQ7hc0EWfY2o79yQoQU4=",
+        "lastModified": 1675871162,
+        "narHash": "sha256-2Onmc2zq/FJIG7mB4Vm5G8+6mMEJCArEt+YWHPUXB4c=",
         "owner": "goodbyekansas",
         "repo": "nedryland",
-        "rev": "283cb95c45cf12282d714a1118f8be4ff4eb803e",
+        "rev": "de46d2e7db2eb46cfaeaa9056e7553d665a7d447",
         "type": "github"
       },
       "original": {
         "owner": "goodbyekansas",
-        "ref": "move-to-nedryglot",
+        "ref": "8.3.0",
         "repo": "nedryland",
         "type": "github"
       }
@@ -119,40 +123,24 @@
     "nedryland_2": {
       "inputs": {
         "flake-utils": "flake-utils_4",
-        "nixpkgs": "nixpkgs_3"
+        "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1673428251,
-        "narHash": "sha256-vvjXGza8d8AT0iL0EmfwYqYK1nROS8hRM8xxkdJ5J4U=",
+        "lastModified": 1682067820,
+        "narHash": "sha256-toO4DUkqd/tHWBtDhv8ymhProZ/GeIYMEjl//8f6Dqw=",
         "owner": "goodbyekansas",
         "repo": "nedryland",
-        "rev": "58ef7a5f4edf7ede697bb2624613cffadb22bc53",
+        "rev": "c0179c29e7f3c840beca289b3d90b6f569272fb6",
         "type": "github"
       },
       "original": {
         "owner": "goodbyekansas",
-        "ref": "8.0.0",
+        "ref": "8.3.1",
         "repo": "nedryland",
         "type": "github"
       }
     },
     "nixpkgs": {
-      "locked": {
-        "lastModified": 1670700605,
-        "narHash": "sha256-5dlpATkcyITpdtMflhltuD+A3RNpsVI1Mb+dtKkll6Y=",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "7b9eeb856cbf976482fa8d1cb295ea03fb3e1277",
-        "type": "github"
-      },
-      "original": {
-        "owner": "NixOS",
-        "ref": "nixos-22.05",
-        "repo": "nixpkgs",
-        "type": "github"
-      }
-    },
-    "nixpkgs_2": {
       "locked": {
         "lastModified": 1672580127,
         "narHash": "sha256-3lW3xZslREhJogoOkjeZtlBtvFMyxHku7I/9IVehhT8=",
@@ -167,7 +155,7 @@
         "type": "indirect"
       }
     },
-    "nixpkgs_3": {
+    "nixpkgs_2": {
       "locked": {
         "lastModified": 1670700605,
         "narHash": "sha256-5dlpATkcyITpdtMflhltuD+A3RNpsVI1Mb+dtKkll6Y=",
@@ -183,7 +171,22 @@
         "type": "github"
       }
     },
-    "nixpkgs_4": {
+    "nixpkgs_22_11": {
+      "locked": {
+        "lastModified": 1682303062,
+        "narHash": "sha256-x+KAADp27lbxeoPXLUMxKcRsUUHDlg+qVjt5PjgBw9A=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "f5364316e314436f6b9c8fd50592b18920ab18f9",
+        "type": "github"
+      },
+      "original": {
+        "id": "nixpkgs",
+        "ref": "nixos-22.11",
+        "type": "indirect"
+      }
+    },
+    "nixpkgs_3": {
       "locked": {
         "lastModified": 1665296151,
         "narHash": "sha256-uOB0oxqxN9K7XGF1hcnY+PQnlQJ+3bP2vCn/+Ru/bbc=",
@@ -202,7 +205,7 @@
     "oxalica": {
       "inputs": {
         "flake-utils": "flake-utils_5",
-        "nixpkgs": "nixpkgs_4"
+        "nixpkgs": "nixpkgs_3"
       },
       "locked": {
         "lastModified": 1673404037,

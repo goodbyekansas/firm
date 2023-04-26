@@ -2,8 +2,8 @@
   description = "Firm is a distributed function execution framework.";
 
   inputs = {
-    nedryland.url = github:goodbyekansas/nedryland/8.0.0;
-    nedryglot.url = github:goodbyekansas/nedryglot/1.0.0;
+    nedryland.url = github:goodbyekansas/nedryland/8.3.1;
+    nedryglot.url = github:goodbyekansas/nedryglot/1.1.0;
     oxalica.url = github:oxalica/rust-overlay;
     pkgs.url = github:NixOS/nixpkgs/nixos-22.05;
     flake-utils.url = github:numtide/flake-utils;
@@ -41,6 +41,10 @@
         bendini = {
           type = "app";
           program = "${project.matrix.bendini.rust}/bin/bendini";
+        };
+        capellini = {
+          type = "app";
+          program = "${project.matrix.capellini.rust}/bin/capellini";
         };
         lomax = {
           type = "app";
