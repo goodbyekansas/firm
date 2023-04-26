@@ -21,7 +21,7 @@ nedryland'.mkProject rec {
 
   checks = nedryland'.checks;
 
-  components = { callFile }: rec {
+  components = { callFile, mkComponentSet }: rec {
     protocols = callFile ./protocols/protocols.nix { };
 
     firmTypes = {
@@ -81,6 +81,11 @@ nedryland'.mkProject rec {
     windowsInstall = callFile ./libraries/rust/windows-install/windows-install.nix { };
 
     firmWindowsInstaller = callFile ./clients/firm-windows-installer/firm-windows-installer.nix { inherit version; };
+
+    libraries = mkComponentSet "firm-libraries" {
+      runtime = callFile ./libraries/runtime/runtime.nix { };
+      registry = callFile ./libraries/registry/registry.nix { };
+    };
   };
 
   extraShells = { callFile }: {
