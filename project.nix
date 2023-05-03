@@ -84,6 +84,7 @@ nedryland'.mkProject rec {
 
     libraries = mkComponentSet "firm-libraries" {
       runtime = callFile ./libraries/runtime/runtime.nix { };
+      function = callFile ./libraries/function/function.nix { };
       registry = callFile ./libraries/registry/registry.nix { };
     };
   };

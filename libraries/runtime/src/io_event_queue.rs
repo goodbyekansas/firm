@@ -47,6 +47,7 @@ pub trait IoReaderFactory {
 
 pub trait IoReader: Read {
     fn readable(&self) -> bool;
+    fn eof(&self) -> bool;
 }
 
 pub trait IoWriterFactory {
