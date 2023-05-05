@@ -1,84 +1,64 @@
+#![cfg(unix)]
+
 use std::{
     collections::HashMap,
+    ffi::OsString,
     fmt::Display,
+    fs::OpenOptions,
     io::{Read, Write},
     os::unix::prelude::RawFd,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
 };
 
-use firm_protocols::functions::{Attachment, Function};
+use firm_protocols::functions::Function;
+use function::{
+    attachments::{AttachmentExt, AttachmentReader},
+    io::{PollRead, PollWrite},
+    stream::{ChannelReader, ChannelWriter, Stream},
+};
 use serde::Serialize;
 
+mod error;
 mod io_event_queue;
 
-use io_event_queue::{IoEventQueue, IoId, IoReader, IoReaderFactory, IoWriter, IoWriterFactory};
+use error::RuntimeError;
+use io_event_queue::{IoEventQueue, IoId, IoReader, IoWriter};
+use thiserror::Error;
 
 #[derive(Clone)]
-pub struct Store {
+pub struct FsStore {
     root_path: PathBuf,
+    runtime_search_path: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct ExecutionId(uuid::Uuid);
 
+impl Display for ExecutionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl ExecutionId {
+    fn new() -> Self {
+        Self(uuid::Uuid::new_v4())
+    }
+}
+
 impl FromStr for ExecutionId {
-    type Err = String;
+    type Err = RuntimeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self(uuid::Uuid::parse_str(s).map_err(|e| e.to_string())?))
-    }
-}
-
-#[derive(Debug)]
-pub struct StoreError {}
-
-// ---------------------- TODO: MOVE THESE to libfunctionio ----------
-#[derive(Clone)]
-struct FunctionChannel {}
-
-impl FunctionChannel {
-    pub fn readable(&self) -> bool {
-        todo!()
-    }
-
-    pub fn writeable(&self) -> bool {
-        todo!()
-    }
-}
-
-impl Read for FunctionChannel {
-    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
-        todo!()
-    }
-}
-
-impl Write for FunctionChannel {
-    fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
-        todo!()
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        todo!()
-    }
-}
-
-// TODO: move
-pub struct FunctionStream {}
-
-impl FunctionStream {
-    fn get_channel(&self, _channel: &str) -> FunctionChannel {
-        todo!()
-    }
-}
-
-// ----------------------------------------------------------------------
-
-struct AttachmentReader {}
-
-impl Read for AttachmentReader {
-    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
-        todo!()
+        Ok(Self(uuid::Uuid::parse_str(s).map_err(|e| {
+            RuntimeError::FailedToParseFromStringError {
+                what: "execution id",
+                content: String::from(s),
+                error: e.to_string(),
+            }
+        })?))
     }
 }
 
@@ -98,19 +78,23 @@ impl From<&Function> for FunctionId {
 }
 
 impl FromStr for FunctionId {
-    type Err = String;
+    type Err = RuntimeError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split('-');
         Ok(Self {
-            name: parts
-                .next()
-                .map(|s| s.to_owned())
-                .ok_or_else(|| String::from("NONAME"))?,
-            version: parts
-                .next()
-                .map(|s| s.to_owned())
-                .ok_or_else(|| String::from("NOVERSION"))?,
+            name: parts.next().map(|s| s.to_owned()).ok_or_else(|| {
+                RuntimeError::FailedToParseFromString {
+                    what: "name for function id",
+                    content: String::from(s),
+                }
+            })?,
+            version: parts.next().map(|s| s.to_owned()).ok_or_else(|| {
+                RuntimeError::FailedToParseFromString {
+                    what: "version for function id",
+                    content: String::from(s),
+                }
+            })?,
         })
     }
 }
@@ -121,57 +105,25 @@ impl Display for FunctionId {
     }
 }
 
-struct FunctionStreamReaderFactory {
-    channel: FunctionChannel,
-}
-
-impl IoReaderFactory for FunctionStreamReaderFactory {
-    fn create(&self) -> Box<dyn IoReader> {
-        Box::new(self.channel.clone())
+impl<T> IoReader for T
+where
+    T: PollRead,
+{
+    fn poll_read(&mut self, buf: &mut [u8]) -> Result<std::task::Poll<usize>, std::io::Error> {
+        PollRead::poll_read(self, buf)
     }
 }
 
-impl IoReader for FunctionChannel {
-    fn readable(&self) -> bool {
-        self.readable()
+impl<T> IoWriter for T
+where
+    T: PollWrite + ChannelWriter,
+{
+    fn poll_write(self: &mut T, buf: &[u8]) -> Result<std::task::Poll<()>, std::io::Error> {
+        PollWrite::poll_write(self, buf)
     }
-}
 
-impl IoWriter for FunctionChannel {
-    fn writeable(&self) -> bool {
-        self.writeable()
-    }
-}
-
-struct FunctionStreamWriterFactory {
-    channel: FunctionChannel,
-}
-
-impl IoWriterFactory for FunctionStreamWriterFactory {
-    fn create(&self) -> Box<dyn IoWriter> {
-        Box::new(self.channel.clone())
-    }
-}
-
-struct AttachmentReaderFactory {
-    function_id: FunctionId,
-    attachment_name: String,
-    store: Store,
-}
-
-impl IoReaderFactory for AttachmentReaderFactory {
-    fn create(&self) -> Box<dyn io_event_queue::IoReader> {
-        Box::new(
-            self.store
-                .attachment_reader(&self.function_id, &self.attachment_name)
-                .unwrap(),
-        )
-    }
-}
-
-impl IoReader for AttachmentReader {
-    fn readable(&self) -> bool {
-        true
+    fn close(self: &mut T) -> Result<(), String> {
+        ChannelWriter::close(self).map_err(|e| e.to_string())
     }
 }
 
@@ -187,89 +139,303 @@ struct FunctionContext {
     event_queue_size: u32,
 }
 
-impl Store {
-    pub fn function_executions(
-        &self,
-        function_id: &FunctionId,
-    ) -> Result<Vec<ExecutionId>, StoreError> {
-        self.root_path
-            .join(function_id.to_string())
-            .read_dir()
-            .unwrap()
-            .into_iter()
-            .filter_map(|de| {
-                de.ok()
-                    .map(|entry| ExecutionId::from_str(&entry.file_name().to_string_lossy()))
-            })
-            .collect::<Result<Vec<_>, String>>()
-            .map_err(|_| StoreError {})
+#[derive(Error, Debug)]
+pub enum CacheError {
+    #[error("Cache IO error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Unknown cache error: {0}")]
+    Unknown(String),
+}
+
+pub trait Cache {
+    type Entry: CacheEntry;
+
+    fn entry(&self, key: &str) -> Self::Entry;
+}
+
+pub trait CacheEntry {
+    type Reader: IoReader;
+    type Writer: Write;
+    fn read(&self) -> Result<Option<Self::Reader>, CacheError>;
+    fn write(&self) -> Result<Self::Writer, CacheError>;
+}
+
+struct FsCache {
+    root: PathBuf,
+}
+
+impl Cache for FsCache {
+    type Entry = FsCacheEntry;
+
+    fn entry(&self, key: &str) -> Self::Entry {
+        Self::Entry {
+            path: self.root.join(key),
+        }
+    }
+}
+
+struct FsCacheEntry {
+    path: PathBuf,
+}
+
+struct StdFile {
+    file: std::fs::File,
+}
+
+impl IoReader for StdFile {
+    fn poll_read(&mut self, buf: &mut [u8]) -> Result<std::task::Poll<usize>, std::io::Error> {
+        self.file.read(buf).map(std::task::Poll::Ready)
+    }
+}
+
+impl Write for StdFile {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.file.write(buf)
     }
 
-    pub fn execute_function(
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
+impl CacheEntry for FsCacheEntry {
+    type Reader = StdFile;
+    type Writer = StdFile;
+
+    fn read(&self) -> Result<Option<Self::Reader>, CacheError> {
+        self.path
+            .exists()
+            .then(|| {
+                OpenOptions::new()
+                    .read(true)
+                    .open(&self.path)
+                    .map(|f| StdFile { file: f })
+            })
+            .transpose()
+            .map_err(Into::into)
+    }
+
+    fn write(&self) -> Result<Self::Writer, CacheError> {
+        OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&self.path)
+            .map(|f| StdFile { file: f })
+            .map_err(Into::into)
+    }
+}
+
+#[allow(dead_code)]
+enum CacheState<R: IoReader, W: Write, S: IoReader> {
+    Cached(R),
+    NotCached { source: S, sink: W },
+}
+
+struct CachingReader<W: Write, R: IoReader, C: CacheEntry, S: IoReader> {
+    cache_entry: C,
+    state: CacheState<R, W, S>,
+}
+
+impl<C, S> CachingReader<C::Writer, C::Reader, C, S>
+where
+    S: IoReader,
+    C: CacheEntry,
+{
+    pub fn new(inner: S, cache_entry: C) -> Result<Self, (CacheError, S)> {
+        let sink = match cache_entry.write() {
+            Ok(s) => s,
+            Err(e) => return Err((e, inner)),
+        };
+
+        Ok(Self {
+            state: match cache_entry.read() {
+                Ok(Some(reader)) => CacheState::Cached(reader),
+                Ok(None) => CacheState::NotCached {
+                    sink,
+                    source: inner,
+                },
+                Err(e) => {
+                    return Err((e, inner));
+                }
+            },
+
+            cache_entry,
+        })
+    }
+}
+
+impl<C, S> IoReader for CachingReader<C::Writer, C::Reader, C, S>
+where
+    S: IoReader,
+    C: CacheEntry,
+{
+    fn poll_read(&mut self, buf: &mut [u8]) -> Result<std::task::Poll<usize>, std::io::Error> {
+        match self.state {
+            CacheState::Cached(ref mut r) => r.poll_read(buf),
+            CacheState::NotCached {
+                ref mut source,
+                ref mut sink,
+            } => {
+                use std::{
+                    io::{Error, ErrorKind},
+                    task::Poll,
+                };
+
+                let mut b = [0u8; 1024];
+                match source.poll_read(&mut b) {
+                    Ok(Poll::Ready(0)) => {
+                        // we have read everything from the underlying source,
+                        // start returning data from the cache entry
+                        self.state = CacheState::Cached(
+                            self.cache_entry
+                                .read()
+                                .map(|maybe_reader| {
+                                    maybe_reader.ok_or_else(|| Error::from(ErrorKind::Other))
+                                })
+                                .map_err(|e| Error::new(ErrorKind::Other, e))
+                                .and_then(|inner| inner)?,
+                        );
+
+                        // next call to poll read will read from the cache entry
+                        Ok(Poll::Pending)
+                    }
+                    Ok(Poll::Ready(sz)) => sink.write_all(&b[0..sz]).map(|_| Poll::Pending),
+                    Ok(Poll::Pending) => Ok(Poll::Pending),
+                    Err(e) => Err(e),
+                }
+            }
+        }
+    }
+}
+
+pub struct QueuedFunction<C: Cache> {
+    id: ExecutionId,
+    function: Function,
+    runtime: RuntimeSpec,
+    cache: Option<C>,
+}
+
+pub struct RuntimeSpec {
+    path: PathBuf,
+    env: HashMap<String, String>,
+}
+
+impl<C> QueuedFunction<C>
+where
+    C: Cache,
+{
+    fn new(function: Function, runtime: RuntimeSpec, cache: Option<C>) -> Self {
+        Self {
+            id: ExecutionId::new(),
+            function,
+            runtime,
+            cache,
+        }
+    }
+
+    pub fn id(&self) -> &ExecutionId {
+        &self.id
+    }
+
+    pub fn function(&self) -> &Function {
+        &self.function
+    }
+
+    pub fn run(
         &self,
-        function: &Function,
-        inputs: FunctionStream,
-        outputs: FunctionStream,
-    ) -> Result<(), StoreError> {
-        let mut event_queue = IoEventQueue::new(32);
+        input: impl for<'x> Stream<'x>,
+        output: impl for<'x> Stream<'x>,
+    ) -> Result<(), RuntimeError> {
+        fn register_attachment_reader<'cache, 'reader, R, C>(
+            cache: Option<&'cache C>,
+            event_queue: &mut IoEventQueue<'reader>,
+            inner: R,
+            attachment_name: &str,
+            id: IoId,
+        ) where
+            R: IoReader + 'reader,
+            C: Cache,
+            <C as Cache>::Entry: 'reader,
+        {
+            match cache {
+                Some(cache) => match CachingReader::new(inner, cache.entry(attachment_name)) {
+                    Ok(caching_reader) => event_queue.register_reader(id, caching_reader),
+                    Err((_, reader)) => event_queue.register_reader(id, reader),
+                },
+                None => event_queue.register_reader(id, inner),
+            }
+        }
+
+        let mut event_queue: IoEventQueue = IoEventQueue::try_new(32)?;
+
         let ctx = FunctionContext {
-            name: function.name.to_owned(),
-            inputs: function
-                .required_inputs
-                .iter()
-                .map(|(name, _)| {
+            name: self.function.name.to_owned(),
+            inputs: input
+                .readers()
+                .into_iter()
+                .map(|input| {
                     let id = IoId::generate_read();
-                    event_queue.register_reader(
-                        id,
-                        Box::new(FunctionStreamReaderFactory {
-                            channel: inputs.get_channel(name),
-                        }),
-                    );
-                    (name.to_owned(), id.raw())
+                    let channel_id = input.channel_id().to_owned();
+                    event_queue.register_reader(id, input);
+                    (channel_id, id.raw())
                 })
                 .collect(),
-            outputs: function
-                .outputs
-                .iter()
-                .map(|(name, _)| {
+
+            outputs: output
+                .writers()
+                .into_iter()
+                .map(|output| {
                     let id = IoId::generate_write();
-                    event_queue.register_writer(
-                        id,
-                        Box::new(FunctionStreamWriterFactory {
-                            channel: outputs.get_channel(name),
-                        }),
-                    );
-                    (name.to_owned(), id.raw())
+                    let channel_id = output.channel_id().to_owned();
+                    event_queue.register_writer(id, output);
+                    (channel_id, id.raw())
                 })
                 .collect(),
-            attachments: function
+
+            attachments: self
+                .function
                 .attachments
                 .iter()
-                .map(|attachment| {
+                .map(|a| {
                     let id = IoId::generate_read();
-                    event_queue.register_reader(
-                        id,
-                        Box::new(AttachmentReaderFactory {
-                            function_id: FunctionId::from(function),
-                            attachment_name: attachment.name.clone(),
-                            store: self.clone(),
-                        }),
-                    );
-                    (attachment.name.clone(), id.raw())
+                    match a.create_reader().map_err(RuntimeError::from)? {
+                        AttachmentReader::File(reader) => register_attachment_reader(
+                            self.cache.as_ref(),
+                            &mut event_queue,
+                            reader,
+                            &a.name,
+                            id,
+                        ),
+                        AttachmentReader::Http(reader) => {
+                            register_attachment_reader(
+                                self.cache.as_ref(),
+                                &mut event_queue,
+                                reader,
+                                &a.name,
+                                id,
+                            );
+                        }
+                    };
+                    Ok((a.name.clone(), id.raw()))
                 })
-                .collect(),
+                .collect::<Result<_, RuntimeError>>()?,
 
             submission_fd: event_queue.submission_fd(),
             completion_fd: event_queue.completion_fd(),
             event_queue_size: 32,
         };
-        let mut runtime_process = Command::new("/path/to/a/runtime.runtime")
+        let mut runtime_process = Command::new(&self.runtime.path)
+            .envs(&self.runtime.env)
             .stdin(Stdio::piped())
             .spawn()
-            .unwrap();
+            .map_err(|e| RuntimeError::FailedToCreateRuntimeProcess(e.to_string()))?;
 
-        let stdin = runtime_process.stdin.take().unwrap();
-        serde_json::to_writer(&stdin, &ctx).unwrap();
+        let stdin = runtime_process.stdin.take().ok_or_else(|| {
+            RuntimeError::FailedToCreateRuntimeProcess(String::from("Runtime process had no stdin"))
+        })?;
+        serde_json::to_writer(&stdin, &ctx)
+            .map_err(|e| RuntimeError::FailedToCreateRuntimeProcess(e.to_string()))?;
         drop(stdin);
 
         loop {
@@ -278,7 +444,13 @@ impl Store {
                     // process exited normally
                     break;
                 }
-                Ok(None) => while event_queue.update() {},
+                Ok(None) => {
+                    while let Ok(done) = event_queue.update() {
+                        if done {
+                            break;
+                        }
+                    }
+                }
                 Err(_) => {
                     // wtf
                     break;
@@ -288,37 +460,166 @@ impl Store {
 
         Ok(())
     }
+}
 
-    pub fn functions(&self) -> Result<Vec<FunctionId>, StoreError> {
+struct FunctionDirectory {
+    root: PathBuf,
+    executions: PathBuf,
+    cache: PathBuf,
+}
+
+impl FunctionDirectory {
+    pub fn new<P: AsRef<Path>>(root: P, function_id: &FunctionId) -> Self {
+        let root = root.as_ref().join(PathBuf::from(format!(
+            "{}-{}",
+            function_id.name, function_id.version
+        )));
+        Self {
+            executions: root.join("executions"),
+            cache: root.join("cache"),
+            root,
+        }
+    }
+    pub fn create(&self) -> Result<(), RuntimeError> {
+        std::fs::create_dir_all(&self.root)
+            .map_err(|e| RuntimeError::FailedToCreateFunctionDir(self.root.clone(), e))?;
+
+        std::fs::create_dir_all(&self.executions)
+            .map_err(|e| RuntimeError::FailedToCreateExecutionsDir(self.root.clone(), e))?;
+        std::fs::create_dir_all(&self.cache)
+            .map_err(|e| RuntimeError::FailedToCreateCacheDir(self.root.clone(), e))?;
+
+        Ok(())
+    }
+
+    pub fn create_execution(&self, execution_id: &ExecutionId) -> Result<(), RuntimeError> {
+        std::fs::create_dir_all(&self.executions.join(execution_id.to_string())).map_err(|e| {
+            RuntimeError::FailedToCreateExecutionDir(
+                self.executions.clone(),
+                execution_id.to_string(),
+                e,
+            )
+        })
+    }
+}
+
+pub trait Store {
+    fn function_executions(
+        &self,
+        function_id: &FunctionId,
+    ) -> Result<Vec<ExecutionId>, RuntimeError>;
+
+    fn functions(&self) -> Result<Vec<FunctionId>, RuntimeError>;
+
+    fn execute_function<C: Cache>(
+        &self,
+        function: &Function,
+    ) -> Result<QueuedFunction<C>, RuntimeError>;
+}
+
+impl FsStore {
+    pub fn new<P1: AsRef<Path>>(root: P1, runtime_search_path: &[&Path]) -> Self {
+        FsStore {
+            root_path: root.as_ref().to_owned(),
+            runtime_search_path: runtime_search_path
+                .iter()
+                .map(|p| (*p).to_owned())
+                .collect(),
+        }
+    }
+
+    fn resolve_runtime(&self, function: &Function) -> Result<RuntimeSpec, RuntimeError> {
+        let runtime_spec = function.runtime.as_ref().ok_or_else(|| {
+            RuntimeError::RuntimeSpecMissing(FunctionId::from(function).to_string())
+        })?;
+
+        let mut env = HashMap::new();
+        env.insert(String::from("ENTRYPOINT"), runtime_spec.entrypoint.clone());
+        env.extend(
+            runtime_spec
+                .arguments
+                .iter()
+                .map(|(k, v)| (k.to_uppercase(), v.clone())),
+        );
+
+        self.runtime_search_path
+            .iter()
+            .find_map(|path| {
+                path.read_dir().ok().and_then(|mut dir_iter| {
+                    dir_iter.find_map(|de| {
+                        de.ok().and_then(|d| {
+                            (d.file_name() == OsString::from(&runtime_spec.name)).then(|| d.path())
+                        })
+                    })
+                })
+            })
+            .ok_or_else(|| {
+                RuntimeError::FailedToFindRuntime(
+                    runtime_spec.name.clone(),
+                    self.runtime_search_path
+                        .iter()
+                        .map(|p| p.to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join(":"),
+                )
+            })
+            .map(|path| RuntimeSpec { path, env })
+    }
+}
+
+impl Store for FsStore {
+    fn function_executions(
+        &self,
+        function_id: &FunctionId,
+    ) -> Result<Vec<ExecutionId>, RuntimeError> {
+        FunctionDirectory::new(&self.root_path, function_id)
+            .root
+            .read_dir()
+            .map_err(|e| {
+                RuntimeError::FailedToReadStoreDirectory(self.root_path.clone(), e.to_string())
+            })
+            .and_then(|paths| {
+                paths
+                    .into_iter()
+                    .filter_map(|de| {
+                        de.ok().map(|entry| {
+                            ExecutionId::from_str(&entry.file_name().to_string_lossy())
+                        })
+                    })
+                    .collect::<Result<Vec<_>, RuntimeError>>()
+            })
+    }
+
+    fn execute_function<C: Cache>(
+        &self,
+        function: &Function,
+    ) -> Result<QueuedFunction<C>, RuntimeError> {
+        std::fs::create_dir_all(&self.root_path)
+            .map_err(|e| RuntimeError::FailedToCreateStoreDir(self.root_path.clone(), e))
+            .map(|_| FunctionDirectory::new(&self.root_path, &FunctionId::from(function)))
+            .and_then(|function_dir| {
+                function_dir.create()?;
+                let queued =
+                    QueuedFunction::new(function.clone(), self.resolve_runtime(function)?, None);
+                function_dir.create_execution(queued.id())?;
+                Ok(queued)
+            })
+    }
+
+    fn functions(&self) -> Result<Vec<FunctionId>, RuntimeError> {
         self.root_path
             .read_dir()
-            .unwrap()
-            .into_iter()
-            .filter_map(|dir| {
-                dir.ok()
-                    .map(|de| de.file_name().to_string_lossy().parse::<FunctionId>())
+            .map_err(|e| {
+                RuntimeError::FailedToReadStoreDirectory(self.root_path.clone(), e.to_string())
             })
-            .collect::<Result<Vec<_>, String>>()
-            .map_err(|_| StoreError {})
-    }
-
-    pub fn attachment(
-        &self,
-        _function_id: &FunctionId,
-        _attachment_name: &str,
-    ) -> Result<Attachment, StoreError> {
-        todo!()
-    }
-
-    fn attachment_reader(
-        &self,
-        _function: &FunctionId,
-        _attachment_name: &str,
-    ) -> Result<AttachmentReader, StoreError> {
-        todo!()
-    }
-
-    pub fn attachments<'a>(&self, function: &'a Function) -> Result<&'a [Attachment], StoreError> {
-        Ok(&function.attachments)
+            .and_then(|paths| {
+                paths
+                    .into_iter()
+                    .filter_map(|dir| {
+                        dir.ok()
+                            .map(|de| de.file_name().to_string_lossy().parse::<FunctionId>())
+                    })
+                    .collect::<Result<Vec<_>, RuntimeError>>()
+            })
     }
 }

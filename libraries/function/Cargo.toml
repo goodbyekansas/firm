@@ -7,3 +7,10 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1.0.40"
+url = "2.3.1"
+http = "0.2.9"
+libc = "0.2.144"
+structopt = "0.3.26"
+
+firm-protocols = { version = "1.0.0", registry = "nix" }
+

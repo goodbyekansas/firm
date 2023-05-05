@@ -60,8 +60,6 @@ nedryland'.mkProject rec {
       types = firmTypes.rust.withServices;
     };
 
-    capellini = callFile ./clients/capellini/capellini.nix { };
-
     firmRust = callFile ./libraries/rust/firm-rust/firm-rust.nix {
       types = firmTypes.rust.withoutServices;
     };
