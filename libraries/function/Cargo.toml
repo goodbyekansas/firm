@@ -11,6 +11,14 @@ url = "2.3.1"
 http = "0.2.9"
 libc = "0.2.144"
 structopt = "0.3.26"
+flate2 = "1.0.26"
+rustls = "0.21.1"
+webpki-roots = "0.23.0"
 
 firm-protocols = { version = "1.0.0", registry = "nix" }
 
+[dev-dependencies]
+sha2 = "0.10.6"
+
+[[example]]
+name = "attachment_downloader"
