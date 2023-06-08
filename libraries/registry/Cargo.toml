@@ -6,3 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+url = "2.3.1"
+
+firm-protocols = { version = "1.0.0", registry = "nix" }
