@@ -3,13 +3,11 @@ pub mod rwstream;
 use firm_protocols::functions::ChannelSpec;
 use thiserror::Error;
 
-use std::{
-    collections::{HashMap, VecDeque},
-    ops::Deref,
-    task::Poll,
-};
+use std::{collections::VecDeque, ops::Deref, task::Poll};
 
 use crate::io::{PollRead, PollWrite};
+
+pub use rwstream::RWChannelStream;
 
 #[derive(Debug, Error)]
 pub enum StreamError {
@@ -101,7 +99,7 @@ pub trait Stream<'a> {
 
     fn new_from_specs<Specs>(channel_specs: Specs) -> Self::StreamType
     where
-        Specs: IntoIterator<Item = HashMap<String, ChannelSpec>>,
+        Specs: IntoIterator<Item = (String, ChannelSpec)>,
         Self: Sized;
 
     fn has_channel(&self, channel_name: &str) -> bool;
@@ -121,7 +119,7 @@ where
     type StreamType = T;
     fn new_from_specs<Specs>(channel_specs: Specs) -> Self::StreamType
     where
-        Specs: IntoIterator<Item = HashMap<String, ChannelSpec>>,
+        Specs: IntoIterator<Item = (String, ChannelSpec)>,
         Self: Sized,
     {
         T::new_from_specs(channel_specs)

@@ -1,22 +1,10 @@
 use std::path::PathBuf;
 
-use firm_types::{
-    auth::authentication_server::AuthenticationServer,
-    functions::execution_server::ExecutionServer, functions::registry_server::RegistryServer,
-    tonic::transport::Server,
-};
+use firm_protocols::{functions::execution_server::ExecutionServer, tonic::transport::Server};
 use slog::{error, info, o, Drain, Logger};
 use structopt::StructOpt;
-use url::Url;
 
-use crate::{
-    auth::AuthService,
-    config,
-    executor::ExecutionService,
-    proxy_registry::{ExternalRegistry, ProxyRegistry},
-    registry::RegistryService,
-    runtime, system,
-};
+use crate::{config, executor::ExecutionService, system};
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "avery")]
@@ -57,77 +45,12 @@ where
         |file| config::Config::new_with_file(file, log.new(o! { "scope" => "load-config"})),
     )?;
 
-    let external_registries = config
-        .registries
-        .into_iter()
-        .map(|reg| {
-            Url::parse(&reg.url)
-                .map_err(|e| {
-                    format!(
-                        "Failed to parse url for external registry \"{}\": {}",
-                        reg.name, e
-                    )
-                })
-                .map(|url| ExternalRegistry::new(reg.name, url))
-        })
-        .collect::<Result<Vec<ExternalRegistry>, String>>()?;
-
-    let internal_registry = RegistryService::new(
-        config.internal_registry,
-        log.new(o!("service" => "internal-registry")),
-    )?;
-
-    let auth_service = AuthService::from_config(
-        config.oidc_providers,
-        config.auth.scopes,
-        config.auth.identity,
-        config.auth.key_store,
-        config.auth.allow,
-        crate::system::user_data_path().ok_or_else(|| {
-            String::from("Failed to determine user data path for storing generated keys")
-        })?,
-        log.new(o!("service" => "auth")),
-    )
-    .await?;
-
-    let proxy_registry = ProxyRegistry::new(
-        external_registries,
-        internal_registry,
-        config.conflict_resolution,
-        auth_service.clone(),
-        log.new(o!("service" => "proxy-registry")),
-    )
-    .await?;
-
     let mut runtime_directories = config.runtime_directories.clone();
     runtime_directories.push(system::default_runtime_dir());
-    let directory_sources = runtime_directories
-        .into_iter()
-        .filter_map(|d| {
-            if d.exists() {
-                Some(
-                    runtime::filesystem_source::FileSystemSource::new(
-                        &d,
-                        log.new(o!("source" => "fs")),
-                    )
-                    .map(|fss| Box::new(fss) as Box<dyn runtime::RuntimeSource>),
-                )
-            } else {
-                None
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mut runtime_sources: Vec<Box<dyn runtime::RuntimeSource>> = vec![Box::new(
-        runtime::InternalRuntimeSource::new(log.new(o!("source" => "internal"))),
-    )];
-    runtime_sources.extend(directory_sources.into_iter());
 
     let execution_service = ExecutionService::new(
         log.new(o!("service" => "execution")),
-        proxy_registry.clone(),
-        runtime_sources,
-        auth_service.clone(),
+        runtime_directories,
         // TODO In the future root_directory must be configurable
         &system::user_cache_path()
             .map(|p| p.join("functions"))
@@ -145,8 +68,6 @@ where
 
     Server::builder()
         .add_service(ExecutionServer::new(execution_service))
-        .add_service(RegistryServer::new(proxy_registry))
-        .add_service(AuthenticationServer::new(auth_service))
         .serve_with_incoming_shutdown(
             incoming,
             system::shutdown_signal(log.new(o!("scope" => "shutdown"))),

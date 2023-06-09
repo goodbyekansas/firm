@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use firm_types::tonic::transport::server::Connected;
+use firm_protocols::tonic::transport::server::Connected;
 use futures::{FutureExt, TryFutureExt};
 use slog::{error, info, o, Logger};
 use tokio::{

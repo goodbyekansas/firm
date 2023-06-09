@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    io::Write,
     sync::{Arc, RwLock, RwLockReadGuard},
     task::Poll,
 };
@@ -14,6 +15,38 @@ use super::{Channel, ChannelReader, ChannelWriter, Stream, StreamError};
 pub struct RWChannel {
     lock: Arc<RwLock<Channel>>,
     channel_name: String,
+}
+
+impl Write for RWChannel {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.lock
+            .write()
+            .map_err(|e| {
+                std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    StreamError::ChannelWriteFailed {
+                        channel_name: self.channel_name.clone(),
+                        error: e.to_string(),
+                    },
+                )
+            })
+            .and_then(|mut channel| {
+                channel.write(buf).map_err(|e| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        StreamError::ChannelWriteFailed {
+                            channel_name: self.channel_name.clone(),
+                            error: e.to_string(),
+                        },
+                    )
+                })
+            })
+            .map(|_| buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 impl PollRead for RWChannel {
@@ -150,12 +183,11 @@ impl<'a> Stream<'a> for RWChannelStream {
 
     fn new_from_specs<I>(channel_specs: I) -> Self
     where
-        I: IntoIterator<Item = HashMap<String, ChannelSpec>>,
+        I: IntoIterator<Item = (String, ChannelSpec)>,
     {
         Self {
             channels: channel_specs
                 .into_iter()
-                .flat_map(|cs| cs.into_iter())
                 .map(|(name, channel_spec)| {
                     (
                         name.clone(),

@@ -56,6 +56,9 @@ pub enum RuntimeError {
     #[error("Failed to find runtime \"{0}\" in any of the paths {1}")]
     FailedToFindRuntime(String, String),
 
+    #[error("Failed to read from runtime directory \"{0}\": {1}")]
+    FailedToReadRuntimeDir(PathBuf, #[source] std::io::Error),
+
     #[error("Runtime spec missing for function \"{0}\"")]
     RuntimeSpecMissing(String),
 

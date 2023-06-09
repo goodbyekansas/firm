@@ -10,15 +10,13 @@ message Function {
   string name = 1;
   string version = 2;
   map<string, string> metadata = 3;
-  map<string, ChannelSpec> required_inputs = 4;
-  map<string, ChannelSpec> optional_inputs = 5;
-  map<string, ChannelSpec> outputs = 6;
-  Attachment code = 7;
-  repeated Attachment attachments = 8;
-  RuntimeSpec runtime = 9;
-  uint64 created_at = 10;
-  Publisher publisher = 11;
-  Signature signature = 12;
+  map<string, ChannelSpec> inputs = 4;
+  map<string, ChannelSpec> outputs = 5;
+  repeated Attachment attachments = 6;
+  RuntimeSpec runtime = 7;
+  uint64 created_at = 8;
+  Publisher publisher = 9;
+  Signature signature = 10;
 }
 
 
@@ -38,31 +36,20 @@ message Functions {
 }
 
 
-enum ChannelType {
-  STRING = 0;
-  BOOL = 1;
-  INT = 2;
-  FLOAT = 3;
-  BYTES = 4;
-}
-
-
 message ChannelSpec {
-  ChannelType type = 1;
-  string description = 2;
+  string description = 1;
 }
 
 
 message RuntimeSpec {
   string name = 1;
-  string entrypoint = 2;
-  map<string, string> arguments = 3;
+  map<string, string> arguments = 2;
 }
 
 
 message Attachment {
   string name = 1;
-  AttachmentUrl url = 2;
+  string url = 2;
   map<string, string> metadata = 3;
   Checksums checksums = 4;
   uint64 created_at = 5;
@@ -70,20 +57,7 @@ message Attachment {
   Signature signature = 7;
 }
 
-
-message AttachmentUrl {
-  string url = 1;
-  AuthMethod auth_method = 2;
-}
-
-
-enum AuthMethod {
-  NONE = 0;
-  BASIC = 1;
-  OAUTH2 = 2;
-}
-
-
 message Checksums {
   string sha256 = 1;
+  string sha512 = 2;
 }

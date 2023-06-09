@@ -27,12 +27,6 @@ use error::RuntimeError;
 use io_event_queue::{IoEventQueue, IoId, IoReader, IoWriter};
 use thiserror::Error;
 
-#[derive(Clone)]
-pub struct FsStore {
-    root_path: PathBuf,
-    runtime_search_path: Vec<PathBuf>,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct ExecutionId(uuid::Uuid);
 
@@ -161,8 +155,17 @@ pub trait CacheEntry {
     fn write(&self) -> Result<Self::Writer, CacheError>;
 }
 
-struct FsCache {
+#[derive(Clone)]
+pub struct FsCache {
     root: PathBuf,
+}
+
+impl FsCache {
+    pub fn new<P: AsRef<Path>>(root: P) -> Self {
+        Self {
+            root: root.as_ref().to_owned(),
+        }
+    }
 }
 
 impl Cache for FsCache {
@@ -175,11 +178,11 @@ impl Cache for FsCache {
     }
 }
 
-struct FsCacheEntry {
+pub struct FsCacheEntry {
     path: PathBuf,
 }
 
-struct StdFile {
+pub struct StdFile {
     file: std::fs::File,
 }
 
@@ -226,7 +229,6 @@ impl CacheEntry for FsCacheEntry {
     }
 }
 
-#[allow(dead_code)]
 enum CacheState<R: IoReader, W: Write, S: IoReader> {
     Cached(R),
     NotCached { source: S, sink: W },
@@ -316,6 +318,18 @@ pub struct QueuedFunction<C: Cache> {
     cache: Option<C>,
 }
 
+impl<C: Cache + Clone> Clone for QueuedFunction<C> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            function: self.function.clone(),
+            runtime: self.runtime.clone(),
+            cache: self.cache.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct RuntimeSpec {
     path: PathBuf,
     env: HashMap<String, String>,
@@ -514,16 +528,25 @@ pub trait Store {
     fn execute_function<C: Cache>(
         &self,
         function: &Function,
+        cache: Option<C>,
     ) -> Result<QueuedFunction<C>, RuntimeError>;
+
+    fn list_runtimes(&self) -> Result<Vec<PathBuf>, RuntimeError>;
+}
+
+#[derive(Clone)]
+pub struct FsStore {
+    root_path: PathBuf,
+    runtime_search_path: Vec<PathBuf>,
 }
 
 impl FsStore {
-    pub fn new<P1: AsRef<Path>>(root: P1, runtime_search_path: &[&Path]) -> Self {
+    pub fn new<P1: AsRef<Path>, P2: AsRef<Path>>(root: P1, runtime_search_path: &[P2]) -> Self {
         FsStore {
             root_path: root.as_ref().to_owned(),
             runtime_search_path: runtime_search_path
                 .iter()
-                .map(|p| (*p).to_owned())
+                .map(|p| p.as_ref().to_owned())
                 .collect(),
         }
     }
@@ -534,7 +557,6 @@ impl FsStore {
         })?;
 
         let mut env = HashMap::new();
-        env.insert(String::from("ENTRYPOINT"), runtime_spec.entrypoint.clone());
         env.extend(
             runtime_spec
                 .arguments
@@ -593,6 +615,7 @@ impl Store for FsStore {
     fn execute_function<C: Cache>(
         &self,
         function: &Function,
+        cache: Option<C>,
     ) -> Result<QueuedFunction<C>, RuntimeError> {
         std::fs::create_dir_all(&self.root_path)
             .map_err(|e| RuntimeError::FailedToCreateStoreDir(self.root_path.clone(), e))
@@ -600,7 +623,7 @@ impl Store for FsStore {
             .and_then(|function_dir| {
                 function_dir.create()?;
                 let queued =
-                    QueuedFunction::new(function.clone(), self.resolve_runtime(function)?, None);
+                    QueuedFunction::new(function.clone(), self.resolve_runtime(function)?, cache);
                 function_dir.create_execution(queued.id())?;
                 Ok(queued)
             })
@@ -621,5 +644,78 @@ impl Store for FsStore {
                     })
                     .collect::<Result<Vec<_>, RuntimeError>>()
             })
+    }
+
+    fn list_runtimes(&self) -> Result<Vec<PathBuf>, RuntimeError> {
+        self.runtime_search_path
+            .iter()
+            .filter_map(|path| {
+                path.read_dir().ok().map(|entries| {
+                    entries.filter_map(|e| {
+                        e.and_then(|x| x.file_type().map(|ft| (ft, x.path())))
+                            .map(|(ft, path)| (ft.is_file() || ft.is_symlink()).then(|| path))
+                            .map_err(|ioe| RuntimeError::FailedToReadRuntimeDir(path.clone(), ioe))
+                            .transpose()
+                    })
+                })
+            })
+            .flatten()
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::fs::File;
+
+    #[test]
+    fn fs_store() {
+        let root = tempfile::tempdir().unwrap();
+        let runtimes_path = tempfile::tempdir().unwrap();
+        let runtimes_path2 = tempfile::tempdir().unwrap();
+        let store = FsStore::new(root.path(), &[runtimes_path.path(), runtimes_path2.path()]);
+        let res = store.functions().unwrap();
+        assert_eq!(res, vec![]);
+
+        let runtimes = store.list_runtimes().unwrap();
+        assert_eq!(runtimes, Vec::<&Path>::with_capacity(0));
+        File::create(runtimes_path.path().join("mega.exe")).unwrap();
+        File::create(runtimes_path.path().join("snek.py")).unwrap();
+        File::create(runtimes_path.path().join("sune.jpeg")).unwrap();
+        std::fs::create_dir(runtimes_path.path().join("det-ballar-ur")).unwrap();
+        File::create(
+            runtimes_path
+                .path()
+                .join("det-ballar-ur")
+                .join("ignored-file"),
+        )
+        .unwrap();
+
+        File::create(runtimes_path2.path().join("other-runtime")).unwrap();
+
+        let runtimes = store.list_runtimes().unwrap();
+        assert_eq!(runtimes.len(), 4);
+        assert!(runtimes
+            .iter()
+            .any(|r| r == &runtimes_path.path().join("mega.exe")));
+        assert!(runtimes
+            .iter()
+            .any(|r| r == &runtimes_path.path().join("snek.py")));
+        assert!(runtimes
+            .iter()
+            .any(|r| r == &runtimes_path.path().join("sune.jpeg")));
+        assert!(runtimes
+            .iter()
+            .any(|r| r == &runtimes_path2.path().join("other-runtime")));
+
+        let runtimes_path2 = tempfile::tempdir().unwrap();
+        let runtimes_path3 = runtimes_path2.path().join("tjotahejti");
+        let store = FsStore::new(root.path(), &[runtimes_path.path(), &runtimes_path3]);
+
+        let res = store.list_runtimes();
+        assert!(res.is_ok());
+        let runtimes = res.unwrap();
+        assert_eq!(runtimes.len(), 3);
     }
 }

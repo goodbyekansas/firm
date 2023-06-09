@@ -8,28 +8,31 @@ import "firm_protocols/functions/functions.proto";
  * Function registry is a searchable of published functions.
  */
 service Registry {
+
   /**
    * List the latest versions of functions matching the search criteria.
    */
   rpc List(Filters) returns (functions.Functions);
+
   /**
    * List versions of a specific function, matching the criteria.
    */
   rpc ListVersions(Filters) returns (functions.Functions);
+
   /**
    * Get exactly one function, matching the name and version.
    */
   rpc Get(FunctionId) returns (functions.Function);
+
   /**
    * Register a new function.
    */
   rpc Register(FunctionData) returns (functions.Function);
+
   /**
    * Register an attachment. Attachments can be associated with functions when registering.
    */
   rpc RegisterAttachment(AttachmentData) returns (AttachmentHandle);
-  // TODO evaluate removing this endpoint, all attachments should be up/downloaded over http
-  rpc UploadStreamedAttachment(stream AttachmentStreamUpload) returns (Nothing);
 }
 
 
@@ -82,14 +85,12 @@ message FunctionData {
   string name = 1;
   string version = 2;
   map<string, string> metadata = 3;
-  map<string, firm_protocols.functions.ChannelSpec> required_inputs = 4;
-  map<string, firm_protocols.functions.ChannelSpec> optional_inputs = 5;
-  map<string, firm_protocols.functions.ChannelSpec> outputs = 6;
-  AttachmentId code_attachment_id = 7;
-  firm_protocols.functions.RuntimeSpec runtime = 8;
-  repeated AttachmentId attachment_ids = 9;
-  firm_protocols.functions.Publisher publisher = 10;
-  firm_protocols.functions.Signature signature = 11;
+  map<string, firm_protocols.functions.ChannelSpec> inputs = 4;
+  map<string, firm_protocols.functions.ChannelSpec> outputs = 5;
+  firm_protocols.functions.RuntimeSpec runtime = 6;
+  repeated AttachmentId attachment_ids = 7;
+  firm_protocols.functions.Publisher publisher = 8;
+  firm_protocols.functions.Signature signature = 9;
 }
 
 
@@ -116,5 +117,5 @@ message AttachmentId {
 
 message AttachmentHandle {
   AttachmentId id = 1;
-  firm_protocols.functions.AttachmentUrl upload_url = 2;
+  string upload_url = 2;
 }

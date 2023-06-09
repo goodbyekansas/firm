@@ -4,72 +4,47 @@ package firm_protocols.functions;
 
 
 service Execution {
-  rpc QueueFunction (ExecutionParameters) returns (ExecutionId);
-  rpc RunFunction (ExecutionId) returns (ExecutionResult);
-  rpc FunctionOutput (ExecutionId) returns (stream FunctionOutputChunk);
+  rpc QueueFunction (FunctionUri) returns (ExecutionId);
+  rpc RunFunction (stream FunctionInput) returns (stream FunctionOutput);
+  rpc FunctionLog (ExecutionId) returns (stream FunctionLogMessage);
   rpc ListRuntimes (RuntimeFilters) returns (RuntimeList);
 }
 
-message FunctionOutputChunk {
+message FunctionLogMessage {
   string channel = 1;
   string output = 2;
 }
 
-message ExecutionParameters {
-  string name = 1;
-  string version_requirement = 2;
-  Stream arguments = 3;
+
+message FunctionUri {
+  string uri = 1;
 }
 
 
-message Stream {
-  map<string, Channel> channels = 1;
-}
-
-
-message Channel {
-  oneof value {
-    Strings strings = 1;
-    Integers integers = 2;
-    Floats floats = 3;
-    Booleans booleans = 4;
-    Bytes bytes = 5;
+message FunctionInput {
+  oneof payload {
+    Header header = 1;
+    ChannelPacket data = 2;
   }
 }
 
-
-message Bytes {
-  bytes values = 1;
+message Header {
+  ExecutionId id = 1;
+  bool strict = 2;
 }
 
-
-message Strings {
-  repeated string values = 1;
-}
-
-
-message Integers {
-  repeated int64 values = 1;
-}
-
-
-message Floats {
-  repeated double values = 1;
-}
-
-
-message Booleans {
-  repeated bool values = 1;
-}
-
-
-message ExecutionResult {
-  ExecutionId execution_id = 1;
+message FunctionOutput {
   oneof result {
-    ExecutionError error = 2;
-    Stream ok = 3;
+    ExecutionError error = 1;
+    ChannelPacket ok = 2;
   }
 }
+
+message ChannelPacket {
+  string channel = 1;
+  bytes data = 2;
+}
+
 
 
 message ExecutionId {

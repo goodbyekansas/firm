@@ -13,6 +13,9 @@ libc = "0.2.142"
 structopt = "0.3.26"
 flate2 = "1.0.26"
 rustls = "0.21.1"
+serde = {version = "1.0.164", features = [ "derive" ] }
+serde_spanned = "=0.6.1"
+toml = "0.6.0"
 webpki-roots = "0.23.0"
 
 firm-protocols = { version = "1.0.0", registry = "nix" }

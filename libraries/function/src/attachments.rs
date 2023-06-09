@@ -904,18 +904,8 @@ pub enum AttachmentError {
 
 impl AttachmentExt for Attachment {
     fn create_reader(&self) -> Result<AttachmentReader, AttachmentError> {
-        self.url
-            .as_ref()
-            .ok_or_else(|| {
-                AttachmentError::Url(
-                    self.name.clone(),
-                    String::from("Missing url which is required."),
-                )
-            })
-            .and_then(|url| -> Result<_, _> {
-                Url::parse(&url.url)
-                    .map_err(|e| AttachmentError::Url(self.name.clone(), e.to_string()))
-            })
+        Url::parse(&self.url)
+            .map_err(|e| AttachmentError::Url(self.name.clone(), e.to_string()))
             .and_then(|url| match url.scheme() {
                 "file" => Ok(AttachmentReader::File(FileAttachmentReader::new(
                     url.path(),

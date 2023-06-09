@@ -52,9 +52,7 @@ nedryland'.mkProject rec {
       };
     };
 
-    avery = callFile ./services/avery/avery.nix {
-      types = firmTypes.rust.withServices;
-    };
+    avery = callFile ./services/avery/avery.nix { };
 
     bendini = callFile ./clients/bendini/bendini.nix {
       types = firmTypes.rust.withServices;
@@ -84,6 +82,7 @@ nedryland'.mkProject rec {
       runtime = callFile ./libraries/runtime/runtime.nix { };
       function = callFile ./libraries/function/function.nix { };
       registry = callFile ./libraries/registry/registry.nix { };
+      auth = callFile ./libraries/auth/auth.nix { };
     };
   };
 
