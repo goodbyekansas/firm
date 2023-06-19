@@ -83,6 +83,7 @@ nedryland'.mkProject rec {
       function = callFile ./libraries/function/function.nix { };
       registry = callFile ./libraries/registry/registry.nix { };
       auth = callFile ./libraries/auth/auth.nix { };
+      config = callFile ./libraries/config/config.nix { };
     };
   };
 

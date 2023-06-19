@@ -734,6 +734,7 @@ impl<'a> AsMut<dyn Token + 'a> for TypedToken {
     }
 }
 
+// TODO: Do we need this?
 #[async_trait::async_trait]
 pub trait Token: Send + Sync {
     fn token(&self) -> &str;
