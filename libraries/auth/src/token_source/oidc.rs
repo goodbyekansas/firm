@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fmt::Debug,
+    fmt::{Debug, Display},
     net::SocketAddr,
     net::{Ipv6Addr, SocketAddrV6},
     pin::Pin,
@@ -20,7 +20,7 @@ use warp::Filter;
 
 use crate::{
     token::{ExpectedClaims, Jwks},
-    CredentialStore, Token, TokenProvider,
+    CredentialStore, Token,
 };
 
 #[derive(Error, Debug)]
@@ -51,6 +51,9 @@ pub enum Error {
 
     #[error("Failed to decode JWT header: {0}")]
     FailedToDecodeJwtHeader(#[source] jsonwebtoken::errors::Error),
+
+    #[error("Token Error: {0}")]
+    TokenError(#[from] crate::token::TokenError),
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -100,7 +103,7 @@ impl AuthToken {
             .validate(
                 &[key_set],
                 ExpectedClaims {
-                    iss: &[&oidc_config.issuer],
+                    iss: [oidc_config.issuer.as_str()],
                     aud: &[client_id],
                     sub: None,
                     alg: &oidc_config.id_token_signing_alg_values_supported,
@@ -231,6 +234,20 @@ impl Debug for Provider {
     }
 }
 
+impl TryFrom<&Provider> for Token {
+    type Error = Error;
+
+    fn try_from(provider: &Provider) -> Result<Self, Self::Error> {
+        provider.as_token()
+    }
+}
+
+impl Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 impl Provider {
     async fn new(
         auth_token: AuthToken,
@@ -251,6 +268,14 @@ impl Provider {
                 expires_at: Self::calculate_expires_at(claims.exp, claims.iat, 10),
                 claims,
             })
+    }
+
+    pub fn as_token(&self) -> Result<Token, Error> {
+        Token::try_new(self.token()).map_err(Into::into)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.token()
     }
 
     pub fn token(&self) -> &str {
@@ -286,7 +311,10 @@ impl Provider {
             })
     }
 
-    async fn refresh(&mut self) -> Result<&mut Self, String> {
+    pub async fn refresh(
+        &mut self,
+        credstore: &mut (dyn CredentialStore + Send),
+    ) -> Result<&mut Self, Error> {
         if self.expired() {
             reqwest::Client::new()
                 .post(&self.oidc_config.token_endpoint)
@@ -319,8 +347,19 @@ impl Provider {
                         }
                     }
                 })
-                .await
-                .map_err(|e| e.to_string())?;
+                .await?;
+            let _ = serde_json::to_string(self)
+                .map_err(|e| {
+                    // TODO: log
+                    e
+                })
+                .ok()
+                .map(|json| {
+                    credstore.store(
+                        &format!("{}-{}", self.oidc_config.token_endpoint, self.client_id),
+                        &json,
+                    )
+                });
         }
 
         Ok(self)
@@ -401,31 +440,6 @@ struct Claims {
 
     #[serde(flatten)]
     extra: HashMap<String, serde_json::Value>,
-}
-
-#[async_trait::async_trait]
-impl TokenProvider for Provider {
-    async fn acquire_token(
-        &mut self,
-        credstore: Option<&mut (dyn CredentialStore + Send)>,
-    ) -> Result<Token, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        self = self.refresh().await?;
-        let _ = credstore.and_then(|store| {
-            serde_json::to_string(self)
-                .map_err(|e| {
-                    // TODO: log
-                    e
-                })
-                .ok()
-                .map(|json| {
-                    store.store(
-                        &format!("{}-{}", self.oidc_config.token_endpoint, self.client_id),
-                        &json,
-                    )
-                })
-        });
-        Token::try_new(self.token()).map_err(Into::into)
-    }
 }
 
 pub struct Builder<'cred> {
@@ -1120,7 +1134,7 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
         );
 
         let mut credstore = MemCredentialStore::new();
-        let res = res.acquire_token(Some(&mut credstore)).await;
+        let res = res.refresh(&mut credstore).await;
         assert_eq!(res.unwrap().as_str(), jwt);
         assert!(credstore
             .retrieve(&format!(

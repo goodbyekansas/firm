@@ -49,6 +49,9 @@ pub enum TokenError {
     #[error("Token validation error: {0}")]
     Validation(#[from] jsonwebtoken::errors::Error),
 
+    #[error("No matching keys for validating token")]
+    NoKeys,
+
     #[error("Token specifies an unauthorized JKU: {0}")]
     UnauthorizedJku(Url),
 
@@ -87,13 +90,28 @@ where
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Token {
     jwt: String,
     header: jsonwebtoken::Header,
 }
 
-pub struct ExpectedClaims<'a> {
-    pub iss: &'a [&'a str],
+impl PartialEq for Token {
+    fn eq(&self, other: &Self) -> bool {
+        self.jwt == other.jwt
+    }
+}
+
+impl Eq for Token {}
+
+impl std::hash::Hash for Token {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.jwt.hash(state)
+    }
+}
+
+pub struct ExpectedClaims<'a, I: IntoIterator<Item = &'a str>> {
+    pub iss: I,
     pub aud: &'a [&'a str],
     pub sub: Option<&'a str>,
     pub alg: &'a [jsonwebtoken::Algorithm],
@@ -119,11 +137,17 @@ impl Token {
         format!("Authorization: Bearer {}", self.as_str())
     }
 
-    fn validate_with_keys<T: DeserializeOwned, I: IntoIterator<Item = Jwk>>(
+    fn validate_with_keys<
+        'a,
+        T: DeserializeOwned,
+        I: IntoIterator<Item = Jwk>,
+        I2: IntoIterator<Item = &'a str>,
+    >(
         &self,
         keys: I,
-        expected: ExpectedClaims<'_>,
+        expected: ExpectedClaims<'a, I2>,
     ) -> Result<T, TokenError> {
+        let issuers = expected.iss.into_iter().collect::<Vec<_>>();
         let res_iter = keys.into_iter().map(|jwk| {
             DecodingKey::from_jwk(&jwk)
                 .map_err(TokenError::JwkDecode)
@@ -133,7 +157,11 @@ impl Token {
                     validation.validate_exp = true;
                     validation.validate_nbf = true;
                     validation.leeway = 10;
-                    validation.set_issuer(expected.iss);
+
+                    if !issuers.is_empty() {
+                        validation.set_issuer(&issuers);
+                    }
+
                     validation.set_audience(expected.aud);
                     validation.sub = expected.sub.map(ToOwned::to_owned);
 
@@ -151,13 +179,17 @@ impl Token {
             }
         }
 
+        if errors.is_empty() {
+            errors.push(TokenError::NoKeys)
+        }
+
         Err(TokenError::ValidationErrors(errors))
     }
 
-    pub async fn validate<T: DeserializeOwned>(
+    pub async fn validate<'a, T: DeserializeOwned, I: IntoIterator<Item = &'a str>>(
         &self,
         key_sources: &[Jwks],
-        expected: ExpectedClaims<'_>,
+        expected: ExpectedClaims<'a, I>,
     ) -> Result<T, TokenError> {
         match &self.header.jku {
             Some(jku) => {
@@ -166,7 +198,7 @@ impl Token {
                 futures::future::ready(Url::parse(jku).map_err(Into::into).and_then(|url| {
                     key_sources
                         .iter()
-                        .find(|s| s.authority_matches(&url))
+                        .find(|s| s.matches(&url))
                         .ok_or_else(|| TokenError::UnauthorizedJku(url.clone()))
                         .and_then(|_| Jwks::try_new(url))
                 }))
@@ -207,6 +239,7 @@ pub struct Jwks {
 
 #[derive(Debug, Clone)]
 enum JwksSource {
+    Memory(Vec<Jwk>),
     File(PathBuf),
     Http(Url),
 }
@@ -226,6 +259,7 @@ impl Jwks {
                         )))
                     }
                 }
+                "memory" => Ok(JwksSource::Memory(vec![])),
                 _ => Err(TokenError::Unknown(format!(
                     "Transport \"{}\", not supported.",
                     url.scheme()
@@ -234,19 +268,20 @@ impl Jwks {
         })
     }
 
+    pub fn add_key(&mut self, jwk: Jwk) {
+        if let JwksSource::Memory(ref mut keys) = self.source {
+            keys.push(jwk)
+        }
+    }
+
     /// Return true if the authority of the JWKS matches `other`
     ///
     /// The definition of authority depends on protocol.
-    pub fn authority_matches(&self, other: &Url) -> bool {
+    pub fn matches(&self, other: &Url) -> bool {
         match &self.source {
-            JwksSource::File(path) => {
-                other.path().starts_with(&path.display().to_string())
-                    && other.scheme() == "file"
-                    && other.authority().is_empty()
-            }
-            JwksSource::Http(url) => {
-                url.authority() == other.authority() && url.scheme() == other.scheme()
-            }
+            JwksSource::File(path) => &Url::from_file_path(path).unwrap() == other, // TODO
+            JwksSource::Http(url) => url == other,
+            JwksSource::Memory(_) => true,
         }
     }
 
@@ -277,6 +312,12 @@ impl Jwks {
                 })
                 .await
                 .map(|haystack| (haystack, key_id)),
+            JwksSource::Memory(keys) => Ok((
+                JwkSet {
+                    keys: keys.to_vec(),
+                },
+                key_id,
+            )),
         }?;
 
         if needle.is_none() {
