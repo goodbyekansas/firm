@@ -719,7 +719,7 @@ impl<'cred> Builder<'cred> {
 
 #[cfg(test)]
 mod tests {
-    use crate::MemCredentialStore;
+    use crate::Memory;
 
     // This is the public key used in the jwk macro further down
     const _RSA_PUBLIC_KEY: &str = r#"-----BEGIN PUBLIC KEY-----
@@ -971,7 +971,7 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
         let google_openid_config_data: OidcConfig =
             serde_json::from_str(google_openid_config).unwrap();
 
-        let mut credstore = MemCredentialStore::new();
+        let mut credstore = Memory::new();
         credstore.store(
             &format!("{}-{}", google_openid_config_data.token_endpoint, "6"),
             serde_json::to_string(&Provider {
@@ -1133,7 +1133,7 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
             .unwrap(),
         );
 
-        let mut credstore = MemCredentialStore::new();
+        let mut credstore = Memory::new();
         let res = res.refresh(&mut credstore).await;
         assert_eq!(res.unwrap().as_str(), jwt);
         assert!(credstore

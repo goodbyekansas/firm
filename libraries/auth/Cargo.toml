@@ -21,6 +21,11 @@ tokio = { version = "1.28.2", features = [ "rt", "macros" ] }
 url = "2.4.0"
 uuid = { version = "1.4.0", features = [ "v4" ] }
 warp = "0.3.5"
+sqlite = "0.31.0"
+# TODO: Highest possble version due to using rust 1.60.
+# If we upgrade to rust 1.65 we can bump keyring two majors.
+keyring = "0.8.0"
+
 
 [dev-dependencies]
 mockito = "0.31.1"
