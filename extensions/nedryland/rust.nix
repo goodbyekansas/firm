@@ -1,7 +1,24 @@
 oxalica:
-{ base, pkgsCross, callPackage, runCommand }:
+{ base, pkgsCross, callPackage, runCommand, pkgs }:
 let
   rust = base.languages.rust;
+
+  latestStable = pkgs:
+    let
+      rustOverlay = oxalica (pkgs // rustOverlay) pkgs;
+      stable = rustOverlay.rust-bin.stable.latest.default.override {
+        extensions = [ "rust-analyzer" "rust-src" ];
+      };
+    in
+    base.languages.rust.mkRustToolset {
+      rustc = stable;
+      cargo = stable;
+      clippy = stable;
+      rust-analyzer = stable;
+      rustfmt = stable;
+    };
+
+  latestStableToolset = latestStable pkgs;
 
   nightlyToolset = pkgs:
     let
@@ -114,4 +131,6 @@ in
       };
     });
   };
+
+  languages.rust.latestStable = (rust.override latestStableToolset);
 }
