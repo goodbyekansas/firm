@@ -1,4 +1,5 @@
 use sqlite::Connection;
+use sqlite::State;
 
 use crate::credential_store::CredentialStore;
 use crate::credential_store::Error as CredError;
@@ -21,21 +22,15 @@ value TEXT NOT NULL
     }
 
     fn get(&self, key: &str) -> Result<Option<String>, sqlite::Error> {
-        let query = format!(
-            "
-SELECT (value) FROM credentials WHERE key = '{}'
-",
-            key
-        );
-        let mut val = None;
+        let query = "SELECT (value) FROM credentials WHERE key = :key";
         self.connection
-            .iterate(query, |pairs| {
-                for &value in pairs.iter() {
-                    val = value.1.map(String::from);
-                }
-                true
+            .prepare(query)
+            .and_then(|mut statement| statement.bind((":key", key)).map(|_| statement))
+            .and_then(|mut statement| statement.next().map(|val| (statement, val)))
+            .and_then(|(statement, val)| match val {
+                State::Row => statement.read::<String, _>("value").map(Some),
+                State::Done => Ok(None),
             })
-            .map(|_| val)
     }
 
     fn set(&self, key: &str, value: &str) -> Result<(), sqlite::Error> {
@@ -73,6 +68,7 @@ mod test {
         let res = db.set("sune", "rune");
         assert!(res.is_ok());
         let res = db.get("sune");
+        dbg!(&res);
         assert!(res.is_ok());
         assert_eq!(res.unwrap(), Some(String::from("rune")));
 
@@ -85,6 +81,8 @@ mod test {
 
         // Getting value that does not existing
         let res = db.get("ja");
-        assert!(res.is_err());
+        assert!(res.is_ok());
+        let res = res.unwrap();
+        assert!(res.is_none());
     }
 }

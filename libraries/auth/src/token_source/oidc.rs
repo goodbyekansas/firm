@@ -672,10 +672,18 @@ impl<'cred> Builder<'cred> {
             match self
                 .credstore
                 .and_then(|credstore| {
-                    credstore.retrieve(&format!("{}-{}", &cfg.token_endpoint, self.client_id))
+                    credstore
+                        .retrieve(&format!("{}-{}", &cfg.token_endpoint, self.client_id))
+                        .map_err(|e| {
+                            // TODO: Log errors
+                            e
+                        })
+                        .ok()
+                        .flatten()
                 })
                 .and_then(|creds_source| {
-                    let deserialized: Result<Provider, _> = serde_json::from_str(creds_source);
+                    let deserialized: Result<Provider, _> =
+                        serde_json::from_str(creds_source.as_ref());
                     deserialized
                         .map_err(|e| {
                             // TODO: Log error
@@ -972,7 +980,7 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
             serde_json::from_str(google_openid_config).unwrap();
 
         let mut credstore = Memory::new();
-        credstore.store(
+        let res = credstore.store(
             &format!("{}-{}", google_openid_config_data.token_endpoint, "6"),
             serde_json::to_string(&Provider {
                 auth_token: AuthToken {
@@ -993,6 +1001,7 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
             .unwrap()
             .as_str(),
         );
+        assert!(res.is_ok());
 
         let res = Builder::new_with_config(
             google_openid_config_data.clone(),
@@ -1136,11 +1145,12 @@ jg/3747WSsf/zBTcHihTRBdAv6OmdhV4/dD5YBfLAkLrd+mX7iE=
         let mut credstore = Memory::new();
         let res = res.refresh(&mut credstore).await;
         assert_eq!(res.unwrap().as_str(), jwt);
-        assert!(credstore
-            .retrieve(&format!(
-                "{}-{}",
-                google_openid_config_data.token_endpoint, "datakörkort"
-            ))
-            .is_some());
+        let res = credstore.retrieve(&format!(
+            "{}-{}",
+            google_openid_config_data.token_endpoint, "datakörkort"
+        ));
+        assert!(res.is_ok());
+        let res = res.unwrap();
+        assert!(res.is_some());
     }
 }

@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+pub mod keyring;
 pub mod memory;
 pub mod sqlite;
 

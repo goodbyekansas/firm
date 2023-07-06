@@ -241,10 +241,7 @@ MC4CAQAwBQYDK2VwBCIEIDjobHKy/8ilexeTOjo5if01J1l1vlNfc96WvzpgGddp
             )
             .await;
 
-        assert!(
-            dbg!(&res).is_ok(),
-            "Expected generator to produce valid token"
-        );
+        assert!(res.is_ok(), "Expected generator to produce valid token");
         let claims = res.unwrap();
         assert_eq!(
             claims.aud, "publikum",
