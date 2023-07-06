@@ -12,7 +12,7 @@ impl Sqlite {
     pub fn try_new<P: AsRef<std::path::Path>>(path: P) -> Result<Self, sqlite::Error> {
         let init = "
 CREATE TABLE IF NOT EXISTS credentials(
-key TEXT NOT NULL PRIMARY KEY,
+key VARCHAR(128) NOT NULL PRIMARY KEY,
 value TEXT NOT NULL
 );
 ";

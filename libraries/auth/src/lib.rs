@@ -1,3 +1,4 @@
+pub mod cert_verification;
 pub mod credential_store;
 pub mod token;
 pub mod token_authenticator;

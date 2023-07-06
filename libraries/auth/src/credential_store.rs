@@ -1,6 +1,7 @@
 use thiserror::Error;
 
-pub mod keyring;
+// TODO: keyring 0.9.0 seems to be the newest compatible with rust 1.60.0
+//pub mod keyring;
 pub mod memory;
 pub mod sqlite;
 
