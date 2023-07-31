@@ -7,3 +7,7 @@ edition = "2021"
 [dependencies]
 thiserror = "1"
 firm-protocols = { version = "1.0.0", registry = "nix" }
+
+# Only here to force cargo to not use a version that requires rust version 1.63+
+rustix = "<0.38.0"
+tempfile = "<3.7.0"

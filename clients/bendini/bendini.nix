@@ -1,5 +1,5 @@
 { base, types, tonicMiddleware }:
-base.languages.rust.nativeTools.mkClient rec {
+base.languages.rust.nativeTools.mkClient {
   name = "bendini";
   src = ./.;
   buildInputs = [ types tonicMiddleware ];

@@ -3,7 +3,7 @@
 
   inputs = {
     nedryland.url = github:goodbyekansas/nedryland/8.0.0;
-    nedryglot.url = github:goodbyekansas/nedryglot/1.0.0;
+    nedryglot.url = github:goodbyekansas/nedryglot/rust-160-fixes;
     oxalica.url = github:oxalica/rust-overlay;
     pkgs.url = github:NixOS/nixpkgs/nixos-22.05;
     flake-utils.url = github:numtide/flake-utils;
