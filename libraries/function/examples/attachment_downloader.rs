@@ -1,10 +1,11 @@
-use std::{fs::OpenOptions, io::Write, path::PathBuf, task::Poll, time::Instant};
+use std::{fs::OpenOptions, io::Write, path::PathBuf, time::Instant};
 
+use futures::AsyncReadExt;
 use sha2::{Digest, Sha256, Sha512};
 use structopt::StructOpt;
 use url::Url;
 
-use function::{attachments::HttpAttachmentReader, io::PollRead};
+use function::attachments::HttpAttachmentReader;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "Attachment downloader")]
@@ -15,10 +16,10 @@ struct Args {
     output: Option<PathBuf>,
 
     #[structopt(long)]
-    print_checksums: Option<bool>,
+    print_checksums: bool,
 
     #[structopt(long)]
-    print_response: Option<bool>,
+    print_response: bool,
 }
 
 #[allow(dead_code)]
@@ -48,12 +49,13 @@ fn bytes_to_str(mut bytes: usize) -> (f32, &'static str) {
     )
 }
 
-pub fn main() {
+#[tokio::main(flavor = "current_thread")]
+async fn main() {
     let args = Args::from_args();
     let mut begin: Option<Instant> = None;
     let mut bytes = 0usize;
-    let print_checksums = args.print_checksums.unwrap_or(false);
-    let print_response = args.print_response.unwrap_or(false);
+    let print_checksums = args.print_checksums;
+    let print_response = args.print_response;
     let mut sha256 = Sha256::new();
     let mut sha512 = Sha512::new();
 
@@ -68,11 +70,11 @@ pub fn main() {
         .unwrap();
 
     println!("Downloading url {}", args.url);
-    let mut http = HttpAttachmentReader::new(args.url);
+    let mut attachment_reader = HttpAttachmentReader::new(args.url);
     let mut buf = [0u8; 8192];
     loop {
-        match http.poll_read(&mut buf) {
-            Ok(Poll::Ready(read)) if read == 0 => {
+        match attachment_reader.read(&mut buf).await {
+            Ok(0) => {
                 match begin {
                     Some(timer) => println!(
                         "Finished reading file. Downloaded {} in {:.2} seconds ({}/s)",
@@ -100,22 +102,23 @@ pub fn main() {
                 }
 
                 if print_response {
-                    http.response()
+                    attachment_reader
+                        .response()
                         .map(|v| println!("{:#?}", v))
                         .unwrap_or_else(|| println!("No response"));
                 }
                 break;
             }
-            Ok(Poll::Ready(read)) => {
+            Ok(nread) => {
                 if begin.is_none() {
                     begin = Some(Instant::now());
                 }
-                sha256.update(&buf[0..read]);
-                sha512.update(&buf[0..read]);
-                file.write_all(&buf[0..read]).unwrap();
-                bytes += read;
+                sha256.update(&buf[0..nread]);
+                sha512.update(&buf[0..nread]);
+                file.write_all(&buf[0..nread]).unwrap();
+                bytes += nread;
+                let _ = file.write_all(&buf[0..nread]);
             }
-            Ok(Poll::Pending) => {}
             Err(e) => {
                 dbg!(&e);
                 println!(

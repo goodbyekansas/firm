@@ -1,11 +1,14 @@
 pub mod rwstream;
 
 use firm_protocols::functions::ChannelSpec;
+use futures::{AsyncRead, AsyncWrite};
 use thiserror::Error;
 
-use std::{collections::VecDeque, ops::Deref, task::Poll};
-
-use crate::io::{PollRead, PollWrite};
+use std::{
+    collections::VecDeque,
+    ops::Deref,
+    task::{Poll, Waker},
+};
 
 pub use rwstream::RWChannelStream;
 
@@ -32,6 +35,7 @@ pub struct Channel {
     data: VecDeque<u8>,
     data_type: String,
     closed: bool,
+    waker: Option<Waker>,
 }
 
 impl Channel {
@@ -41,6 +45,7 @@ impl Channel {
             data_type: data_type.into(),
             data: VecDeque::new(),
             closed: false,
+            waker: None,
         }
     }
 
@@ -52,40 +57,79 @@ impl Channel {
         &self.data_type
     }
 
-    pub fn poll_read(&mut self, buf: &mut [u8]) -> Poll<usize> {
-        let end = std::cmp::min(buf.len(), self.data.len());
-
-        if end == 0 && !self.closed() {
-            return Poll::Pending;
-        }
-
-        self.data.drain(0..end).enumerate().for_each(|(i, v)| {
-            buf[i] = v;
-        });
-        Poll::Ready(end)
-    }
-
     pub fn closed(&self) -> bool {
         self.closed
     }
+}
 
-    pub fn write(&mut self, buf: &[u8]) -> Result<(), StreamError> {
-        if self.closed {
-            Err(StreamError::ChannelWriteClosed {
-                channel_name: self.name.clone(),
-            })
-        } else {
-            self.data.extend(buf);
-            Ok(())
+impl AsyncRead for Channel {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let end = std::cmp::min(buf.len(), self.data.len());
+
+        if end == 0 && !self.closed() {
+            self.get_mut().waker = Some(cx.waker().clone());
+            return Poll::Pending;
         }
+
+        self.get_mut()
+            .data
+            .drain(0..end)
+            .enumerate()
+            .for_each(|(i, v)| {
+                buf[i] = v;
+            });
+        Poll::Ready(Ok(end))
     }
 }
 
-pub trait ChannelReader: Clone + PollRead {
+impl AsyncWrite for Channel {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        if this.closed {
+            Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                StreamError::ChannelWriteClosed {
+                    channel_name: this.name.clone(),
+                },
+            )))
+        } else {
+            this.data.extend(buf);
+            if let Some(w) = this.waker.take() {
+                w.wake()
+            }
+            Poll::Ready(Ok(buf.len()))
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        self.get_mut().closed = true;
+        Poll::Ready(Ok(()))
+    }
+}
+
+pub trait ChannelReader: Clone + AsyncRead {
     fn channel_id(&self) -> &str;
 }
 
-pub trait ChannelWriter: Clone + PollWrite {
+pub trait ChannelWriter: Clone + AsyncWrite {
     fn channel_id(&self) -> &str;
     fn close(&self) -> Result<(), StreamError>;
 }

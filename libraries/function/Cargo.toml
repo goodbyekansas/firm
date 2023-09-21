@@ -6,19 +6,28 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+futures = "0.3.28"
 thiserror = "1.0.40"
 url = "2.3.1"
 http = "0.2.9"
-libc = "0.2.142"
 structopt = "0.3.26"
-flate2 = "1.0.26"
+flate2 = "=1.0.26"
 rustls = "0.21.1"
-serde = {version = "1.0.164", features = [ "derive" ] }
+serde = { version = "1.0.164", features = [ "derive" ] }
 serde_spanned = "=0.6.1"
+tokio = { version = "=1.29.1", optional = true, features = [ "net", "macros", "rt" ] }
 toml = "0.6.0"
 webpki-roots = "0.23.0"
 
 firm-protocols = { version = "1.0.0", registry = "nix" }
+
+# pinned b/c rust 1.60
+tempfile = "=3.6.0"
+memchr = "=2.6.2"
+
+[features]
+default = ["tokio"]
+
 
 [dev-dependencies]
 sha2 = "0.10.6"

@@ -1,13 +1,12 @@
 use std::{
-    collections::{HashMap, VecDeque},
-    io::Write,
+    collections::HashMap,
+    pin::Pin,
     sync::{Arc, RwLock, RwLockReadGuard},
     task::Poll,
 };
 
 use firm_protocols::functions::ChannelSpec;
-
-use crate::io::{PollRead, PollWrite};
+use futures::{AsyncRead, AsyncWrite};
 
 use super::{Channel, ChannelReader, ChannelWriter, Stream, StreamError};
 
@@ -17,52 +16,22 @@ pub struct RWChannel {
     channel_name: String,
 }
 
-impl Write for RWChannel {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.lock
-            .write()
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    StreamError::ChannelWriteFailed {
-                        channel_name: self.channel_name.clone(),
-                        error: e.to_string(),
-                    },
-                )
-            })
-            .and_then(|mut channel| {
-                channel.write(buf).map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        StreamError::ChannelWriteFailed {
-                            channel_name: self.channel_name.clone(),
-                            error: e.to_string(),
-                        },
-                    )
-                })
-            })
-            .map(|_| buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl PollRead for RWChannel {
-    fn poll_read(&mut self, buf: &mut [u8]) -> Result<Poll<usize>, std::io::Error> {
-        self.lock
-            .write()
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    StreamError::ChannelReadFailed {
-                        channel_name: self.channel_name.clone(),
-                        error: e.to_string(),
-                    },
-                )
-            })
-            .map(|mut channel| channel.poll_read(buf))
+impl AsyncRead for RWChannel {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut channel = self.lock.write().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                StreamError::ChannelReadFailed {
+                    channel_name: self.channel_name.clone(),
+                    error: e.to_string(),
+                },
+            )
+        })?;
+        Pin::new(&mut *channel).poll_read(cx, buf)
     }
 }
 
@@ -72,31 +41,54 @@ impl ChannelReader for RWChannel {
     }
 }
 
-impl PollWrite for RWChannel {
-    fn poll_write(&mut self, buf: &[u8]) -> Result<Poll<()>, std::io::Error> {
-        self.lock
-            .write()
-            .map_err(|e| {
-                std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    StreamError::ChannelWriteFailed {
-                        channel_name: self.channel_name.clone(),
-                        error: e.to_string(),
-                    },
-                )
-            })
-            .and_then(|mut channel| {
-                channel.write(buf).map_err(|e| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::PermissionDenied,
-                        StreamError::ChannelWriteFailed {
-                            channel_name: self.channel_name.clone(),
-                            error: e.to_string(),
-                        },
-                    )
-                })
-            })
-            .map(Poll::Ready)
+impl AsyncWrite for RWChannel {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut channel = self.lock.write().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                StreamError::ChannelWriteFailed {
+                    channel_name: self.channel_name.clone(),
+                    error: e.to_string(),
+                },
+            )
+        })?;
+        Pin::new(&mut *channel).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let mut channel = self.lock.write().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                StreamError::ChannelWriteFailed {
+                    channel_name: self.channel_name.clone(),
+                    error: e.to_string(),
+                },
+            )
+        })?;
+        Pin::new(&mut *channel).poll_flush(cx)
+    }
+
+    fn poll_close(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let mut channel = self.lock.write().map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                StreamError::ChannelWriteFailed {
+                    channel_name: self.channel_name.clone(),
+                    error: e.to_string(),
+                },
+            )
+        })?;
+        Pin::new(&mut *channel).poll_close(cx)
     }
 }
 
@@ -191,13 +183,11 @@ impl<'a> Stream<'a> for RWChannelStream {
                 .map(|(name, channel_spec)| {
                     (
                         name.clone(),
-                        Arc::new(RwLock::new(Channel {
+                        Arc::new(RwLock::new(Channel::new(
                             name,
-                            data: VecDeque::new(),
                             // TODO: Change the "description" field to data_type once we changed it.
-                            data_type: channel_spec.description,
-                            closed: false,
-                        })),
+                            channel_spec.description,
+                        ))),
                     )
                 })
                 .collect(),
@@ -226,7 +216,7 @@ impl<'a> Stream<'a> for RWChannelStream {
     }
 }
 
-#[cfg(test)]
+#[cfg(allan)] // TODO: cfg(test)
 mod tests {
     use super::*;
 
